@@ -1,0 +1,2 @@
+# inventaire-epicerie
+lincontournable
