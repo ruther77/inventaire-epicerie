@@ -1,89 +1,44 @@
-# ==========================
-#  Makefile - Inventaire Épicerie
-# ==========================
+.PHONY: up down rebuild logs psql shell fmt lint test precommit-install
 
-APP_NAME = inventaire
-DOCKER_COMPOSE = docker compose
+up: ## démarrer tous les services
+	docker compose --env-file .env up -d
 
-# ==========================
-# Commandes principales
-# ==========================
+down: ## arrêter et supprimer (conteneurs/volumes)
+	docker compose --env-file .env down -v
 
-# ⚙️ Démarrer les conteneurs (app + db)
-up:
-	$(DOCKER_COMPOSE) up -d
+rebuild: ## rebuild clean
+	docker compose --env-file .env build --no-cache
+	docker compose --env-file .env up -d
 
-# 🛑 Arrêter les conteneurs
-down:
-	$(DOCKER_COMPOSE) down
+logs: ## suivre les logs de l'app
+	docker compose logs -f app
 
-# 🔁 Restart rapide sans rebuild
-restart:
-	$(DOCKER_COMPOSE) restart
+psql: ## console postgres
+	docker compose exec db psql -U $${POSTGRES_USER} -d $${POSTGRES_DB}
 
-# 🧹 Supprimer tout (conteneurs, volumes, images non utilisées)
-clean:
-	$(DOCKER_COMPOSE) down -v --remove-orphans
-	docker system prune -f
+shell: ## shell dans le conteneur app
+	docker compose exec app bash || docker compose exec app sh
 
-# 🧩 Rebuild complet de l'environnement (images + dépendances)
-build:
-	$(DOCKER_COMPOSE) build --no-cache
+fmt: ## format (black + ruff --fix)
+	docker compose run --rm app bash -lc "python -m pip install -q black ruff && black . && ruff check . --fix || true"
 
-# 🔄 Refresh complet : rebuild + recréation DB + lancement app
-refresh: clean build up
-	@echo "✅ Environnement Docker entièrement reconstruit."
+lint: ## lint (ruff)
+	docker compose run --rm app bash -lc "python -m pip install -q ruff && ruff check ."
 
-# 🧰 Initialisation manuelle de la base (si besoin)
-init-db:
-	@echo "🚀 Initialisation de la base PostgreSQL..."
-	@docker exec -i inventaire-db psql -U postgres -d epicerie < ./db/init.sql
-	@echo "✅ Base de données mise à jour."
+test: ## placeholder tests
+	@echo 'Aucun test défini pour le moment.'
 
-# 📋 Logs temps réel
-logs:
-	$(DOCKER_COMPOSE) logs -f
+precommit-install:
+	python -m pip install -q pre-commit
+	pre-commit install
 
-# 📋 Logs app uniquement
-logs-app:
-	$(DOCKER_COMPOSE) logs -f app
+# ----- Production helpers -----
+prod-up: ## lancer le stack de prod (derrière Caddy)
+	docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
 
-# 📋 Logs db uniquement
-logs-db:
-	$(DOCKER_COMPOSE) logs -f db
+prod-down: ## arrêter et supprimer la prod
+	docker compose --env-file .env.prod -f docker-compose.prod.yml down -v
 
-# 🧪 Lancer le conteneur Streamlit localement (hors Docker)
-run-local:
-	streamlit run app/app.py
-
-# ==========================
-# Utilitaires
-# ==========================
-
-# 🔍 Vérifier l'état des conteneurs
-status:
-	$(DOCKER_COMPOSE) ps
-
-# 🔍 Liste des tables dans la DB
-tables:
-	@docker exec inventaire-db psql -U postgres -d epicerie -c "\dt"
-
-# 🔍 Liste des vues dans la DB
-views:
-	@docker exec inventaire-db psql -U postgres -d epicerie -c "\dv"
-
-# 📦 Backup base de données
-backup-db:
-	@mkdir -p backups
-	@docker exec inventaire-db pg_dump -U postgres -d epicerie > backups/backup_$$(date +%F_%H-%M).sql
-	@echo "💾 Sauvegarde créée dans ./backups/"
-
-# ♻️ Restaurer une sauvegarde
-restore-db:
-	@if [ -z "$(file)" ]; then echo "❌ Utilisation : make restore-db file=backups/nom_dump.sql"; exit 1; fi
-	@docker exec -i inventaire-db psql -U postgres -d epicerie < $(file)
-	@echo "✅ Base restaurée à partir de $(file)"
-
-# 🧪 Test connexion DB
-test-db:
-	@docker exec inventaire-db psql -U postgres -d epicerie -c "SELECT version();"
+prod-rebuild: ## rebuild + up (prod)
+	docker compose --env-file .env.prod -f docker-compose.prod.yml build --no-cache
+	docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
