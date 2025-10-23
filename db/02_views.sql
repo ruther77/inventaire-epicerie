@@ -1,0 +1,85 @@
+-- Stock courant (sans sku)
+CREATE OR REPLACE VIEW v_stock_courant AS
+SELECT p.id, p.nom,
+       COALESCE(SUM(CASE WHEN m.type='ENTREE' THEN m.quantite
+                         WHEN m.type='TRANSFERT' THEN 0
+                         WHEN m.type='INVENTAIRE' THEN 0
+                         ELSE -m.quantite END),0) AS stock
+FROM produits p
+LEFT JOIN mouvements_stock m ON m.produit_id = p.id
+GROUP BY p.id, p.nom
+ORDER BY p.nom;
+
+-- Produits + codes agrégés
+CREATE OR REPLACE VIEW v_produits_codes AS
+SELECT p.id, p.nom, p.prix_achat, p.prix_vente, p.tva, p.actif,
+       COALESCE(string_agg(pb.code, ', ' ORDER BY pb.is_principal DESC, pb.code), '') AS codes
+FROM produits p
+LEFT JOIN produits_barcodes pb ON pb.produit_id = p.id -- (typo volontairement corrigé ci-dessous)
+GROUP BY p.id, p.nom, p.prix_achat, p.prix_vente, p.tva, p.actif
+ORDER BY p.nom;
+
+-- Valorisation du stock
+CREATE OR REPLACE VIEW v_valorisation_stock AS
+SELECT s.id, s.nom, s.stock,
+       p.prix_achat,
+       ROUND(s.stock * COALESCE(p.prix_achat,0), 2) AS valeur_achat
+FROM v_stock_courant s
+JOIN produits p ON p.id = s.id
+ORDER BY valeur_achat DESC;
+
+-- Top ventes 30 jours
+CREATE OR REPLACE VIEW v_top_ventes_30j AS
+SELECT p.id, p.nom,
+       SUM(CASE WHEN m.type='SORTIE' THEN m.quantite ELSE 0 END) AS qte_sorties_30j
+FROM produits p
+LEFT JOIN mouvements_stock m
+  ON m.produit_id = p.id
+ AND m.date_mvt >= now() - INTERVAL '30 days'
+GROUP BY p.id, p.nom
+ORDER BY qte_sorties_30j DESC NULLS LAST;
+
+-- Rotation 30 jours
+CREATE OR REPLACE VIEW v_rotation_30j AS
+SELECT p.id, p.nom,
+       SUM(CASE WHEN m.type='ENTREE' THEN m.quantite ELSE 0 END) AS entrees_30j,
+       SUM(CASE WHEN m.type='SORTIE' THEN m.quantite ELSE 0 END) AS sorties_30j
+FROM produits p
+LEFT JOIN mouvements_stock m
+  ON m.produit_id = p.id
+ AND m.date_mvt >= now() - INTERVAL '30 days'
+GROUP BY p.id, p.nom
+ORDER BY sorties_30j DESC NULLS LAST;
+
+-- Anomalies : stock négatif
+CREATE OR REPLACE VIEW v_inventaire_negatif AS
+SELECT * FROM v_stock_courant WHERE stock < 0 ORDER BY stock ASC;
+
+-- Produits sans code-barres
+CREATE OR REPLACE VIEW v_produits_sans_barcode AS
+SELECT p.*
+FROM produits p
+LEFT JOIN produits_barcodes pb ON pb.produit_id = p.id
+WHERE pb.id IS NULL
+ORDER BY p.nom;
+
+-- Alertes de rupture
+CREATE OR REPLACE VIEW v_alertes_rupture AS
+SELECT s.id, s.nom, s.stock, p.seuil_alerte
+FROM v_stock_courant s
+JOIN produits p ON p.id = s.id
+WHERE s.stock <= COALESCE(p.seuil_alerte, 0)
+ORDER BY s.stock ASC;
+
+-- Mouvements récents
+CREATE OR REPLACE VIEW v_mouvements_recents AS
+SELECT m.id, m.date_mvt, m.type, m.quantite, m.source,
+       p.id AS produit_id, p.nom
+FROM mouvements_stock m
+JOIN produits p ON p.id = m.produit_id
+ORDER BY m.date_mvt DESC
+LIMIT 500;
+
+-- Alias de compatibilité (si l'app appelle d'anciens noms)
+CREATE OR REPLACE VIEW stock_courant  AS SELECT * FROM v_stock_courant;
+CREATE OR REPLACE VIEW v_prod_barcodes AS SELECT * FROM v_produits_codes;

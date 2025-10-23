@@ -1,0 +1,35 @@
+# Logs et caches
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# Dossiers Streamlit
+.streamlit/
+
+# Environnements Python
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+
+# Docker / volumes
+db_data/
+*.pid
+
+# CSV / Excel / backups / exports
+*.csv
+*.xlsx
+*.xls
+*.ods
+*.bak
+*.tmp
+
+# Jetons ou mots de passe
+.env
+.env.local
+secrets.json
