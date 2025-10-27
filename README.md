@@ -30,8 +30,9 @@ pytest
    make up
    ```
 
-3. L'application Streamlit est disponible sur <http://localhost:8501> et la base
-   PostgreSQL sur le port 5432 (définis dans `docker-compose.yml`).
+3. Dès que les conteneurs sont démarrés, ouvrez un navigateur sur
+   <http://localhost:8501> pour accéder à l'application Streamlit. La base
+   PostgreSQL est exposée sur le port 5432 (définis dans `docker-compose.yml`).
 4. Pour arrêter et nettoyer les conteneurs :
 
    ```bash
@@ -49,7 +50,8 @@ pytest
 
 3. Exportez les variables d'environnement nécessaires (voir `env.prod.example`
    pour la liste complète) ou créez un fichier `.streamlit/secrets.toml`.
-4. Démarrez l'application :
+4. Démarrez l'application puis ouvrez votre navigateur sur
+   <http://localhost:8501> :
 
    ```bash
    streamlit run app.py

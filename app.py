@@ -198,6 +198,138 @@ def load_products_list():
         st.error(f"Erreur critique de chargement des produits: {e}. Vérifiez la vue 'v_stock_produits'.")
         return pd.DataFrame()
 
+
+@st.cache_data(ttl=120)
+def load_movement_timeseries(window_days: int = 30, product_id: int | None = None) -> pd.DataFrame:
+    base_sql = """
+        SELECT
+            date_trunc('day', m.date_mvt) AS jour,
+            m.type,
+            SUM(m.quantite) AS quantite
+        FROM mouvements_stock m
+        WHERE m.date_mvt >= now() - (:window * INTERVAL '1 day')
+    """
+
+    params: dict[str, int] = {"window": int(window_days)}
+
+    if product_id is not None:
+        base_sql += " AND m.produit_id = :pid"
+        params["pid"] = int(product_id)
+
+    base_sql += """
+        GROUP BY 1, m.type
+        ORDER BY jour ASC, m.type
+    """
+
+    try:
+        df = query_df(base_sql, params=params)
+        if not df.empty:
+            df["jour"] = pd.to_datetime(df["jour"]).dt.date
+        return df
+    except Exception as exc:
+        st.error(f"Impossible de charger l'historique agrégé des mouvements: {exc}")
+        return pd.DataFrame(columns=["jour", "type", "quantite"])
+
+
+@st.cache_data(ttl=60)
+def load_recent_movements(limit: int = 100, product_id: int | None = None) -> pd.DataFrame:
+    sql = """
+        SELECT
+            m.date_mvt,
+            p.nom AS produit,
+            m.type,
+            m.quantite,
+            m.source
+        FROM mouvements_stock m
+        JOIN produits p ON p.id = m.produit_id
+    """
+
+    params: dict[str, int] = {"limit": int(limit)}
+
+    if product_id is not None:
+        sql += " WHERE m.produit_id = :pid"
+        params["pid"] = int(product_id)
+
+    sql += " ORDER BY m.date_mvt DESC LIMIT :limit"
+
+    try:
+        return query_df(sql, params=params)
+    except Exception as exc:
+        st.error(f"Impossible de charger les mouvements récents: {exc}")
+        return pd.DataFrame(columns=["date_mvt", "produit", "type", "quantite", "source"])
+
+
+@st.cache_data(ttl=60)
+def load_table_preview(table_name: str, limit: int = 20) -> pd.DataFrame:
+    allowed = {"produits", "produits_barcodes", "mouvements_stock"}
+    if table_name not in allowed:
+        raise ValueError(f"Table non autorisée pour l'aperçu: {table_name}")
+
+    sql = text(f"SELECT * FROM public.{table_name} ORDER BY id DESC LIMIT :limit")
+    try:
+        return query_df(sql, params={"limit": int(limit)})
+    except Exception as exc:
+        st.warning(f"Impossible de lire la table {table_name}: {exc}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60)
+def load_table_counts() -> pd.DataFrame:
+    sql = """
+        SELECT 'produits' AS table, COUNT(*) AS lignes FROM produits
+        UNION ALL
+        SELECT 'produits_barcodes' AS table, COUNT(*) AS lignes FROM produits_barcodes
+        UNION ALL
+        SELECT 'mouvements_stock' AS table, COUNT(*) AS lignes FROM mouvements_stock
+    """
+
+    try:
+        return query_df(sql)
+    except Exception as exc:
+        st.error(f"Impossible de compter les enregistrements des tables principales: {exc}")
+        return pd.DataFrame(columns=["table", "lignes"])
+
+
+@st.cache_data(ttl=60)
+def load_stock_diagnostics() -> pd.DataFrame:
+    sql = """
+        SELECT
+            p.id,
+            p.nom,
+            p.stock_actuel,
+            COALESCE(SUM(CASE
+                WHEN m.type = 'ENTREE' THEN m.quantite
+                WHEN m.type = 'SORTIE' THEN -m.quantite
+                WHEN m.type = 'INVENTAIRE' THEN m.quantite
+                WHEN m.type = 'TRANSFERT' THEN m.quantite
+                ELSE 0
+            END), 0) AS stock_calcule,
+            ROUND(p.stock_actuel - COALESCE(SUM(CASE
+                WHEN m.type = 'ENTREE' THEN m.quantite
+                WHEN m.type = 'SORTIE' THEN -m.quantite
+                WHEN m.type = 'INVENTAIRE' THEN m.quantite
+                WHEN m.type = 'TRANSFERT' THEN m.quantite
+                ELSE 0
+            END), 0), 3) AS ecart
+        FROM produits p
+        LEFT JOIN mouvements_stock m ON m.produit_id = p.id
+        GROUP BY p.id, p.nom, p.stock_actuel
+        HAVING ABS(p.stock_actuel - COALESCE(SUM(CASE
+            WHEN m.type = 'ENTREE' THEN m.quantite
+            WHEN m.type = 'SORTIE' THEN -m.quantite
+            WHEN m.type = 'INVENTAIRE' THEN m.quantite
+            WHEN m.type = 'TRANSFERT' THEN m.quantite
+            ELSE 0
+        END), 0)) > 0.001
+        ORDER BY ABS(ecart) DESC, p.nom
+    """
+
+    try:
+        return query_df(sql)
+    except Exception as exc:
+        st.error(f"Impossible de calculer le diagnostic stock/mouvements: {exc}")
+        return pd.DataFrame(columns=["id", "nom", "stock_actuel", "stock_calcule", "ecart"])
+
 # --- Classe Barcode Detector (pour le Scanner) ---
 class BarcodeDetector(VideoTransformerBase):
     """Détecte les codes-barres dans chaque frame vidéo. Déclenche le Rerun Streamlit."""
@@ -318,6 +450,10 @@ if authentication_status:
                             st.session_state.cart = []
                             load_products_list.clear()
                             cached_product_options.clear()
+                            load_movement_timeseries.clear()
+                            load_recent_movements.clear()
+                            load_table_counts.clear()
+                            load_table_preview.clear()
                             st.rerun()
                         else:
                             error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
@@ -479,6 +615,10 @@ if authentication_status:
                             st.success(f"{updates_count} produit(s) mis à jour avec succès!")
                             load_products_list.clear()
                             cached_product_options.clear()
+                            load_movement_timeseries.clear()
+                            load_recent_movements.clear()
+                            load_table_counts.clear()
+                            load_table_preview.clear()
                             st.rerun()
                         else:
                             st.info("Aucune modification n'a été détectée dans le tableau.")
@@ -500,6 +640,10 @@ if authentication_status:
                             st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
                             load_products_list.clear()
                             cached_product_options.clear()
+                            load_movement_timeseries.clear()
+                            load_recent_movements.clear()
+                            load_table_counts.clear()
+                            load_table_preview.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
@@ -527,13 +671,32 @@ if authentication_status:
                             
                             if new_codes:
                                 codes_list = [c.strip() for c in new_codes.split(';') if c.strip()]
-                                for code in codes_list:
-                                    sql_code = text("INSERT INTO produits_barcodes (produit_id, code) VALUES (:pid, :code) ON CONFLICT (code) DO NOTHING")
-                                    exec_sql(sql_code.bindparams(pid=product_id, code=code))
+                                barcode_outcome = {"added": 0, "conflicts": 0, "skipped": 0}
+                                engine = get_engine()
+                                with engine.begin() as conn:
+                                    for code in codes_list:
+                                        status = products_loader.insert_or_update_barcode(conn, product_id, code)
+                                        if status == "added":
+                                            barcode_outcome["added"] += 1
+                                        elif status == "conflict":
+                                            barcode_outcome["conflicts"] += 1
+                                        else:
+                                            barcode_outcome["skipped"] += 1
 
                             st.success(f"Produit '{new_nom}' ajouté avec succès!")
                             load_products_list.clear()
                             cached_product_options.clear()
+                            load_table_preview.clear()
+                            load_recent_movements.clear()
+                            load_table_counts.clear()
+
+                            if new_codes:
+                                st.caption(
+                                    "Codes-barres — "
+                                    f"ajouts: {barcode_outcome['added']}, "
+                                    f"conflits: {barcode_outcome['conflicts']}, "
+                                    f"ignorés: {barcode_outcome['skipped']}"
+                                )
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de l'ajout: {e}")
@@ -551,12 +714,107 @@ if authentication_status:
 
         product_options = cached_product_options()
         product_names = list(product_options.keys())
+        filter_products = ["Tous les produits"] + product_names
 
-        # --- Ajustement de stock pour les admins ---
+        col_filter_product, col_filter_window, col_filter_limit = st.columns([3, 1, 1])
+        selected_product_name = col_filter_product.selectbox(
+            "Produit suivi",
+            filter_products,
+            key="movement_filter_product"
+        )
+        selected_product_id = (
+            product_options.get(selected_product_name)
+            if selected_product_name in product_options
+            else None
+        )
+
+        window_days = col_filter_window.selectbox(
+            "Période",
+            options=[7, 30, 90, 180],
+            format_func=lambda d: f"{d} jours",
+            index=1,
+            key="movement_filter_window",
+        )
+
+        recent_limit = col_filter_limit.selectbox(
+            "Lignes",
+            options=[25, 50, 100, 200],
+            index=2,
+            key="movement_filter_limit",
+        )
+
+        movement_ts = load_movement_timeseries(window_days=window_days, product_id=selected_product_id)
+        recent_movements = load_recent_movements(limit=recent_limit, product_id=selected_product_id)
+
+        if movement_ts.empty:
+            st.info("Aucun mouvement enregistré pour la période sélectionnée.")
+        else:
+            total_entries = float(movement_ts.loc[movement_ts['type'] == 'ENTREE', 'quantite'].sum())
+            total_outputs = float(movement_ts.loc[movement_ts['type'] == 'SORTIE', 'quantite'].sum())
+            net_balance = total_entries - total_outputs
+
+            col_metrics = st.columns(3)
+            col_metrics[0].metric("Entrées enregistrées", f"+{total_entries:.2f}")
+            col_metrics[1].metric("Sorties enregistrées", f"-{total_outputs:.2f}")
+            col_metrics[2].metric("Variation nette", f"{net_balance:+.2f}")
+
+            chart_col_1, chart_col_2 = st.columns(2)
+            with chart_col_1:
+                chart_df = movement_ts.copy()
+                chart_df.sort_values(["jour", "type"], inplace=True)
+                st.plotly_chart(
+                    px.bar(
+                        chart_df,
+                        x="jour",
+                        y="quantite",
+                        color="type",
+                        barmode="group",
+                        title="Mouvements par type",
+                        labels={"jour": "Jour", "quantite": "Quantité", "type": "Type"},
+                    ),
+                    use_container_width=True,
+                )
+
+            with chart_col_2:
+                net_daily = movement_ts.copy()
+                net_daily["delta"] = net_daily.apply(
+                    lambda row: -row["quantite"] if row["type"] == "SORTIE" else row["quantite"],
+                    axis=1,
+                )
+                net_daily = (
+                    net_daily.groupby("jour")["delta"]
+                    .sum()
+                    .reset_index(name="variation")
+                    .sort_values("jour")
+                )
+                net_daily["cumul"] = net_daily["variation"].cumsum()
+                line_fig = px.line(
+                    net_daily,
+                    x="jour",
+                    y="cumul",
+                    markers=True,
+                    title="Variation cumulée",
+                    labels={"jour": "Jour", "cumul": "Δ cumulée"},
+                )
+                line_fig.add_hline(y=0, line_dash="dot", line_color="#999999")
+                st.plotly_chart(line_fig, use_container_width=True)
+
+        st.caption("Les données ci-dessus sont actualisées après chaque vente ou ajustement.")
+
+        st.subheader("Mouvements récents détaillés")
+        recent_display = recent_movements.copy()
+        if recent_display.empty:
+            st.info("Aucun mouvement à afficher pour le filtre en cours.")
+        else:
+            recent_display["date_mvt"] = pd.to_datetime(recent_display["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
+            st.dataframe(recent_display, use_container_width=True, hide_index=True)
+
+        st.divider()
+
         if st.session_state.get("user_role") == "admin":
             with st.form("stock_adjustment_form", clear_on_submit=True):
                 st.subheader("Ajustement/Inventaire de Stock (Admin)")
-                
+
                 col_prod, col_qty = st.columns(2)
                 selected_product_name = col_prod.selectbox("Produit à ajuster", product_names, key='adj_product',)
                 selected_product_id = product_options.get(selected_product_name)
@@ -616,31 +874,13 @@ if authentication_status:
                                 )
                                 load_products_list.clear()
                                 cached_product_options.clear()
+                                load_movement_timeseries.clear()
+                                load_recent_movements.clear()
+                                load_table_counts.clear()
+                                load_table_preview.clear()
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
-        else:
-            st.subheader("Historique des Mouvements Récents")
-        
-        st.divider()
-        st.subheader("Historique Détaillé des Mouvements")
-        
-        try:
-            df_mvt = query_df("""
-                SELECT 
-                    m.date_mvt, 
-                    p.nom as produit, 
-                    m.type, 
-                    m.quantite, 
-                    m.source as utilisateur
-                FROM mouvements_stock m
-                JOIN produits p ON m.produit_id = p.id
-                ORDER BY m.date_mvt DESC
-                LIMIT 100
-            """)
-            st.dataframe(df_mvt, use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.error(f"Impossible de charger l'historique des mouvements: {e}")
 
 
     # ---------------- Dashboard ----------------
@@ -860,8 +1100,8 @@ if authentication_status:
                             st.caption(
                                 "Codes-barres — "
                                 f"ajouts: {barcode_stats['added']}, "
-                                f"doublons ignorés: {barcode_stats['conflicts']}, "
-                                f"erreurs: {barcode_stats['skipped']}"
+                                f"conflits: {barcode_stats['conflicts']}, "
+                                f"ignorés/erreurs: {barcode_stats['skipped']}"
                             )
 
                         # Afficher les erreurs d'importation
@@ -874,6 +1114,10 @@ if authentication_status:
 
                         load_products_list.clear()
                         cached_product_options.clear()
+                        load_movement_timeseries.clear()
+                        load_recent_movements.clear()
+                        load_table_counts.clear()
+                        load_table_preview.clear()
                         st.rerun()
             
             except Exception as e:
@@ -903,15 +1147,49 @@ if authentication_status:
                 st.toast("Cache vidé. Les données seront rechargées au prochain rafraîchissement.", icon='🧹')
 
             st.divider()
-            st.subheader("Aperçu des Tables Brutes")
-            
-            # Affichage des 3 tables principales
-            for t in ["produits","produits_barcodes","mouvements_stock"]:
-                try:
-                    df = query_df(f"SELECT * FROM public.{t} LIMIT 20")
-                    st.expander(f"Table '{t}' ({len(df)} lignes) - Clic pour voir les 20 premières", expanded=False).dataframe(df, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.warning(f"Impossible de lire la table {t}: {e}")
+            st.subheader("Aperçu des Tables Brutes & Diagnostics")
+
+            tables_tab, diagnostics_tab = st.tabs(["Tables principales", "Diagnostic mouvements"])
+
+            with tables_tab:
+                counts_df = load_table_counts()
+                if counts_df.empty:
+                    st.info("Impossible d'afficher les statistiques de tables pour le moment.")
+                else:
+                    cols = st.columns(len(counts_df))
+                    for col, (_, row) in zip(cols, counts_df.iterrows()):
+                        col.metric(f"{row['table']}", f"{int(row['lignes'])} enregistrements")
+
+                for table_name in ["produits", "produits_barcodes", "mouvements_stock"]:
+                    preview = load_table_preview(table_name)
+                    if preview.empty:
+                        st.warning(f"La table {table_name} ne contient aucune ligne (ou est inaccessible).")
+                    else:
+                        st.expander(
+                            f"Table '{table_name}' — aperçu des {len(preview)} dernières lignes",
+                            expanded=False,
+                        ).dataframe(preview, use_container_width=True, hide_index=True)
+
+            with diagnostics_tab:
+                st.caption("Comparaison entre le stock calculé via les mouvements et le stock_actuel matérialisé.")
+                diag_df = load_stock_diagnostics()
+                if diag_df.empty:
+                    st.success("Aucun écart détecté entre les mouvements et le stock matérialisé.")
+                else:
+                    st.warning("Des écarts nécessitent une vérification manuelle.")
+                    display_df = diag_df.copy()
+                    display_df.columns = ["ID", "Produit", "Stock actuel", "Stock calculé", "Écart"]
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.caption("20 derniers mouvements toutes sources confondues.")
+                diag_movements = load_recent_movements(limit=20, product_id=None)
+                if diag_movements.empty:
+                    st.info("Aucun mouvement enregistré.")
+                else:
+                    diag_movements = diag_movements.copy()
+                    diag_movements["date_mvt"] = pd.to_datetime(diag_movements["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
+                    st.dataframe(diag_movements, use_container_width=True, hide_index=True)
         else:
             st.error("Accès refusé. Seuls les administrateurs peuvent accéder à l'onglet Maintenance (Admin).")
 

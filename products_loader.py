@@ -9,34 +9,6 @@ from sqlalchemy.engine import Connection
 
 from data_repository import get_engine
 
-# --- Fonctions utilitaires BDD ---
-
-
-def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str) -> str:
-    """Insère un code-barres et renvoie le statut de l'opération."""
-
-    sql = """
-    INSERT INTO produits_barcodes (produit_id, code)
-    VALUES (:pid, :code)
-    ON CONFLICT (code) DO NOTHING;
-    """
-
-    result = conn.execute(text(sql), {"pid": produit_id, "code": barcode})
-    if result.rowcount and result.rowcount > 0:
-        return "added"
-    return "conflict"
-
-
-def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
-    """Exécute une requête SQL et retourne l'ID (colonne 0) en utilisant une connexion ouverte."""
-
-    result = conn.execute(text(sql), params)
-    row = result.fetchone()
-    return row[0] if row else None
-
-
-# --- Fonctions Utilitaires ---
-
 ALCOHOL_KEYWORDS = [
     "biere",
     "bière",
@@ -57,44 +29,119 @@ ALCOHOL_KEYWORDS = [
 ]
 
 
-def determine_categorie(nom_produit):
+def _empty_summary(rows_received: int = 0) -> Dict[str, Any]:
+    return {
+        "rows_received": rows_received,
+        "rows_processed": 0,
+        "created": 0,
+        "updated": 0,
+        "stock_initialized": 0,
+        "barcode": {"added": 0, "conflicts": 0, "skipped": 0},
+        "errors": [],
+    }
+
+
+def _to_float(value: Any, default: float | None = 0.0) -> float | None:
+    if value is None:
+        return default
+
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if math.isnan(numeric):
+            return default
+        return numeric
+
+    if isinstance(value, str):
+        cleaned = (
+            value.replace("€", "")
+            .replace("\xa0", "")
+            .replace(",", ".")
+            .strip()
+        )
+        if not cleaned:
+            return default
+        try:
+            return float(cleaned)
+        except ValueError:
+            return default
+
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str) -> str:
+    """Insère un code-barres et renvoie *added*, *skipped* ou *conflict*."""
+
+    normalized = str(barcode or "").strip()
+    if not normalized:
+        return "skipped"
+
+    existing = conn.execute(
+        text(
+            """
+            SELECT produit_id
+            FROM produits_barcodes
+            WHERE lower(code) = lower(:code)
+            LIMIT 1
+            """
+        ),
+        {"code": normalized},
+    ).fetchone()
+
+    if existing:
+        return "skipped" if int(existing.produit_id) == int(produit_id) else "conflict"
+
+    conn.execute(
+        text(
+            """
+            INSERT INTO produits_barcodes (produit_id, code)
+            VALUES (:pid, :code)
+            """
+        ),
+        {"pid": produit_id, "code": normalized},
+    )
+    return "added"
+
+
+def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
+    """Exécute une requête SQL et retourne l'ID (colonne 0) en utilisant une connexion ouverte."""
+
+    result = conn.execute(text(sql), params)
+    row = result.fetchone()
+    return row[0] if row else None
+
+
+def determine_categorie(nom_produit: Any) -> str:
     """Détermine la catégorie à partir du nom du produit."""
 
     nom = str(nom_produit).upper()
-    if any(k in nom for k in ALCOHOL_KEYWORDS):
+    if any(k.upper() in nom for k in ALCOHOL_KEYWORDS):
         return "Alcool"
-    if "JUS" in nom or "BOISSON" in nom or "EAU" in nom or "SODA" in nom:
+    if any(keyword in nom for keyword in ["JUS", "BOISSON", "EAU", "SODA"]):
         return "Boissons"
-    if "HYGIENE" in nom or "SAVON" in nom or "SHAMPOOING" in nom:
+    if any(keyword in nom for keyword in ["HYGIENE", "SAVON", "SHAMPOOING"]):
         return "Hygiene"
-    if "AFRIQUE" in nom or "YASSA" in nom or "TIÈB" in nom:
+    if any(keyword in nom for keyword in ["AFRIQUE", "YASSA", "TIÈB", "TIEB"]):
         return "Afrique"
     return "Autre"
 
 
-def create_initial_stock(conn: Connection, produit_id: int, quantite: float):
-    """Insère un mouvement de stock initial pour le produit."""
+def create_initial_stock(conn: Connection, produit_id: int, quantite: float) -> bool:
+    """Insère un mouvement de stock initial pour le produit et indique s'il a été créé."""
 
     if quantite <= 0:
-        return
+        return False
 
-    sql = """
+    sql = text(
+        """
         INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-        VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial');
-    """
-    conn.execute(text(sql), {"produit_id": produit_id, "quantite": quantite})
-
-
-# --- Normalisation des données importées ---
-
-
-def _coerce_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None or (isinstance(value, str) and value.strip() == ""):
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+        VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial')
+        """
+    )
+    conn.execute(sql, {"produit_id": produit_id, "quantite": quantite})
+    return True
 
 
 def _clean_codes(raw_codes: Any) -> List[str]:
@@ -108,62 +155,58 @@ def _clean_codes(raw_codes: Any) -> List[str]:
 
     cleaned: List[str] = []
     for chunk in iterator:
-        for item in str(chunk).split(","):
+        raw = str(chunk).replace(",", " ")
+        for item in raw.split():
             code = item.strip()
             if code:
                 cleaned.append(code)
     return cleaned
 
 
-# --- Fonction principale utilisée par l'application ---
-
-
 def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
     """Charge les produits à partir d'un DataFrame et retourne un résumé détaillé."""
 
-    summary: Dict[str, Any] = {
-        "rows_received": int(len(df)),
-        "rows_processed": 0,
-        "created": 0,
-        "updated": 0,
-        "stock_initialized": 0,
-        "barcode": {"added": 0, "conflicts": 0, "skipped": 0},
-        "errors": [],
-    }
+    summary = _empty_summary(rows_received=int(len(df)))
 
     if df.empty:
         return summary
 
-    eng = get_engine()
-    with eng.begin() as conn:
+    engine = get_engine()
+    with engine.begin() as conn:
         for idx, row in df.iterrows():
             summary["rows_processed"] += 1
+            nom = str(row.get("nom", "")).strip()
 
             try:
-                nom = str(row.get("nom", "")).strip()
                 if not nom:
-                    raise ValueError("Nom de produit manquant")
+                    raise ValueError("Nom du produit manquant")
 
-                prix_vente = _coerce_float(row.get("prix_vente"))
-                if prix_vente <= 0:
-                    raise ValueError("Prix de vente invalide")
+                prix_vente = _to_float(row.get("prix_vente"), default=None)
+                if prix_vente is None:
+                    raise ValueError("Prix de vente manquant ou invalide")
 
-                prix_achat = _coerce_float(row.get("prix_achat"))
-                tva = _coerce_float(row.get("tva"), default=0.0)
-                seuil = _coerce_float(row.get("seuil_alerte_defaut", row.get("seuil_alerte")))
-                quantite_initiale = _coerce_float(
-                    row.get("qte_init", row.get("quantite_initiale")), default=0.0
-                )
+                tva = _to_float(row.get("tva"), default=None)
+                if tva is None:
+                    raise ValueError("TVA manquante ou invalide")
 
-                categorie = str(row.get("categorie", "")).strip() or determine_categorie(nom)
+                prix_achat = _to_float(row.get("prix_achat"), default=0.0) or 0.0
+                seuil_alerte = _to_float(
+                    row.get("seuil_alerte_defaut", row.get("seuil_alerte")),
+                    default=0.0,
+                ) or 0.0
+                qte_init = _to_float(
+                    row.get("quantite_initiale", row.get("qte_init")),
+                    default=0.0,
+                ) or 0.0
                 codes_list = _clean_codes(row.get("codes"))
+                categorie = determine_categorie(nom)
 
                 params = {
                     "nom": nom,
                     "prix_achat": prix_achat,
                     "prix_vente": prix_vente,
                     "tva": tva,
-                    "seuil_alerte": seuil,
+                    "seuil_alerte": seuil_alerte,
                     "categorie": categorie,
                 }
 
@@ -184,10 +227,9 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
                     params,
                 )
 
-                result_row = update_result.fetchone()
-
-                if result_row:
-                    produit_id = result_row[0]
+                produit_row = update_result.fetchone()
+                if produit_row:
+                    produit_id = produit_row[0]
                     summary["updated"] += 1
                 else:
                     insert_result = conn.execute(
@@ -200,56 +242,66 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
                         ),
                         params,
                     )
-
                     inserted_row = insert_result.fetchone()
-                    if not inserted_row:
-                        raise RuntimeError("Insertion produit sans identifiant retourné")
+                    if inserted_row is None:
+                        raise RuntimeError("Insertion du produit sans ID retourné")
                     produit_id = inserted_row[0]
                     summary["created"] += 1
 
-                if produit_id and quantite_initiale > 0:
-                    create_initial_stock(conn, produit_id, quantite_initiale)
+                if create_initial_stock(conn, produit_id, qte_init):
                     summary["stock_initialized"] += 1
 
                 for code in codes_list:
                     try:
                         status = insert_or_update_barcode(conn, produit_id, code)
-                        summary["barcode"][status] += 1
                     except sa_exc.IntegrityError:
                         summary["barcode"]["conflicts"] += 1
-                    except Exception as code_error:  # noqa: BLE001 - logging manuel dans le résumé
+                    except Exception:
                         summary["barcode"]["skipped"] += 1
-                        raise code_error
+                        raise
+                    else:
+                        if status == "added":
+                            summary["barcode"]["added"] += 1
+                        elif status == "conflict":
+                            summary["barcode"]["conflicts"] += 1
+                        else:
+                            summary["barcode"]["skipped"] += 1
 
-            except Exception as exc:  # noqa: BLE001 - le but est de collecter toutes les erreurs
+            except Exception as exc:
                 summary["errors"].append(
-                    {"ligne": idx + 2, "nom": row.get("nom", "?"), "erreur": str(exc)}
+                    {
+                        "ligne": int(idx) + 2,  # 1-based index + header
+                        "nom": nom or "<inconnu>",
+                        "erreur": str(exc),
+                    }
                 )
-
     return summary
 
 
-# --- Support CLI historique ---
-
-
 def process_products_file(csv_path: str) -> Dict[str, Any]:
-    try:
-        df_produits = pd.read_csv(csv_path, sep=",", dtype=str, keep_default_na=False)
-    except Exception as exc:
-        return {
-            "rows_received": 0,
-            "rows_processed": 0,
-            "created": 0,
-            "updated": 0,
-            "stock_initialized": 0,
-            "barcode": {"added": 0, "conflicts": 0, "skipped": 0},
-            "errors": [f"ERREUR FATALE LECTURE CSV: {exc}"],
-        }
+    """Lit un fichier CSV puis délègue le traitement à :func:`load_products_from_df`."""
 
-    return load_products_from_df(df_produits)
+    try:
+        df = pd.read_csv(csv_path)
+    except FileNotFoundError:
+        summary = _empty_summary()
+        summary["errors"].append(
+            {"ligne": 0, "nom": "", "erreur": f"Fichier introuvable: {csv_path}"}
+        )
+        return summary
+    except Exception as exc:
+        summary = _empty_summary()
+        summary["errors"].append(
+            {"ligne": 0, "nom": "", "erreur": str(exc)}
+        )
+        return summary
+
+    return load_products_from_df(df)
 
 
 if __name__ == "__main__":
+    import sys
+
     csv_path = sys.argv[1] if len(sys.argv) > 1 else "Produit.csv"
     results = process_products_file(csv_path)
 
@@ -269,4 +321,3 @@ if __name__ == "__main__":
             print(f"  Ligne {error['ligne']} ({error['nom']}): {error['erreur']}")
     else:
         print("✅ Importation terminée sans erreur bloquante.")
-

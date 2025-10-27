@@ -11,6 +11,11 @@ if str(_ROOT) not in sys.path:
 import products_loader  # noqa: E402
 
 
+class DummyRow:
+    def __init__(self, produit_id):
+        self.produit_id = produit_id
+
+
 class DummyResult:
     def __init__(self, row=None):
         self._row = row
@@ -22,11 +27,19 @@ class DummyResult:
 class DummyConnection:
     def __init__(self):
         self.executed = []
+        self.barcode_map = {}
 
     def execute(self, statement, params=None):
         sql = str(statement)
         self.executed.append((sql, params))
-        nom = params.get("nom") if isinstance(params, dict) else None
+        params = params or {}
+        nom = params.get("nom")
+
+        if "SELECT produit_id" in sql and "produits_barcodes" in sql:
+            code = (params.get("code") or "").lower()
+            if code in self.barcode_map:
+                return DummyResult(DummyRow(self.barcode_map[code]))
+            return DummyResult(None)
 
         if "UPDATE produits" in sql:
             if nom == "Bière artisanale":
@@ -42,8 +55,9 @@ class DummyConnection:
             return DummyResult(None)
 
         if "INSERT INTO produits_barcodes" in sql:
-            # This path is not used in tests because insert_or_update_barcode is patched.
-            return DummyResult((params or {}).get("code"))
+            code = (params.get("code") or "").lower()
+            self.barcode_map[code] = params.get("pid")
+            return DummyResult(None)
 
         raise AssertionError(f"Unexpected SQL executed: {sql}")
 
@@ -67,22 +81,17 @@ class DummyEngine:
         return DummyContextManager(self._connection)
 
 
-def test_insert_or_update_barcode_status_added_and_skipped():
+def test_insert_or_update_barcode_status_transitions():
     connection = DummyConnection()
 
-    def execute_added(statement, params=None):
-        return DummyResult((params["code"],))
-
-    def execute_skipped(statement, params=None):
-        return DummyResult(None)
-
-    connection.execute = execute_added
     status = products_loader.insert_or_update_barcode(connection, 1, "ABC")
     assert status == "added"
 
-    connection.execute = execute_skipped
-    status = products_loader.insert_or_update_barcode(connection, 1, "ABC")
+    status = products_loader.insert_or_update_barcode(connection, 1, "abc")
     assert status == "skipped"
+
+    status = products_loader.insert_or_update_barcode(connection, 2, "ABC")
+    assert status == "conflict"
 
 
 def test_clean_codes_and_determine_categorie():
@@ -127,7 +136,7 @@ def test_load_products_from_df_summarises_results(monkeypatch):
         if code == "222":
             return "skipped"
         if code == "333":
-            raise sa_exc.IntegrityError("stmt", "params", "orig")
+            return "conflict"
         return "skipped"
 
     monkeypatch.setattr(products_loader, "insert_or_update_barcode", fake_insert_barcode)
@@ -144,6 +153,31 @@ def test_load_products_from_df_summarises_results(monkeypatch):
     assert barcode_calls == [(101, "111"), (101, "222"), (202, "333")]
 
 
+def test_load_products_from_df_counts_conflict_on_integrity_error(monkeypatch):
+    df = pd.DataFrame(
+        [
+            {
+                "nom": "Produit X",
+                "prix_vente": "4",
+                "tva": "20",
+                "prix_achat": "2",
+                "codes": "999",
+            }
+        ]
+    )
+
+    connection = DummyConnection()
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(products_loader, "get_engine", lambda: engine)
+
+    def raise_integrity(conn, produit_id, code):
+        raise sa_exc.IntegrityError("stmt", "params", "orig")
+
+    monkeypatch.setattr(products_loader, "insert_or_update_barcode", raise_integrity)
+
+    summary = products_loader.load_products_from_df(df)
+
+    assert summary["barcode"]["conflicts"] == 1
 def test_load_products_from_df_records_errors(monkeypatch):
     df = pd.DataFrame([
         {"nom": " ", "prix_vente": "", "tva": ""},
