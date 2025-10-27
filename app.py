@@ -12,8 +12,6 @@ import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
 
-from cart_normalizer import normalize_cart_rows
-
 # Imports pour le Scanner et la Vidéo
 import cv2 
 from pyzbar.pyzbar import decode
@@ -429,14 +427,14 @@ if authentication_status:
                 st.session_state.cart =  []
                 st.info("Le panier est vide. Veuillez ajouter des produits.")
             else:
-                # 2. Normalisation des lignes de panier (legacy -> canonique)
-                normalised_cart = normalize_cart_rows(st.session_state.cart)
-                st.session_state.cart = normalised_cart
-
-                # 3. Création d'un DataFrame pour l'affichage
-                cart_df = pd.DataFrame(normalised_cart)
-
-                # 4. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
+                # 2. Création d'un DataFrame pour l'affichage
+                #    -> On force la présence des colonnes attendues même si le panier est vide
+                cart_df = pd.DataFrame(
+                    st.session_state.cart,
+                    columns=["id", "nom", "prix_vente", "tva", "qty"],
+                )
+                
+                # 3. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
                 for column, default in (("prix_vente", 0.0), ("tva", 0.0), ("qty", 0)):
                     if column not in cart_df.columns:
                         cart_df[column] = default
@@ -1066,6 +1064,155 @@ if authentication_status:
             "Téléversez une facture Metro (PDF, DOCX ou texte brut) pour extraire automatiquement les lignes produits, "
             "les corriger si nécessaire, puis importez-les dans le catalogue."
         )
+
+        uploaded_invoice_file = st.file_uploader(
+            "Déposer une facture Metro",
+            type=["pdf", "docx", "txt"],
+            key="invoice_file_uploader",
+            help="Les formats PDF, DOCX et TXT sont pris en charge.",
+        )
+
+        if uploaded_invoice_file is not None:
+            raw_bytes = uploaded_invoice_file.getvalue()
+            proxy_file = io.BytesIO(raw_bytes)
+            proxy_file.name = uploaded_invoice_file.name
+            proxy_file.type = uploaded_invoice_file.type
+            try:
+                extracted_text = invoice_extractor.extract_text_from_file(proxy_file)
+            except Exception as exc:  # pragma: no cover - protection runtime Streamlit
+                st.error(f"Erreur lors de la lecture du fichier : {exc}")
+            else:
+                if extracted_text is None or not str(extracted_text).strip():
+                    st.warning("Le fichier a été chargé mais aucun texte exploitable n'a été détecté.")
+                elif str(extracted_text).lower().startswith("erreur"):
+                    st.error(extracted_text)
+                else:
+                    base_name, _ = os.path.splitext(uploaded_invoice_file.name)
+                    safe_name = base_name or "facture"
+                    st.session_state["invoice_raw_text"] = extracted_text
+                    st.session_state["invoice_text_input"] = extracted_text
+                    st.session_state["invoice_products_df"] = None
+                    st.session_state["invoice_import_summary"] = None
+                    st.session_state["invoice_uploaded_name"] = f"{safe_name}_extraction.txt"
+                    st.success(f"Texte extrait depuis {uploaded_invoice_file.name}.")
+
+        st.text_area(
+            "Texte de la facture à analyser",
+            key="invoice_text_input",
+            height=260,
+            placeholder="Collez ici la section produits de la facture si nécessaire...",
+        )
+
+        col_extract_btn, col_reset_btn = st.columns(2)
+        with col_extract_btn:
+            if st.button("Analyser le texte", key="invoice_extract_button", type="primary"):
+                text_to_parse = st.session_state.get("invoice_text_input", "")
+                if not text_to_parse.strip():
+                    st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
+                else:
+                    df_extracted = invoice_extractor.extract_products_from_metro_invoice(text_to_parse)
+                    st.session_state["invoice_products_df"] = df_extracted
+                    st.session_state["invoice_import_summary"] = None
+                    if df_extracted.empty:
+                        st.warning("Aucune ligne produit détectée. Ajustez le texte et réessayez.")
+                    else:
+                        st.success(
+                            f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous."
+                        )
+        with col_reset_btn:
+            if st.button("Réinitialiser l'extraction", key="invoice_reset_button"):
+                st.session_state["invoice_raw_text"] = ""
+                st.session_state["invoice_text_input"] = ""
+                st.session_state["invoice_products_df"] = None
+                st.session_state["invoice_import_summary"] = None
+                st.session_state["invoice_uploaded_name"] = "facture.txt"
+                st.info("Extraction réinitialisée.")
+
+        if st.session_state.get("invoice_raw_text"):
+            st.download_button(
+                "Télécharger le texte brut",
+                data=st.session_state["invoice_raw_text"].encode("utf-8"),
+                file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
+                mime="text/plain",
+            )
+
+        extracted_df = st.session_state.get("invoice_products_df")
+        if isinstance(extracted_df, pd.DataFrame) and not extracted_df.empty:
+            st.subheader("Produits détectés")
+            st.caption(
+                "Vérifiez les informations extraites. Vous pouvez ajuster les noms, les prix, la TVA ou les codes-barres avant "
+                "l'importation."
+            )
+
+            editable_df = st.data_editor(
+                extracted_df,
+                key="invoice_products_editor",
+                hide_index=True,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "nom": st.column_config.TextColumn("Nom du produit"),
+                    "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
+                    "tva": st.column_config.TextColumn("TVA (%)"),
+                    "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
+                    "codes": st.column_config.TextColumn("Codes-barres"),
+                },
+            )
+            editable_df = pd.DataFrame(editable_df)
+            for col in ("nom", "codes"):
+                if col in editable_df.columns:
+                    editable_df[col] = editable_df[col].fillna("")
+            st.session_state["invoice_products_df"] = editable_df
+
+            col_download, col_import = st.columns(2)
+            with col_download:
+                csv_data = editable_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Télécharger le CSV extrait",
+                    data=csv_data,
+                    file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
+                    mime="text/csv",
+                )
+            with col_import:
+                if st.button("Importer ces produits", key="invoice_import_button", type="primary"):
+                    with st.spinner("Import des produits en cours..."):
+                        summary = products_loader.load_products_from_df(editable_df)
+                    st.session_state["invoice_import_summary"] = summary
+                    load_products_list.clear()
+                    cached_product_options.clear()
+                    load_movement_timeseries.clear()
+                    load_recent_movements.clear()
+                    load_table_counts.clear()
+                    load_table_preview.clear()
+                    st.success("Importation terminée. Consultez le résumé ci-dessous.")
+
+        summary = st.session_state.get("invoice_import_summary")
+        if isinstance(summary, dict):
+            st.divider()
+            st.subheader("Résumé de l'importation")
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Lignes reçues", summary.get("rows_received", 0))
+            metric_cols[1].metric("Traitées", summary.get("rows_processed", 0))
+            metric_cols[2].metric("Créées", summary.get("created", 0))
+            metric_cols[3].metric("Mises à jour", summary.get("updated", 0))
+
+            extra_cols = st.columns(3)
+            extra_cols[0].metric("Stocks initiaux", summary.get("stock_initialized", 0))
+            barcode_stats = summary.get("barcode", {})
+            extra_cols[1].metric("Codes ajoutés", barcode_stats.get("added", 0))
+            extra_cols[2].metric("Codes en conflit", barcode_stats.get("conflicts", 0))
+
+            if summary.get("errors"):
+                st.warning(f"{len(summary['errors'])} ligne(s) n'ont pas pu être importées.")
+                errors_df = pd.DataFrame(summary["errors"])
+                st.dataframe(errors_df, hide_index=True, use_container_width=True)
+            else:
+                st.success("Toutes les lignes valides ont été importées avec succès.")
+
+
+    # ---------------- Importation ----------------
+    with import_tab:
+        st.header("Importation de Produits par Fichier CSV")
 
         uploaded_invoice_file = st.file_uploader(
             "Déposer une facture Metro",
