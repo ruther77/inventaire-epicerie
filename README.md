@@ -10,7 +10,9 @@ bord interactif.
   chargeur de produits, les extracteurs de factures ainsi que les conversions
   utilitaires utilisées par l'application principale.
 * **Interface :** la feuille de style `style.css` applique une palette plus
-  douce et chaleureuse à l'ensemble des composants Streamlit.
+  douce et chaleureuse à l'ensemble des composants Streamlit, et le fichier
+  `.streamlit/config.toml` force l'utilisation du thème clair sur tous les
+  environnements d'exécution.
 
 Pour vérifier localement que tout fonctionne, exécutez simplement :
 
