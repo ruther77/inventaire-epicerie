@@ -227,11 +227,11 @@ ORDER BY p.nom;
 -- Alertes de rupture (utilise v_stock_courant)
 CREATE OR REPLACE VIEW v_alertes_rupture AS
 SELECT
-    s.id, s.nom, s.categorie, s.stock, s.seuil_alerte
+    s.id, s.nom, s.categorie, (s.stock)::numeric(12,3) as stock, s.seuil_alerte
 FROM v_stock_courant s
-WHERE s.stock <= COALESCE(s.seuil_alerte, 0)
+WHERE (s.stock)::numeric(12,3) <= COALESCE(s.seuil_alerte, 0)
 AND s.actif = TRUE
-ORDER BY s.stock ASC;
+ORDER BY (s.stock)::numeric(12,3) ASC;
 
 -- Mouvements récents (enrichi avec catégorie)
 CREATE OR REPLACE VIEW v_mouvements_recents AS
