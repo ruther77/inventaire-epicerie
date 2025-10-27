@@ -95,7 +95,7 @@ def to_float(x, default=0.0, minv=None, maxv=None):
         if minv is not None:
             v = max(v, minv)
         if maxv is not None:
-            v = max(v, maxv)
+            v = min(v, maxv)
         return round(v, 4)
     except Exception:
         return default
