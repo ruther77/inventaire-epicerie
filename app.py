@@ -308,7 +308,7 @@ if authentication_status:
                 if st.session_state.cart:
                     if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
                         with st.spinner("Traitement de la vente en cours..."):
-                            sale_ok = process_sale_transaction(
+                            sale_ok, sale_msg = process_sale_transaction(
                                 st.session_state.cart,
                                 st.session_state.get("username", "inconnu"),
                             )
@@ -320,9 +320,8 @@ if authentication_status:
                             cached_product_options.clear()
                             st.rerun()
                         else:
-                            st.error(
-                                "Échec de la vente. Vérifiez le stock disponible et réessayez."
-                            )
+                            error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                            st.error(error_msg)
 
             st.markdown('</div>', unsafe_allow_html=True)
         
