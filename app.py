@@ -18,7 +18,14 @@ from PIL import Image
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
 
 # Importation des fonctions de gestion de la BDD et du chargeur 
-from data_repository import query_df, exec_sql, exec_sql_return_id, get_engine, get_product_details
+from data_repository import (
+    query_df,
+    exec_sql,
+    exec_sql_return_id,
+    get_engine,
+    get_product_details,
+    get_product_options,
+)
 from inventory_service import *
 import products_loader
 
@@ -50,22 +57,29 @@ if "cart" not in st.session_state:
     st.session_state["cart"] = []
     
 # --- Configuration de l'Authentification ---
-SECRET_KEY = '__auth_token_inventaire_secure_2025' 
+SECRET_KEY = os.getenv("STREAMLIT_SECRET_KEY", "__auth_token_inventaire_secure_2025")
 
-hashed_passwords = stauth.Hasher(['jemmysev', 'userpass']).generate()
+PASSWORD_HASHES = {
+    "admin": os.getenv(
+        "ADMIN_PASSWORD_HASH", "$2b$12$JA6jQijn5i21uQquBDOkR.gFIeXD82mri3DS0dcQ8HjB8.ycjYdI2"
+    ),
+    "user": os.getenv(
+        "USER_PASSWORD_HASH", "$2b$12$onUKmKMoVtAfpr.Lus9iW.bz.Q69Y/Ylf8nfSPzSL/avBHqeuuvTi"
+    ),
+}
 
 credentials = {
     "usernames": {
         "admin": {
             "email": "ulrich@inventaire.fr",
             "name": "ulrich",
-            "password": hashed_passwords[0], 
+            "password": PASSWORD_HASHES["admin"],
             "role": "admin"
         },
         "user": {
             "email": "user@inventaire.fr",
             "name": "user",
-            "password": hashed_passwords[1], 
+            "password": PASSWORD_HASHES["user"],
             "role": "standard"
         }
     }
@@ -100,10 +114,11 @@ def to_float(x, default=0.0, minv=None, maxv=None):
     except Exception:
         return default
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
+def cached_product_options() -> dict[str, int]:
+    """Retourne un dictionnaire {nom: id} mis en cache pour les sélecteurs."""
+    return {name: pid for name, pid in get_product_options()}
 
-# Placez cette fonction n'importe où en haut de votre script app.py,
-# ou avant la fonction principale de la page Streamlit.
 
 def update_product_data():
     """
@@ -132,8 +147,7 @@ def update_product_data():
     # Pour l'exemple, nous allons directement faire la recherche de détails pour avoir l'ID:
     
     # Reconstruire la liste des options (si elles sont cachées) pour trouver l'ID
-    all_products = get_product_options() # Fonction à utiliser pour obtenir tous les produits (nom, id)
-    product_options = {p[0]: p[1] for p in all_products} # Créer le dictionnaire nom -> id
+    product_options = cached_product_options()
     
     selected_product_id = product_options.get(selected_product_name)
 
@@ -152,6 +166,7 @@ def update_product_data():
     else:
         st.session_state.ajust_error = "Sélection de produit invalide."
 
+@st.cache_data(ttl=300)
 def load_products_list():
     sql_query = """
         SELECT
@@ -160,6 +175,7 @@ def load_products_list():
             p.prix_vente,
             p.tva,
             p.stock_actuel AS quantite_stock,
+            COALESCE(string_agg(pb.code, ', ' ORDER BY pb.code), '') AS codes_barres,
             CASE
                 WHEN p.stock_actuel <= 0 THEN '❌ Rupture'
                 WHEN p.stock_actuel < 5 THEN '⚠️ Faible'
@@ -182,25 +198,6 @@ def load_products_list():
         st.error(f"Erreur critique de chargement des produits: {e}. Vérifiez la vue 'v_stock_produits'.")
         return pd.DataFrame()
 
-
-def update_product_info_callback():
-    selected_name = st.session_state.adj_product
-    # Retrouver l'ID depuis le DataFrame ou la liste d'options si nécessaire
-    # Dans votre cas, l'ID est déjà mis à jour directement via la liste d'options
-    selected_id = st.session_state.product_options[selected_name] # Nécessite de stocker product_options
-    
-    product_details = get_product_details(selected_id)
-    
-    if product_details:
-        st.session_state.ajust_produit_id = product_details['id']
-        st.session_state.ajust_stock_actuel = float(product_details['quantite_stock'])
-        st.session_state.ajust_nom = product_details['nom']
-    else:
-        st.session_state.ajust_produit_id = None
-        st.session_state.ajust_stock_actuel = 0.00
-        st.session_state.ajust_nom = "Produit Inconnu"
-        
-        
 # --- Classe Barcode Detector (pour le Scanner) ---
 class BarcodeDetector(VideoTransformerBase):
     """Détecte les codes-barres dans chaque frame vidéo. Déclenche le Rerun Streamlit."""
@@ -237,9 +234,10 @@ class BarcodeDetector(VideoTransformerBase):
 name, authentication_status, username = authenticator.login('Connexion à l\'Inventaire', 'main')
 
 if authentication_status:
-    
+
     # --- UI Setup et Définition des Onglets ---
     st.session_state["user_role"] = credentials["usernames"][username]["role"]
+    st.session_state["username"] = username
 
     st.title("📦 Inventaire — Gestion Complète")
     st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')
@@ -309,9 +307,22 @@ if authentication_status:
                 st.divider()
                 if st.session_state.cart:
                     if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
-                        st.success("Vente Finalisée (Logique de mouvements de stock à implémenter ici)!")
-                        st.session_state.cart = []
-                        st.rerun()
+                        with st.spinner("Traitement de la vente en cours..."):
+                            sale_ok = process_sale_transaction(
+                                st.session_state.cart,
+                                st.session_state.get("username", "inconnu"),
+                            )
+
+                        if sale_ok:
+                            st.success("Vente finalisée et stock mis à jour ✅")
+                            st.session_state.cart = []
+                            load_products_list.clear()
+                            cached_product_options.clear()
+                            st.rerun()
+                        else:
+                            st.error(
+                                "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                            )
 
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -322,11 +333,9 @@ if authentication_status:
 
             # --- 1. CHARGEMENT DYNAMIQUE DES PRODUITS ---
             try:
-                products_df = query_df("SELECT id, nom FROM produits ORDER BY nom")
-                
-                product_options = {row['nom']: row['id'] for index, row in products_df.iterrows()}
+                product_options = cached_product_options()
                 product_names = ["-- Sélectionner un produit --"] + list(product_options.keys())
-                
+
                 initial_input = st.session_state.get("last_barcode", "")
                 if st.session_state.get("last_barcode"):
                     st.session_state["last_barcode"] = None
@@ -469,7 +478,8 @@ if authentication_status:
                                     updates_count += 1
 
                             st.success(f"{updates_count} produit(s) mis à jour avec succès!")
-                            load_products_list.clear() 
+                            load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         else:
                             st.info("Aucune modification n'a été détectée dans le tableau.")
@@ -490,6 +500,7 @@ if authentication_status:
                             exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
                             st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
                             load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
@@ -518,11 +529,12 @@ if authentication_status:
                             if new_codes:
                                 codes_list = [c.strip() for c in new_codes.split(';') if c.strip()]
                                 for code in codes_list:
-                                    sql_code = text("INSERT INTO produits_barcodes (produit_id, code_barres) VALUES (:pid, :code) ON CONFLICT (code_barres) DO NOTHING")
+                                    sql_code = text("INSERT INTO produits_barcodes (produit_id, code) VALUES (:pid, :code) ON CONFLICT (code) DO NOTHING")
                                     exec_sql(sql_code.bindparams(pid=product_id, code=code))
 
                             st.success(f"Produit '{new_nom}' ajouté avec succès!")
-                            load_products_list.clear() 
+                            load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de l'ajout: {e}")
@@ -538,7 +550,7 @@ if authentication_status:
             st.info("Veuillez ajouter des produits au catalogue d'abord.")
             st.stop()
 
-        product_options = {row['nom']: row['id'] for index, row in df_products.iterrows()}
+        product_options = cached_product_options()
         product_names = list(product_options.keys())
 
         # --- Ajustement de stock pour les admins ---
@@ -549,103 +561,65 @@ if authentication_status:
                 col_prod, col_qty = st.columns(2)
                 selected_product_name = col_prod.selectbox("Produit à ajuster", product_names, key='adj_product',)
                 selected_product_id = product_options.get(selected_product_name)
-                
-                product_details = get_product_details(selected_product_id)
-                """
-                if product_details:
-                # 🚨 ÉTAPE CLÉ : STOCKER LES INFOS DANS LA SESSION STATE
-                    st.session_state.ajust_produit_id = product_details['id']
-                    st.session_state.ajust_stock_actuel = float(product_details['quantite_stock'])
-                    st.session_state.ajust_nom = product_details['nom']
+                product_details = (
+                    get_product_details(selected_product_id) if selected_product_id else None
+                )
 
-                    st.info(f"Produit trouvé: **{st.session_state.ajust_nom}**")
-                    st.warning(f"Stock actuel: **{st.session_state.ajust_stock_actuel:.2f}**")
-        
-                else:
-                    # S'il n'est pas trouvé, nettoyer la session pour éviter les erreurs
-                    st.session_state.ajust_produit_id = None
+                current_stock = 0.0
+                if product_details:
+                    current_stock = float(product_details.get('quantite_stock') or 0)
+                    st.info(f"Produit trouvé: **{product_details['nom']}**")
+                    st.warning(f"Stock actuel: **{current_stock:.2f}**")
+                elif selected_product_name:
                     st.error("Produit non trouvé.")
-                
-                #current_stock = df_products[df_products['id'] == selected_product_id]['quantite_stock'].iloc[0] if selected_product_id else 0
-                #st.caption(f"Stock actuel: **{current_stock:.2f}**")
-      """          
-                # Affichage des informations de stock AVANT le number_input, en utilisant la session state
-        # qui a été mise à jour par le callback `update_product_data`.
-                if st.session_state.get('ajust_nom'):
-                    st.info(f"Produit trouvé: **{st.session_state.ajust_nom}**")
-                    st.warning(f"Stock actuel: **{st.session_state.ajust_stock_actuel:.2f}**")
-                elif st.session_state.get('ajust_error'):
-                    st.error(st.session_state.ajust_error)
                 else:
                     st.info("Sélectionnez un produit pour afficher le stock actuel.")
-                
+
                 target_stock = col_qty.number_input(
-                    "Nouvelle Quantité Totale (Inventaire)", 
-                    min_value=0.00, 
-                    value=st.session_state.get('ajust_stock_actuel',0.00), 
-                    step=0.01, 
-                    format="%.2f", 
+                    "Nouvelle Quantité Totale (Inventaire)",
+                    min_value=0.00,
+                    value=current_stock,
+                    step=0.01,
+                    format="%.2f",
                     key='adj_target_qty'
                 )
-                
-                
-                
+
                 if st.form_submit_button("Enregistrer l'Ajustement", type="primary"):
-                    # 🚨 CORRECTION : RÉCUPÉRATION DES VARIABLES DEPUIS LA SESSION STATE
-                    produit_id = st.session_state.get('ajust_produit_id')
-                    stock_actuel = st.session_state.get('ajust_stock_actuel', 0) # Utiliser 0 par défaut
-                    nouvelle_quantite = st.session_state.adj_target_qty
-                    quantite_mvt = nouvelle_quantite - stock_actuel
-                    nom_produit = st.session_state.get('ajust_nom', "Produit Inconnu")
-                    
-                    if not produit_id:
+                    if not selected_product_id:
                         st.error("Erreur: Le produit n'a pas été trouvé ou sélectionné. Veuillez réessayer.")
-                        # Utiliser 'return' pour stopper l'exécution du reste de la boucle
-                    elif abs(quantite_mvt) < 0.001:
-                        st.warning(f"Le stock de **{nom_produit}** n'a pas changé. ({stock_actuel:.2f} -> {nouvelle_quantite:.2f}) Aucune action BDD requise.")
-                    
                     else:
-                    
-    # Assurez-vous que nouvelle_quantite est également récupérée correctement du formulaire
-                
-                    # 1. Construction des paramètres du mouvement (DICTIONNAIRE)
-                        # Déterminer le type de mouvement et la quantité (toujours positive)
-                        if quantite_mvt > 0:
-                            mouvement_type = 'ENTREE' # On ajoute du stock
-                            quantite_a_enregistrer = quantite_mvt
+                        quantite_mvt = target_stock - current_stock
+
+                        if abs(quantite_mvt) < 0.001:
+                            st.warning(
+                                f"Le stock de **{selected_product_name}** n'a pas changé. ({current_stock:.2f} -> {target_stock:.2f})"
+                            )
                         else:
-                            mouvement_type = 'SORTIE' # On retire du stock
-                            quantite_a_enregistrer = abs(quantite_mvt) # On prend la valeur absolue (qui sera > 0)
-                            
-                        mouvement_params = {
-                        'pid': produit_id, 
-                        'type': mouvement_type, 
-                    # La quantité est la différence entre le nouveau stock et l'ancien stock
-                        'quantite': quantite_a_enregistrer, 
-                        'source': f"Inventaire par {st.session_state['username']}"
-                        }
+                            mouvement_type = 'ENTREE' if quantite_mvt > 0 else 'SORTIE'
+                            mouvement_params = {
+                                'pid': selected_product_id,
+                                'type': mouvement_type,
+                                'quantite': abs(quantite_mvt),
+                                'source': f"Inventaire par {st.session_state.get('username', 'inconnu')}"
+                            }
 
-                        sql_mvt = """
-                    INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-                    VALUES (:pid, :type, :quantite, :source)
-                    """
+                            sql_mvt = text(
+                                """
+                                INSERT INTO mouvements_stock (produit_id, type, quantite, source)
+                                VALUES (:pid, :type, :quantite, :source)
+                                """
+                            )
 
-                        try:
-                    # 2. Appel à exec_sql : ENCAPSULEZ le dictionnaire dans une LISTE
-                    # Ceci force exec_sql à traiter l'entrée comme une liste de 1 élément
-                            exec_sql(sql_mvt, [mouvement_params]) # <--- MODIFICATION CLÉ !
-        
-                            st.success(f"Ajustement réussi. Le stock de {st.session_state.ajust_nom} est maintenant à {nouvelle_quantite} unités.")
-                        # Nettoyer l'état de la session si nécessaire
-                            st.session_state.ajust_produit_id = None
-                            st.session_state.ajust_stock_actuel = None
-                            #st.session_state.adj_target_qty = 0.00
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
-                else:
-                    st.info("Aucun changement de stock détecté.")
+                            try:
+                                exec_sql(sql_mvt, mouvement_params)
+                                st.success(
+                                    f"Ajustement réussi. Le stock de {selected_product_name} est maintenant à {target_stock:.2f} unités."
+                                )
+                                load_products_list.clear()
+                                cached_product_options.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
         else:
             st.subheader("Historique des Mouvements Récents")
         
@@ -785,7 +759,7 @@ if authentication_status:
                         SELECT p.nom 
                         FROM produits p
                         JOIN produits_barcodes pb ON p.id = pb.produit_id
-                        WHERE pb.code_barres = :code
+                        WHERE pb.code = :code
                         LIMIT 1
                     """).bindparams(code=st.session_state['last_barcode']))
                     if not df_p.empty:
@@ -841,8 +815,8 @@ if authentication_status:
                         with st.spinner("Importation en cours..."):
                             # Préparation du DataFrame pour l'import
                             cols_to_check = {
-                                "prix_vente": 0.0, 
-                                "tva": 20.0, 
+                                "prix_vente": 0.0,
+                                "tva": 20.0,
                                 "qte_init": 0.0, 
                                 "codes": ""
                             }
@@ -861,9 +835,35 @@ if authentication_status:
                             
                             # Logique d'importation
                             results = products_loader.load_products_from_df(df)
-                        
+
                         st.success("Importation terminée!")
-                        st.caption(f"{results['success_count']} produits ajoutés/mis à jour.")
+                        st.caption(
+                            f"Lignes traitées : {results['rows_processed']} / {results['rows_received']}"
+                        )
+
+                        product_summary = []
+                        if results["created"]:
+                            product_summary.append(f"{results['created']} créé(s)")
+                        if results["updated"]:
+                            product_summary.append(f"{results['updated']} mis à jour")
+                        if product_summary:
+                            st.info("Produits : " + ", ".join(product_summary))
+                        else:
+                            st.info("Produits : aucune modification apportée.")
+
+                        if results["stock_initialized"]:
+                            st.caption(
+                                f"{results['stock_initialized']} mouvement(s) de stock initial enregistrés."
+                            )
+
+                        barcode_stats = results["barcode"]
+                        if any(barcode_stats.values()):
+                            st.caption(
+                                "Codes-barres — "
+                                f"ajouts: {barcode_stats['added']}, "
+                                f"doublons ignorés: {barcode_stats['conflicts']}, "
+                                f"erreurs: {barcode_stats['skipped']}"
+                            )
 
                         # Afficher les erreurs d'importation
                         if results['errors']:
@@ -872,8 +872,9 @@ if authentication_status:
                             st.dataframe(errors_df, use_container_width=True, hide_index=True)
                         else:
                             st.success("Toutes les lignes valides ont été importées avec succès.")
-                        
+
                         load_products_list.clear()
+                        cached_product_options.clear()
                         st.rerun()
             
             except Exception as e:
