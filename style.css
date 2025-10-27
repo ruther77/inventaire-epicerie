@@ -1,0 +1,86 @@
+/* Fichier de Style Personnalisé (style.css) */
+
+/* 1. Base et Thème */
+body {
+    font-family: 'Inter', sans-serif; /* Police moderne */
+}
+/* Fond principal (très sombre) */
+#root > div:nth-child(1) > div > div > div {
+    background-color: #0E0E0E; 
+}
+
+/* 2. Style des Cartes/Conteneurs (Containers, Columns, Expander) */
+/* Ce sélecteur cible la plupart des blocs de contenu Streamlit */
+.st-emotion-cache-p5m9mr.e1f1d6gn3, /* st.container */
+.st-emotion-cache-6qob1r.e1fqz6h74, /* st.column (important pour les graphiques et inputs) */
+.st-emotion-cache-1r6ft8b.e1f1d6gn3, /* st.expander */
+.st-emotion-cache-1cpx9i1.e1f1d6gn3, /* st.form */
+.st-emotion-cache-1r4qj8m.e1f1d6gn3 { /* st.data_editor inner div */
+    background-color: #1A1A1A; /* Fond gris foncé des cartes */
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4); /* Ombre marquée pour la profondeur */
+    transition: all 0.2s ease-in-out;
+}
+
+/* 3. Style des Onglets (Bleu Néon) */
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid #00BFFF; /* Bleu néon */
+    margin-bottom: 20px;
+}
+.stTabs [aria-selected="true"] {
+    border-bottom: 4px solid #00BFFF !important; 
+    color: #00BFFF !important;
+}
+
+/* 4. Style des Boutons (Effet 3D et Vif) */
+.stButton>button {
+    background-color: #00BFFF; 
+    color: #000000 !important;
+    border: none;
+    border-radius: 6px;
+    font-weight: bold;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s;
+}
+.stButton>button:hover {
+    background-color: #0088CC; 
+    color: #FFFFFF !important;
+    transform: translateY(-1px); /* Effet de soulèvement */
+}
+
+/* 5. Style du Titre Principal */
+h1 {
+    color: #00BFFF; 
+    font-weight: 900;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #1A1A1A;
+}
+
+/* 6. CLASSE PERSONNALISÉE pour les Tuiles d'Applications (Type Odoo) */
+.app-tile {
+    background-color: #1A1A1A;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: all 0.2s;
+    height: 100%;
+}
+.app-tile:hover {
+    background-color: #252525; 
+    transform: translateY(-5px); /* Effet de soulèvement au survol */
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+.tile-icon {
+    font-size: 3em;
+    margin-bottom: 10px;
+}
+.tile-caption {
+    font-weight: bold;
+    color: #00BFFF; 
+    font-size: 1.1em;
+}
+

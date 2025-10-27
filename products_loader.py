@@ -1,252 +1,189 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Charge des produits depuis un tableur Excel dans la BDD, avec codes-barres.
-- Connexion via l'URL SQLAlchemy dans la variable d'environnement DATABASE_URL
-- Tables: produits, mouvements_stock, produits_barcodes
-- Idempotent sur 'nom' du produit et 'code' du code-barres (UNIQUE(code) en BDD)
-- Colonne attendue pour codes: 'Code-barres' (peut contenir un code ou plusieurs séparés par virgule/point-virgule/espace)
-"""
 import os
 import sys
-import argparse
 import re
 import pandas as pd
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection
+from data_repository import exec_sql
 
+# --- Fonctions de BDD EMBEDDÉES (Pas de dépendance à data_repository) ---
+
+def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str):
+    """Insère un code-barres s'il n'existe pas, ou ne fait rien si le lien existe déjà."""
+    # Le 'ON CONFLICT (code) DO NOTHING' est plus simple et sécuritaire pour cet usage
+    sql = """
+    INSERT INTO produits_barcodes (produit_id, code)
+    VALUES (:pid, :code)
+    ON CONFLICT (code) DO NOTHING; 
+    """
+    # Exécution simple car nous utilisons déjà une connexion (conn)
+    conn.execute(text(sql), {"pid": produit_id, "code": barcode})
+
+def get_engine():
+    """Crée et retourne l'engine de connexion à la base de données."""
+    # Utilise la variable d'environnement ou le défaut Docker Compose
+    DATABASE_URL = os.getenv("DATABASE_URL") or "postgresql+psycopg2://postgres:postgres@db:5432/epicerie"
+    return create_engine(DATABASE_URL, pool_pre_ping=True)
+
+
+def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
+    """Exécute une requête SQL et retourne l'ID (colonne 0) en utilisant une connexion ouverte."""
+    result = conn.execute(text(sql), params)
+    row = result.fetchone()
+    return row[0] if row else None
+
+
+# --- Fonctions Utilitaires ---
 ALCOHOL_KEYWORDS = [
-    "biere","bière","beer","vin","whisky","whiskey","rhum","rum","vodka",
-    "liqueur","champagne","cidre","tequila","gin","pastis","sake","saké",
-    "cognac","armagnac","porto","martini"
+    "biere", "bière", "beer", "vin", "whisky", "rhum", "vodka",
+    "liqueur", "champagne", "cidre", "tequila", "gin", "pastis",
+    "cognac", "armagnac", "porto"
 ]
 
-FOOD_HINTS = [
-    "epicerie","épicerie","riz","pates","pâtes","farine","sucre","huile","lait",
-    "yaourt","conserve","thon","sardine","maquereau","maquereaux","biscuit","biscuiterie",
-    "chocolat","semoule","couscous","haricot","lentille","soupe","purée","sirop","céréale","cereale",
-    "tomate","poulet","boeuf","boeuf","dinde","agneau","poisson","sauce","condiment","épice","epice",
-    "eau"
-]
+def determine_categorie(nom_produit):
+    """Détermine la catégorie à partir du nom du produit."""
+    nom = str(nom_produit).upper()
+    if any(k in nom for k in ALCOHOL_KEYWORDS):
+        return 'Alcool'
+    if 'JUS' in nom or 'BOISSON' in nom or 'EAU' in nom or 'SODA' in nom:
+        return 'Boissons'
+    if 'HYGIENE' in nom or 'SAVON' in nom or 'SHAMPOOING' in nom:
+        return 'Hygiene'
+    if 'AFRIQUE' in nom or 'YASSA' in nom or 'TIÈB' in nom:
+        return 'Afrique'
+    return 'Autre'
 
-BARCODE_SEP_RE = re.compile(r"[,\;\s]+")
+def create_initial_stock(conn: Connection, produit_id: int, quantite: float):
+    """Insère un mouvement de stock initial pour le produit."""
+    if quantite > 0:
+        sql = """
+            INSERT INTO mouvements_stock (produit_id, type, quantite, source)
+            VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial');
+        """
+        conn.execute(text(sql), {"produit_id": produit_id, "quantite": quantite})
 
-def guess_tva(nom: str, categorie: str|None) -> float:
-    name = (nom or "").lower()
-    cat  = (categorie or "").lower()
-    if "alcool" in cat or any(k in name for k in ALCOHOL_KEYWORDS):
-        return 20.0
-    if any(k in cat for k in ["epicerie","épicerie"]):
-        return 5.5
-    if "boisson" in cat:
-        return 20.0 if any(k in name for k in ALCOHOL_KEYWORDS) else 5.5
-    if any(k in name for k in FOOD_HINTS):
-        return 5.5
-    return 20.0
 
-def normalize_barcode(val) -> list[str]:
-    """
-    Retourne une liste de codes propres (str de chiffres) à partir d'une cellule.
-    Gère les numériques Excel (scientifiques), les multiples séparés par virgule/point-virgule/espace.
-    Filtre à des longueurs plausibles (8,12,13,14) sans les forcer strictement.
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)) or (isinstance(val, str) and not val.strip()):
-        return []
-    s = str(val).strip()
-    # Si Excel a mis en exponentiel, tenter conversion
+# --- Fonction Principale d'Importation ---
+def process_products_file(csv_path: str) -> dict:
+    
+    total_created = 0
+    total_updated = 0
+    total_stocked = 0
+    total_rows = 0
+    errors = []
+    
     try:
-        if re.fullmatch(r"\d+(\.0+)?", s):
-            s = str(int(float(s)))
-    except Exception:
-        pass
-    # Split si multiples
-    parts = BARCODE_SEP_RE.split(s)
-    out = []
-    for p in parts:
-        p = re.sub(r"\D", "", p)  # garder que les chiffres
-        if not p:
-            continue
-        if len(p) in (8,12,13,14):  # EAN-8, UPC-A(12), EAN-13, ITF-14
-            out.append(p)
-        else:
-            # accepter quand même si longueur atypique, mais éviter les trucs très courts
-            if len(p) >= 6:
-                out.append(p)
-    # dédupliquer en conservant l'ordre
-    seen = set()
-    uniq = []
-    for x in out:
-        if x not in seen:
-            uniq.append(x); seen.add(x)
-    return uniq
+        # CORRECTION : Utilisation du séparateur virgule (',')
+        df_produits = pd.read_csv(csv_path, sep=',', dtype=str, keep_default_na=False)
+        total_rows = len(df_produits)
+        
+    except Exception as e:
+        # Si ça échoue ici, il y a un problème de fichier ou de séparateur
+        return {"total_rows": 0, "total_created": 0, "total_updated": 0, "errors": [f"ERREUR FATALE LECTURE CSV: {e}"]}
 
-def get_engine() -> Engine:
-    dburl = os.getenv("DATABASE_URL")
-    if not dburl:
-        raise RuntimeError("DATABASE_URL n'est pas défini.")
-    return create_engine(dburl, pool_pre_ping=True)
+    # 2. Ouverture de la connexion et de la transaction
+    eng = get_engine()
+    with eng.begin() as conn: 
+        
+        # 3. Boucle d'itération et d'insertion
+        for i, row in df_produits.iterrows():
+            try:
+                # --- Préparation des Données (avec gestion des colonnes manquantes) ---
+                nom = str(row["nom"]).strip()
+                # 💡 NOUVEAU : Lecture de la colonne 'codes' du CSV
+                codes = str(row.get('codes', '')).strip()
+                # S'assure que c'est une chaîne, même si elle est vide
+        #codes = str(codes).strip() if codes is not None else ""
+                # Valeurs par défaut pour les colonnes manquantes
+                prix_achat = float(row.get("prix_achat", 0.0) or 0.0)
+                seuil_alerte_defaut = float(row.get("seuil_alerte_defaut", 0) or 0)
+                qte_init = float(row.get("quantite_initiale") or row.get("qte_init", 0.0) or 0.0)
+                
+                # Les colonnes obligatoires dans votre CSV
+                prix_vente = float(row["prix_vente"])
+                tva = float(row["tva"])
+                categorie = determine_categorie(nom)
 
-def upsert_produit(conn, nom: str, prix_vente: float|None, tva: float|None, actif: bool=True, prix_achat: float|None=None, seuil_alerte: float|None=None):
-    row = conn.execute(text("SELECT id FROM produits WHERE lower(nom)=:n"), {"n": nom.lower()}).fetchone()
-    if row:
-        pid = row[0]
-        conn.execute(text("""
-            UPDATE produits
-               SET prix_vente = COALESCE(:pv, prix_vente),
-                   tva        = COALESCE(:tva, tva),
-                   actif      = :actif
-             WHERE id = :id
-        """), {"pv": prix_vente, "tva": tva, "actif": actif, "id": pid})
-        return pid, False
-    else:
-        res = conn.execute(text("""
-            INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, actif)
-            VALUES (:nom, :pa, :pv, :tva, :seuil, :actif)
-            RETURNING id
-        """), {"nom": nom, "pa": prix_achat, "pv": prix_vente, "tva": tva, "seuil": seuil_alerte, "actif": actif})
-        pid = res.scalar_one()
-        return pid, True
-
-def has_any_mvt(conn, produit_id: int) -> bool:
-    r = conn.execute(text("SELECT 1 FROM mouvements_stock WHERE produit_id=:id LIMIT 1"), {"id": produit_id}).fetchone()
-    return bool(r)
-
-def create_initial_stock(conn, produit_id: int, quantite: float, source: str="Import Excel"):
-    conn.execute(text("""
-        INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-        VALUES (:pid, 'ENTREE', :qte, :src)
-    """), {"pid": produit_id, "qte": quantite, "src": source})
-
-def ensure_barcodes(conn, produit_id: int, codes: list[str]) -> tuple[int,int,int]:
-    """
-    Insère les codes si absents. Gère l'unicité sur 'code'.
-    - premier code = is_principal=True si aucun principal existant.
-    - si un code existe pour un autre produit, on le signale en conflit (skip).
-    Retourne (added, skipped_existing_same_product, conflicts_other_product).
-    """
-    added = skipped = conflicts = 0
-
-    # Y a-t-il déjà un principal ?
-    r = conn.execute(text("SELECT 1 FROM produits_barcodes WHERE produit_id=:p AND is_principal"), {"p": produit_id}).fetchone()
-    has_principal = bool(r)
-
-    for idx, code in enumerate(codes):
-        row = conn.execute(text("SELECT id, produit_id FROM produits_barcodes WHERE code=:c"), {"c": code}).fetchone()
-        if row:
-            # Existe déjà
-            if row[1] == produit_id:
-                skipped += 1
-            else:
-                conflicts += 1
-            continue
-        conn.execute(text("""
-            INSERT INTO produits_barcodes (produit_id, code, symbologie, pays_iso2, is_principal)
-            VALUES (:pid, :code, NULL, NULL, :princ)
-        """), {
-            "pid": produit_id,
-            "code": code,
-            "princ": (False if has_principal else (idx == 0))
-        })
-        if not has_principal and idx == 0:
-            has_principal = True
-        added += 1
-    return added, skipped, conflicts
-
-def main():
-    p = argparse.ArgumentParser(description="Import de produits + codes-barres depuis Excel vers la BDD.")
-    p.add_argument("excel_path", help="Chemin du tableur")
-    p.add_argument("--sheet", help="Nom de feuille")
-    p.add_argument("--dry-run", action="store_true", help="Prévisualisation sans écrire en BDD")
-    p.add_argument("--prix-achat", type=float, help="Prix d'achat par défaut si inconnu")
-    p.add_argument("--seuil-alerte", type=float, default=5, help="Seuil d'alerte stock par défaut")
-    args = p.parse_args()
-
-    df = pd.read_excel(args.excel_path, sheet_name=args.sheet) if args.sheet else pd.read_excel(args.excel_path)
-
-    # Colonnes minimales
-    required = ["Nom","Prix de vente"]
-    for k in required:
-        if k not in df.columns:
-            raise RuntimeError(f"Colonne obligatoire manquante: '{k}'")
-    # Facultatives
-    qty_col = "Quantité disponible" if "Quantité disponible" in df.columns else None
-    cat_col = "Catégorie de produits" if "Catégorie de produits" in df.columns else None
-    bar_col = None
-    for c in df.columns:
-        if str(c).strip().lower() in ("code-barres","code barre","code-barre","barcode","ean","code ean","gtin"):
-            bar_col = c; break
-
-    plan_rows = []
-    for _, r in df.iterrows():
-        nom = str(r.get("Nom","")).strip()
-        if not nom:
-            continue
-
-        pv  = r.get("Prix de vente", None)
-        pv  = float(pv) if (pv is not None and pd.notna(pv)) else None
-
-        qte = float(r.get(qty_col, 0) or 0) if qty_col else 0.0
-        cat = r.get(cat_col) if cat_col else None
-        tva = guess_tva(nom, cat if (cat is not None and pd.notna(cat)) else None)
-
-        codes = []
-        if bar_col is not None:
-            codes = normalize_barcode(r.get(bar_col))
-
-        plan_rows.append({
-            "nom": nom,
-            "prix_vente": pv,
-            "tva_estimee": tva,
-            "quantite_initiale": qte,
-            "codes": codes
-        })
-
-    plan_df = pd.DataFrame([
-        {"nom": x["nom"], "prix_vente": x["prix_vente"], "tva": x["tva_estimee"], "qte_init": x["quantite_initiale"], "codes": ", ".join(x["codes"])}
-        for x in plan_rows
-    ])
-
-    if args.dry_run:
-        print("=== APERÇU (25 premières lignes) ===")
-        print(plan_df.head(25).to_string(index=False))
-        print("\nTotal lignes prêtes:", len(plan_df))
-        return
-
-    engine = get_engine()
-    total_created = total_updated = total_stocked = 0
-    total_codes_added = total_codes_skipped = total_codes_conflicts = 0
-
-    with engine.begin() as conn:
-        for row in plan_rows:
-            pid, is_new = upsert_produit(
-                conn,
-                nom=row["nom"],
-                prix_vente=row["prix_vente"],
-                tva=row["tva_estimee"],
-                actif=True,
-                prix_achat=args.prix_achat,
-                seuil_alerte=args.seuil_alerte
-            )
-            if is_new: total_created += 1
-            else:      total_updated += 1
-
-            if row["quantite_initiale"] and row["quantite_initiale"] > 0:
-                if not has_any_mvt(conn, pid):
-                    create_initial_stock(conn, pid, row["quantite_initiale"])
+                # --- Insertion du Produit (Logique UPDATE/INSERT) ---
+                
+                # 1. Tenter la mise à jour (UPDATE) si le produit existe déjà
+                update_result = conn.execute(
+                    text("""
+                        UPDATE produits SET 
+                            prix_achat = :prix_achat, 
+                            prix_vente = :prix_vente, 
+                            tva = :tva, 
+                            seuil_alerte = :seuil_alerte,
+                            categorie = :categorie,
+                            updated_at = now()
+                        WHERE lower(nom) = lower(:nom)
+                        RETURNING id
+                    """),
+                    {
+                        "nom": nom, "prix_achat": prix_achat, "prix_vente": prix_vente, 
+                        "tva": tva, "seuil_alerte": seuil_alerte_defaut, "categorie": categorie
+                    }
+                )
+                
+                updated_row = update_result.fetchone()
+                
+                if updated_row:
+                    produit_id = updated_row[0]
+                    total_updated += 1
+                else:
+                    # 2. Si aucune ligne mise à jour, effectuer l'insertion (INSERT)
+                    insert_result = conn.execute(
+                        text("""
+                            INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, categorie) 
+                            VALUES (:nom, :prix_achat, :prix_vente, :tva, :seuil_alerte, :categorie)
+                            RETURNING id
+                        """),
+                        {
+                            "nom": nom, "prix_achat": prix_achat, "prix_vente": prix_vente, 
+                            "tva": tva, "seuil_alerte": seuil_alerte_defaut, "categorie": categorie
+                        }
+                    )
+                    
+                    inserted_row = insert_result.fetchone()
+                    if inserted_row:
+                        produit_id = inserted_row[0]
+                        total_created += 1
+                    else:
+                        # Si l'insertion échoue ici (très improbable), on lève une erreur.
+                        raise Exception("Insertion ratée sans exception SQL détaillée.")
+                # --- Insertion du Stock Initial ---
+                if produit_id and qte_init > 0:
+                    create_initial_stock(conn, produit_id, qte_init)
                     total_stocked += 1
+                
+                if produit_id and codes: # Si on a un ID et que la chaîne 'codes' n'est pas vide
+                    print(f"DEBUG: Tentative d'insertion du code {codes} pour le produit ID {produit_id}") # <--- AJOUTER CETTE LIGNE
+                    insert_or_update_barcode(conn, produit_id, codes) 
+                    total_codes_added += 1
+                
+            except Exception as e:
+                # Si l'insertion SQL échoue (IntegrityError, UniqueViolation, etc.)
+                errors.append({"ligne": i + 2, "nom": nom, "erreur": str(e)})
 
-            if row["codes"]:
-                a, s, c = ensure_barcodes(conn, pid, row["codes"])
-                total_codes_added     += a
-                total_codes_skipped   += s
-                total_codes_conflicts += c
+# 4. Retour des résultats
+    return {
+        "total_rows": total_rows, "total_created": total_created, "total_updated": total_updated, 
+        "total_stocked": total_stocked, "total_codes_added": 0, "total_codes_skipped": 0,
+        "total_codes_conflicts": 0, "errors": errors
+    }
 
-    print(f"Import terminé. Produits créés: {total_created}, mis à jour: {total_updated}, stocks initiaux ajoutés: {total_stocked}.")
-    print(f"Codes-barres ajoutés: {total_codes_added}, déjà présents (même produit): {total_codes_skipped}, en conflit (autre produit): {total_codes_conflicts}.")
-
-    out_csv = os.path.splitext(os.path.basename(args.excel_path))[0] + "_plan_import.csv"
-    plan_df.to_csv(out_csv, index=False, encoding="utf-8")
-    print(f"Plan d'import sauvegardé: {out_csv}")
-
+# --- Bloc d'Exécution Principal ---
 if __name__ == "__main__":
-    main()
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else 'Produit.csv'
+    results = process_products_file(csv_path)
+
+    print("--- RÉSULTATS DE L'IMPORTATION ---")
+    print(f"Total de lignes traitées : {results['total_rows']}")
+    print(f"Produits créés : {results['total_created']}, Mis à jour : {results['total_updated']}")
+    
+    if results['errors']:
+        print(f"\n🚨 {len(results['errors'])} ERREURS TROUVÉES lors de l'importation (Top 5):")
+        for error in results['errors'][:5]:
+            print(f"  Ligne {error['ligne']} ({error['nom']}): {error['erreur']}")
+    else:
+        print("✅ Aucune erreur d'importation trouvée. La base de données devrait être mise à jour.")

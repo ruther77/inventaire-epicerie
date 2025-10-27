@@ -14,7 +14,7 @@ logs: ## suivre les logs de l'app
 	docker compose logs -f app
 
 psql: ## console postgres
-	docker compose exec db psql -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+	docker compose exec db psql -U postgres -d epicerie
 
 shell: ## shell dans le conteneur app
 	docker compose exec app bash || docker compose exec app sh
@@ -42,3 +42,11 @@ prod-down: ## arrêter et supprimer la prod
 prod-rebuild: ## rebuild + up (prod)
 	docker compose --env-file .env.prod -f docker-compose.prod.yml build --no-cache
 	docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+
+
+# ... (Contenu existant) ...
+
+import-data: ## Importer les produits (utilise Produit.csv par défaut)
+	@echo "Lancement de l'importation de Produit.csv avec prix d'achat par défaut de 0.5..."
+	docker compose exec app python3 products_loader.py Produit.csv
+	@echo "Importation terminée. Redémarrez le conteneur 'app' ou videz le cache Streamlit si l'affichage n'est pas à jour."

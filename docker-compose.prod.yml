@@ -1,66 +1,48 @@
+# docker-compose.yml (Version Corrigée et Complète pour 3 services)
+version: '3.8'
+
 services:
+  # 1. Base de Données PostgreSQL
   db:
-    image: postgres:16
-    container_name: inventaire-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    networks:
-      - inventaire-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ${APP_IMAGE:-inventaire-app:latest}
-    container_name: inventaire-app
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      STREAMLIT_SERVER_ENABLE_CORS: "false"
-      STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "true"
-      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
-    networks:
-      - inventaire-net
-    depends_on:
-      db:
-        condition: service_healthy
-
-  proxy:
-    image: caddy:2
-    container_name: inventaire-proxy
-    restart: unless-stopped
+    image: postgres:15-alpine
+    container_name: postgres_inventaire_v2
     ports:
-      - "80:80"
-      - "443:443"
+      - "5432:5432" 
     environment:
-      # Caddy will request certificates for your domain automatically (Let's Encrypt)
-      # Set SITE_DOMAIN in your .env.prod, e.g. inv.mondomaine.fr
-      SITE_DOMAIN: ${SITE_DOMAIN}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: epicerie
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - inventaire-net
+      # Ceci est la ligne CRUCIALE pour réutiliser les données
+      - postgres_data:/var/lib/postgresql/data/
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c 'config_file=/etc/postgresql/postgresql.conf'
+  # 2. Application Streamlit
+  app:
+    build: .
+    container_name: streamlit_inventaire_v2
+    ports:
+      - "8501:8501" 
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/epicerie
+    volumes:
+      - ./Produit.csv:/app/Produit.csv
     depends_on:
-      - app
+      - db
+
+  # 3. Service API Externe (FastAPI - LE NOUVEAU SERVICE)
+  api:
+    build: .
+    container_name: fastapi_inventaire
+    ports:
+      - "8000:8000" 
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/epicerie
+    # Commande pour lancer le serveur FastAPI
+    command: python -m uvicorn api_server:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - db
 
 volumes:
-  db_data:
-  caddy_data:
-  caddy_config:
-
-networks:
-  inventaire-net:
-    driver: bridge
+  # Volume qui stocke vos données réelles
+  postgres_data:

@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: inventaire-epicerie
+    env: docker
+    region: frankfurt
+    plan: free
+    autoDeploy: true
