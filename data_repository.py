@@ -8,7 +8,11 @@ import streamlit as st
 from functools import lru_cache
 
 # Utilisation d'une variable d'environnement ou d'une valeur par défaut
-DATABASE_URL = os.getenv("DATABASE_URL") or "postgresql+psycopg2://postgres:postgres@localhost:5432/epicerie"
+_DEFAULT_DB_HOST = os.getenv("DB_HOST", "localhost")
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or f"postgresql+psycopg2://postgres:postgres@{_DEFAULT_DB_HOST}:5432/epicerie"
+)
 
 @st.cache_resource
 def get_engine() -> Engine:
@@ -38,11 +42,12 @@ def exec_sql(sql: str | TextClause, params=None) -> None:
     eng = get_engine()
     with eng.begin() as conn:
         # Si params est une liste (exécution en lot), utilise executemany
-        # Sinon, utilise execute simple
         if isinstance(params, list):
             conn.execute(statement, params)
+        elif params is None:
+            conn.execute(statement)
         else:
-            conn.execute(statement, [params]) # Wrapper unique dans une liste pour l'uniformité
+            conn.execute(statement, params)
 
 def exec_sql_return_id(sql: str | TextClause, params=None):
     """
@@ -56,9 +61,26 @@ def exec_sql_return_id(sql: str | TextClause, params=None):
         result = conn.execute(statement, params) 
         row = result.fetchone()
         return row[0] if row else None
-        
+
 
 # ... (Vos fonctions existantes : get_engine, query_df, exec_sql, exec_sql_return_id) ...
+
+
+def get_product_options() -> list[tuple[str, int]]:
+    """Retourne la liste des produits actifs (nom, id) triés par nom."""
+    sql = text(
+        """
+        SELECT nom, id
+        FROM produits
+        WHERE actif = TRUE
+        ORDER BY nom
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [(row.nom, row.id) for row in result]
 
 def get_product_details(identifier: str | int) -> dict | None:
     """
