@@ -62,7 +62,10 @@ class DummyEngine:
 
 
 def test_process_sale_transaction_returns_false_for_empty_cart():
-    assert inventory_service.process_sale_transaction([], "user") is False
+    success, message = inventory_service.process_sale_transaction([], "user")
+
+    assert success is False
+    assert message == "Le panier est vide, aucune vente n'a été effectuée."
 
 
 def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
@@ -81,11 +84,12 @@ def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success = inventory_service.process_sale_transaction([
+    success, message = inventory_service.process_sale_transaction([
         {"id": 1, "qty": 5}
     ], "user")
 
     assert success is False
+    assert "Stock insuffisant" in (message or "")
     stock_queries = sum(
         1 for stmt in calls if isinstance(stmt, str) and "SELECT stock_actuel" in stmt
     )
@@ -113,11 +117,12 @@ def test_process_sale_transaction_updates_stock_without_trigger(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success = inventory_service.process_sale_transaction([
+    success, message = inventory_service.process_sale_transaction([
         {"id": 3, "qty": 4}
     ], "admin")
 
     assert success is True
+    assert message is None
     statements = [stmt for stmt, _ in execution_log]
     assert any("UPDATE produits" in stmt for stmt in statements)
     assert any("INSERT INTO mouvements_stock" in stmt for stmt in statements)
