@@ -7,9 +7,11 @@ import re
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
-from functools import lru_cache 
-import streamlit_authenticator as stauth 
+from functools import lru_cache
+import streamlit_authenticator as stauth
 import plotly.express as px
+
+from cart_normalizer import normalize_cart_rows
 
 # Imports pour le Scanner et la Vidéo
 import cv2 
@@ -28,6 +30,7 @@ from data_repository import (
 )
 from inventory_service import *
 import products_loader
+import invoice_extractor
 
 # --- FONCTION POUR CHARGER LE CSS EXTERNE (style.css) ---
 def local_css(file_name):
@@ -399,18 +402,22 @@ if authentication_status:
                 st.session_state.cart =  []
                 st.info("Le panier est vide. Veuillez ajouter des produits.")
             else:
-                # 2. Création d'un DataFrame pour l'affichage
-                cart_df = pd.DataFrame(st.session_state.cart)
-                
-                # 3. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
+                # 2. Normalisation des lignes de panier (legacy -> canonique)
+                normalised_cart = normalize_cart_rows(st.session_state.cart)
+                st.session_state.cart = normalised_cart
+
+                # 3. Création d'un DataFrame pour l'affichage
+                cart_df = pd.DataFrame(normalised_cart)
+
+                # 4. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
                 for column, default in (("prix_vente", 0.0), ("tva", 0.0), ("qty", 0)):
                     if column not in cart_df.columns:
                         cart_df[column] = default
 
                 cart_df['prix_total'] = cart_df['prix_vente'].fillna(0.0) * cart_df['qty'].fillna(0)
                 cart_df['total_tva'] = cart_df['prix_total'] * (cart_df['tva'].fillna(0.0) / 100)
-                
-                # 4. Affichage du tableau
+
+                # 5. Affichage du tableau
                 st.dataframe(
                     cart_df[['nom', 'qty', 'prix_vente', 'prix_total']],
                     column_config={
@@ -423,18 +430,18 @@ if authentication_status:
                     use_container_width=True
                 )
                 
-                # 5. Calcul des totaux
+                # 6. Calcul des totaux
                 total_ttc = cart_df['prix_total'].sum()
                 total_tva = cart_df['total_tva'].sum()
                 total_ht = total_ttc - total_tva
-                
+
                 col_tva, col_ht, col_ttc = st.columns(3)
-                
+
                 col_ht.metric("Total HT", f"{total_ht:.2f} €")
                 col_tva.metric("Total TVA", f"{total_tva:.2f} €")
                 col_ttc.metric("Total TTC", f"{total_ttc:.2f} €", delta_color="off")
-                
-                # 6. Bouton pour Vider le Panier
+
+                # 7. Bouton pour Vider le Panier
                 if st.button("Vider le Panier", help="Annule la transaction en cours.", key="clear_cart_btn"):
                     st.session_state.cart = []
                     st.rerun()
@@ -1027,57 +1034,182 @@ if authentication_status:
 
     # ---------------- Importation ----------------
     with import_tab:
-        st.header("Importation de Produits par Fichier CSV")
+        st.header("Importation de Produits")
 
-        uploaded_file = st.file_uploader(
-            "Télécharger un fichier CSV de produits (colonnes requises : nom, prix_vente, tva, qte_init, codes (Optionnel))", 
-            type=['csv']
-        )
-        
-        # Définition des colonnes attendues
-        expected_cols = ["nom", "prix_vente", "tva", "qte_init", "codes"]
-        st.caption(f"Colonnes attendues (minimum): {', '.join(expected_cols)}")
-        
-        if uploaded_file:
-            try:
-                # Lecture du fichier CSV
-                df = pd.read_csv(uploaded_file, sep=",")
-                
-                # Vérification des colonnes manquantes
-                missing_cols = [col for col in expected_cols if col not in df.columns]
-                if missing_cols:
-                    st.warning(f"Attention: Le fichier CSV manque les colonnes : {', '.join(missing_cols)}. Des valeurs par défaut seront utilisées.")
+        extraction_tab, csv_tab_inner = st.tabs([
+            "Extraction facture METRO",
+            "Import CSV classique",
+        ])
 
-                st.write("Aperçu des données à importer:")
-                st.dataframe(df.head(), use_container_width=True)
-                
-                if 'nom' not in df.columns:
-                    st.error("Le fichier CSV doit contenir au moins la colonne 'nom'. Importation impossible.")
+        with extraction_tab:
+            st.subheader("Extraction automatique depuis une facture fournisseur")
+            st.caption(
+                "Téléversez un PDF/DOCX de facture METRO ou collez le texte brut de la section produits."
+            )
+
+            uploaded_invoice = st.file_uploader(
+                "Télécharger une facture (PDF, DOCX ou TXT)",
+                type=["pdf", "docx", "txt"],
+                key="invoice_uploader",
+            )
+            manual_invoice_text = st.text_area(
+                "Ou collez directement le texte brut de la facture",
+                height=160,
+                key="invoice_text_area",
+                placeholder="Collez ici le texte issu de la facture (copier/coller depuis le PDF).",
+            )
+
+            extracted_text = ""
+            if uploaded_invoice is not None:
+                with st.spinner("Extraction du texte en cours..."):
+                    extracted_text = invoice_extractor.extract_text_from_file(uploaded_invoice)
+                if not extracted_text:
+                    st.warning("Aucun texte détecté dans le fichier téléversé.")
+                elif extracted_text.lower().startswith("erreur"):
+                    st.error(extracted_text)
+                    extracted_text = ""
+
+            raw_invoice_text = manual_invoice_text.strip() or extracted_text.strip()
+
+            if raw_invoice_text:
+                with st.expander("Prévisualiser le texte brut extrait", expanded=False):
+                    st.text(raw_invoice_text)
+
+                col_margin, col_tva, col_stock = st.columns([1, 1, 1])
+                with col_margin:
+                    apply_margin = st.checkbox(
+                        "Appliquer une marge", value=True, key="invoice_apply_margin"
+                    )
+                    margin_pct = st.number_input(
+                        "Marge (%)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        value=30.0,
+                        step=1.0,
+                        key="invoice_margin_pct",
+                    )
+                with col_tva:
+                    default_tva = st.number_input(
+                        "TVA par défaut (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=20.0,
+                        step=0.5,
+                        key="invoice_default_tva",
+                    )
+                    tva_code_d = st.number_input(
+                        "TVA code D (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=20.0,
+                        step=0.5,
+                        key="invoice_tva_d",
+                    )
+                    tva_code_p = st.number_input(
+                        "TVA code P (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=5.5,
+                        step=0.5,
+                        key="invoice_tva_p",
+                    )
+                with col_stock:
+                    seuil_alerte = st.number_input(
+                        "Seuil d'alerte (stock)",
+                        min_value=0.0,
+                        max_value=1_000_000.0,
+                        value=0.0,
+                        step=1.0,
+                        key="invoice_stock_threshold",
+                    )
+                    arrondi_qty = st.selectbox(
+                        "Arrondi des quantités",
+                        options=["aucun", "entier"],
+                        index=0,
+                        key="invoice_qty_rounding",
+                    )
+
+                tva_mapping = {"D": tva_code_d, "P": tva_code_p}
+                base_df = invoice_extractor.extract_products_from_metro_invoice(
+                    raw_invoice_text,
+                    tva_map=tva_mapping,
+                    default_tva=default_tva,
+                )
+
+                if base_df.empty:
+                    st.warning("Aucun produit n'a été identifié dans le texte fourni.")
                 else:
-                    if st.button("Lancer l'Importation des Produits", type="primary"):
-                        with st.spinner("Importation en cours..."):
-                            # Préparation du DataFrame pour l'import
-                            cols_to_check = {
-                                "prix_vente": 0.0,
-                                "tva": 20.0,
-                                "qte_init": 0.0, 
-                                "codes": ""
-                            }
-                            for col, default in cols_to_check.items():
-                                if col not in df.columns:
-                                    df[col] = default
-                            
-                            # Application de la fonction to_float
-                            df['prix_vente'] = df['prix_vente'].apply(to_float, minv=0.0)
-                            df['tva'] = df['tva'].apply(to_float, minv=0.0, maxv=100.0)
-                            df['qte_init'] = df['qte_init'].apply(to_float, minv=0.0)
-                            df['codes'] = df['codes'].fillna('').astype(str)
+                    df_ready = base_df.copy()
+                    df_ready["nom"] = df_ready["nom"].fillna("").astype(str).str.strip()
+                    df_ready = df_ready[df_ready["nom"] != ""].copy()
 
-                            # Filtrer les lignes vides
-                            df.dropna(subset=['nom'], inplace=True)
-                            
-                            # Logique d'importation
-                            results = products_loader.load_products_from_df(df)
+                    df_ready["codes"] = df_ready["codes"].fillna("").astype(str).str.strip()
+                    df_ready["qte_init"] = df_ready["qte_init"].fillna(0).astype(float)
+                    if arrondi_qty == "entier":
+                        df_ready["qte_init"] = df_ready["qte_init"].round().astype(int)
+                    df_ready["prix_achat"] = df_ready["prix_achat"].fillna(0.0).astype(float)
+                    df_ready["tva"] = df_ready["tva"].fillna(default_tva).astype(float)
+
+                    if apply_margin:
+                        df_ready["prix_vente"] = (
+                            df_ready["prix_achat"] * (1 + margin_pct / 100.0)
+                        )
+                    df_ready["prix_vente"] = df_ready["prix_vente"].fillna(
+                        df_ready["prix_achat"]
+                    )
+
+                    df_ready["prix_achat"] = df_ready["prix_achat"].round(2)
+                    df_ready["prix_vente"] = df_ready["prix_vente"].round(2)
+                    df_ready["tva"] = df_ready["tva"].round(2)
+                    df_ready["seuil_alerte_defaut"] = seuil_alerte
+                    df_ready["prix_total_estime"] = (
+                        df_ready["prix_vente"] * df_ready["qte_init"]
+                    ).round(2)
+
+                    total_lignes = len(df_ready)
+                    total_qte = float(df_ready["qte_init"].sum())
+                    total_valeur = float(df_ready["prix_total_estime"].sum())
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Produits détectés", total_lignes)
+                    c2.metric("Quantité totale", f"{total_qte:,.0f}".replace(",", " "))
+                    c3.metric("Valeur TTC estimée", f"{total_valeur:,.2f} €")
+
+                    display_cols = [
+                        "nom",
+                        "codes",
+                        "numero_article",
+                        "qte_init",
+                        "prix_achat",
+                        "prix_vente",
+                        "tva",
+                        "tva_code",
+                        "montant_total_facture",
+                        "prix_total_estime",
+                    ]
+                    available_cols = [col for col in display_cols if col in df_ready.columns]
+                    st.dataframe(
+                        df_ready[available_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    csv_data = df_ready.to_csv(index=False).encode("utf-8-sig")
+                    st.download_button(
+                        "Télécharger les données extraites (CSV)",
+                        data=csv_data,
+                        file_name="produits_facture_metro.csv",
+                        mime="text/csv",
+                        key="invoice_download_button",
+                    )
+
+                    if st.button(
+                        "Importer ces produits dans l'inventaire",
+                        type="primary",
+                        key="invoice_import_button",
+                    ):
+                        with st.spinner("Importation des produits extraits..."):
+                            results = products_loader.load_products_from_df(df_ready)
 
                         st.success("Importation terminée!")
                         st.caption(
@@ -1108,9 +1240,10 @@ if authentication_status:
                                 f"ignorés/erreurs: {barcode_stats['skipped']}"
                             )
 
-                        # Afficher les erreurs d'importation
                         if results['errors']:
-                            st.warning(f"{len(results['errors'])} ligne(s) non importée(s) en raison d'erreurs.")
+                            st.warning(
+                                f"{len(results['errors'])} ligne(s) non importée(s) en raison d'erreurs."
+                            )
                             errors_df = pd.DataFrame(results['errors'])
                             st.dataframe(errors_df, use_container_width=True, hide_index=True)
                         else:
@@ -1123,10 +1256,107 @@ if authentication_status:
                         load_table_counts.clear()
                         load_table_preview.clear()
                         st.rerun()
-            
-            except Exception as e:
-                st.error(f"Une erreur est survenue lors de la lecture ou du traitement du fichier: {e}")
-                st.exception(e)
+            else:
+                st.info("Téléchargez une facture ou collez le texte brut pour lancer l'extraction.")
+
+        with csv_tab_inner:
+            st.subheader("Importation de Produits par Fichier CSV")
+
+            uploaded_file = st.file_uploader(
+                "Télécharger un fichier CSV de produits (colonnes requises : nom, prix_vente, tva, qte_init, codes (Optionnel))",
+                type=['csv'],
+                key="csv_import_uploader",
+            )
+
+            expected_cols = ["nom", "prix_vente", "tva", "qte_init", "codes"]
+            st.caption(f"Colonnes attendues (minimum): {', '.join(expected_cols)}")
+
+            if uploaded_file:
+                try:
+                    df = pd.read_csv(uploaded_file, sep=",")
+
+                    missing_cols = [col for col in expected_cols if col not in df.columns]
+                    if missing_cols:
+                        st.warning(
+                            f"Attention: Le fichier CSV manque les colonnes : {', '.join(missing_cols)}. Des valeurs par défaut seront utilisées."
+                        )
+
+                    st.write("Aperçu des données à importer:")
+                    st.dataframe(df.head(), use_container_width=True)
+
+                    if 'nom' not in df.columns:
+                        st.error("Le fichier CSV doit contenir au moins la colonne 'nom'. Importation impossible.")
+                    else:
+                        if st.button("Lancer l'Importation des Produits", type="primary", key="csv_import_button"):
+                            with st.spinner("Importation en cours..."):
+                                cols_to_check = {
+                                    "prix_vente": 0.0,
+                                    "tva": 20.0,
+                                    "qte_init": 0.0,
+                                    "codes": "",
+                                }
+                                for col, default in cols_to_check.items():
+                                    if col not in df.columns:
+                                        df[col] = default
+
+                                df['prix_vente'] = df['prix_vente'].apply(to_float, minv=0.0)
+                                df['tva'] = df['tva'].apply(to_float, minv=0.0, maxv=100.0)
+                                df['qte_init'] = df['qte_init'].apply(to_float, minv=0.0)
+                                df['codes'] = df['codes'].fillna('').astype(str)
+
+                                df.dropna(subset=['nom'], inplace=True)
+
+                                results = products_loader.load_products_from_df(df)
+
+                            st.success("Importation terminée!")
+                            st.caption(
+                                f"Lignes traitées : {results['rows_processed']} / {results['rows_received']}"
+                            )
+
+                            product_summary = []
+                            if results["created"]:
+                                product_summary.append(f"{results['created']} créé(s)")
+                            if results["updated"]:
+                                product_summary.append(f"{results['updated']} mis à jour")
+                            if product_summary:
+                                st.info("Produits : " + ", ".join(product_summary))
+                            else:
+                                st.info("Produits : aucune modification apportée.")
+
+                            if results["stock_initialized"]:
+                                st.caption(
+                                    f"{results['stock_initialized']} mouvement(s) de stock initial enregistrés."
+                                )
+
+                            barcode_stats = results["barcode"]
+                            if any(barcode_stats.values()):
+                                st.caption(
+                                    "Codes-barres — "
+                                    f"ajouts: {barcode_stats['added']}, "
+                                    f"conflits: {barcode_stats['conflicts']}, "
+                                    f"ignorés/erreurs: {barcode_stats['skipped']}"
+                                )
+
+                            if results['errors']:
+                                st.warning(
+                                    f"{len(results['errors'])} ligne(s) non importée(s) en raison d'erreurs."
+                                )
+                                errors_df = pd.DataFrame(results['errors'])
+                                st.dataframe(errors_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.success("Toutes les lignes valides ont été importées avec succès.")
+
+                            load_products_list.clear()
+                            cached_product_options.clear()
+                            load_movement_timeseries.clear()
+                            load_recent_movements.clear()
+                            load_table_counts.clear()
+                            load_table_preview.clear()
+                            st.rerun()
+
+                except Exception as e:
+                    st.error(f"Une erreur est survenue lors de la lecture ou du traitement du fichier: {e}")
+                    st.exception(e)
 
 
     # ---------------- Maintenance (Admin) ----------------

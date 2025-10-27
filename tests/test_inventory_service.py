@@ -1,4 +1,5 @@
 import importlib.util
+from decimal import Decimal
 from pathlib import Path
 import sys
 
@@ -14,6 +15,8 @@ if _SPEC is None or _SPEC.loader is None:
     raise ImportError(f"Unable to load inventory_service from {_MODULE_PATH}")
 inventory_service = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(inventory_service)
+
+import cart_normalizer
 
 
 class DummyScalarResult:
@@ -62,7 +65,9 @@ class DummyEngine:
 
 
 def test_process_sale_transaction_returns_false_for_empty_cart():
-    assert inventory_service.process_sale_transaction([], "user") is False
+    success, message = inventory_service.process_sale_transaction([], "user")
+    assert success is False
+    assert message == "Le panier est vide, aucune vente n'a été effectuée."
 
 
 def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
@@ -81,11 +86,12 @@ def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success = inventory_service.process_sale_transaction([
+    success, message = inventory_service.process_sale_transaction([
         {"id": 1, "qty": 5}
     ], "user")
 
     assert success is False
+    assert message == "Stock insuffisant: Produit 1 (stock 2 < vente 5)"
     stock_queries = sum(
         1 for stmt in calls if isinstance(stmt, str) and "SELECT stock_actuel" in stmt
     )
@@ -113,11 +119,59 @@ def test_process_sale_transaction_updates_stock_without_trigger(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success = inventory_service.process_sale_transaction([
+    success, message = inventory_service.process_sale_transaction([
         {"id": 3, "qty": 4}
     ], "admin")
 
     assert success is True
+    assert message is None
     statements = [stmt for stmt, _ in execution_log]
     assert any("UPDATE produits" in stmt for stmt in statements)
     assert any("INSERT INTO mouvements_stock" in stmt for stmt in statements)
+
+
+def test_process_sale_transaction_handles_legacy_cart_keys(monkeypatch):
+    execution_log = []
+
+    def handler(statement, params):
+        execution_log.append((statement, params))
+        if "SELECT EXISTS" in statement:
+            return DummyScalarResult(True)
+        if "SELECT stock_actuel" in statement:
+            return DummyFetchResult((25,))
+        if "INSERT INTO mouvements_stock" in statement:
+            return DummyFetchResult(None)
+        if "UPDATE produits" in statement:
+            return DummyFetchResult(None)
+        return DummyFetchResult(None)
+
+    connection = DummyConnection(handler)
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
+    monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
+
+    legacy_cart = [
+        {
+            "product_id": "7",
+            "name": "Ancien Produit",
+            "quantite": "3",
+            "price": "4,50",
+            "tva": "20",
+        }
+    ]
+
+    normalised = cart_normalizer.normalize_cart_rows(legacy_cart)
+    assert normalised[0]["prix_total"] == pytest.approx(13.5)
+
+    success, message = inventory_service.process_sale_transaction(normalised, "legacy_user")
+
+    assert success is True
+    assert message is None
+
+    insert_params_list = next(
+        params
+        for stmt, params in execution_log
+        if isinstance(stmt, str) and "INSERT INTO mouvements_stock" in stmt
+    )
+    assert insert_params_list
+    assert insert_params_list[0]["qty"] == Decimal("3")
