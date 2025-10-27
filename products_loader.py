@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, Dict, List
-
 import pandas as pd
-from sqlalchemy import exc as sa_exc, text
+from sqlalchemy import create_engine, text, exc as sa_exc
 from sqlalchemy.engine import Connection
 
 from data_repository import get_engine
@@ -21,10 +19,11 @@ def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str) ->
     ON CONFLICT (code) DO NOTHING;
     """
 
-    result = conn.execute(text(sql), {"pid": produit_id, "code": barcode})
-    if result.rowcount and result.rowcount > 0:
-        return "added"
-    return "conflict"
+def get_engine():
+    """Crée et retourne l'engine de connexion à la base de données."""
+    db_host = os.getenv("DB_HOST", "db")
+    database_url = os.getenv("DATABASE_URL") or f"postgresql+psycopg2://postgres:postgres@{db_host}:5432/epicerie"
+    return create_engine(database_url, pool_pre_ping=True)
 
 
 def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
@@ -74,21 +73,26 @@ def determine_categorie(nom_produit):
 
 def create_initial_stock(conn: Connection, produit_id: int, quantite: float):
     """Insère un mouvement de stock initial pour le produit."""
-
-    if quantite <= 0:
-        return
-
-    sql = """
-        INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-        VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial');
-    """
-    conn.execute(text(sql), {"produit_id": produit_id, "quantite": quantite})
+    if quantite > 0:
+        sql = """
+            INSERT INTO mouvements_stock (produit_id, type, quantite, source)
+            VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial');
+        """
+        conn.execute(text(sql), {"produit_id": produit_id, "quantite": quantite})
 
 
-# --- Normalisation des données importées ---
-
-
-def _coerce_float(value: Any, default: float = 0.0) -> float:
+# --- Fonction Principale d'Importation ---
+def process_products_file(csv_path: str) -> dict:
+    
+    total_created = 0
+    total_updated = 0
+    total_stocked = 0
+    total_rows = 0
+    total_codes_added = 0
+    total_codes_skipped = 0
+    total_codes_conflicts = 0
+    errors = []
+    
     try:
         if value is None or (isinstance(value, str) and value.strip() == ""):
             return default
@@ -140,33 +144,26 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
             summary["rows_processed"] += 1
 
             try:
-                nom = str(row.get("nom", "")).strip()
-                if not nom:
-                    raise ValueError("Nom de produit manquant")
+                # --- Préparation des Données (avec gestion des colonnes manquantes) ---
+                nom = str(row["nom"]).strip()
+                # 💡 NOUVEAU : Lecture de la colonne 'codes' du CSV
+                codes_raw = str(row.get('codes', '')).strip()
+                codes_list = [c.strip() for c in codes_raw.split(';') if c.strip()]
+                # S'assure que c'est une chaîne, même si elle est vide
+        #codes = str(codes).strip() if codes is not None else ""
+                # Valeurs par défaut pour les colonnes manquantes
+                prix_achat = float(row.get("prix_achat", 0.0) or 0.0)
+                seuil_alerte_defaut = float(row.get("seuil_alerte_defaut", 0) or 0)
+                qte_init = float(row.get("quantite_initiale") or row.get("qte_init", 0.0) or 0.0)
+                
+                # Les colonnes obligatoires dans votre CSV
+                prix_vente = float(row["prix_vente"])
+                tva = float(row["tva"])
+                categorie = determine_categorie(nom)
 
-                prix_vente = _coerce_float(row.get("prix_vente"))
-                if prix_vente <= 0:
-                    raise ValueError("Prix de vente invalide")
-
-                prix_achat = _coerce_float(row.get("prix_achat"))
-                tva = _coerce_float(row.get("tva"), default=0.0)
-                seuil = _coerce_float(row.get("seuil_alerte_defaut", row.get("seuil_alerte")))
-                quantite_initiale = _coerce_float(
-                    row.get("qte_init", row.get("quantite_initiale")), default=0.0
-                )
-
-                categorie = str(row.get("categorie", "")).strip() or determine_categorie(nom)
-                codes_list = _clean_codes(row.get("codes"))
-
-                params = {
-                    "nom": nom,
-                    "prix_achat": prix_achat,
-                    "prix_vente": prix_vente,
-                    "tva": tva,
-                    "seuil_alerte": seuil,
-                    "categorie": categorie,
-                }
-
+                # --- Insertion du Produit (Logique UPDATE/INSERT) ---
+                
+                # 1. Tenter la mise à jour (UPDATE) si le produit existe déjà
                 update_result = conn.execute(
                     text(
                         """
@@ -202,52 +199,39 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
                     )
 
                     inserted_row = insert_result.fetchone()
-                    if not inserted_row:
-                        raise RuntimeError("Insertion produit sans identifiant retourné")
-                    produit_id = inserted_row[0]
-                    summary["created"] += 1
+                    if inserted_row:
+                        produit_id = inserted_row[0]
+                        total_created += 1
+                    else:
+                        # Si l'insertion échoue ici (très improbable), on lève une erreur.
+                        raise Exception("Insertion ratée sans exception SQL détaillée.")
+                # --- Insertion du Stock Initial ---
+                if produit_id and qte_init > 0:
+                    create_initial_stock(conn, produit_id, qte_init)
+                    total_stocked += 1
+                
+                if produit_id and codes_list:
+                    for code in codes_list:
+                        try:
+                            insert_or_update_barcode(conn, produit_id, code)
+                            total_codes_added += 1
+                        except sa_exc.IntegrityError:
+                            total_codes_conflicts += 1
+                        except Exception:
+                            total_codes_skipped += 1
+                            raise
 
-                if produit_id and quantite_initiale > 0:
-                    create_initial_stock(conn, produit_id, quantite_initiale)
-                    summary["stock_initialized"] += 1
+            except Exception as e:
+                # Si l'insertion SQL échoue (IntegrityError, UniqueViolation, etc.)
+                errors.append({"ligne": i + 2, "nom": nom, "erreur": str(e)})
 
-                for code in codes_list:
-                    try:
-                        status = insert_or_update_barcode(conn, produit_id, code)
-                        summary["barcode"][status] += 1
-                    except sa_exc.IntegrityError:
-                        summary["barcode"]["conflicts"] += 1
-                    except Exception as code_error:  # noqa: BLE001 - logging manuel dans le résumé
-                        summary["barcode"]["skipped"] += 1
-                        raise code_error
-
-            except Exception as exc:  # noqa: BLE001 - le but est de collecter toutes les erreurs
-                summary["errors"].append(
-                    {"ligne": idx + 2, "nom": row.get("nom", "?"), "erreur": str(exc)}
-                )
-
-    return summary
-
-
-# --- Support CLI historique ---
-
-
-def process_products_file(csv_path: str) -> Dict[str, Any]:
-    try:
-        df_produits = pd.read_csv(csv_path, sep=",", dtype=str, keep_default_na=False)
-    except Exception as exc:
-        return {
-            "rows_received": 0,
-            "rows_processed": 0,
-            "created": 0,
-            "updated": 0,
-            "stock_initialized": 0,
-            "barcode": {"added": 0, "conflicts": 0, "skipped": 0},
-            "errors": [f"ERREUR FATALE LECTURE CSV: {exc}"],
-        }
-
-    return load_products_from_df(df_produits)
-
+# 4. Retour des résultats
+    return {
+        "total_rows": total_rows, "total_created": total_created, "total_updated": total_updated,
+        "total_stocked": total_stocked, "total_codes_added": total_codes_added,
+        "total_codes_skipped": total_codes_skipped, "total_codes_conflicts": total_codes_conflicts,
+        "errors": errors
+    }
 
 if __name__ == "__main__":
     csv_path = sys.argv[1] if len(sys.argv) > 1 else "Produit.csv"
