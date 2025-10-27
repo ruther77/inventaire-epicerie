@@ -402,9 +402,13 @@ if authentication_status:
                 # 2. Création d'un DataFrame pour l'affichage
                 cart_df = pd.DataFrame(st.session_state.cart)
                 
-                # 3. Calcul du sous-total TTC et de la TVA par ligne
-                cart_df['prix_total'] = cart_df['prix_vente'] * cart_df['qty']
-                cart_df['total_tva'] = cart_df['prix_total'] * (cart_df['tva'] / 100)
+                # 3. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
+                for column, default in (("prix_vente", 0.0), ("tva", 0.0), ("qty", 0)):
+                    if column not in cart_df.columns:
+                        cart_df[column] = default
+
+                cart_df['prix_total'] = cart_df['prix_vente'].fillna(0.0) * cart_df['qty'].fillna(0)
+                cart_df['total_tva'] = cart_df['prix_total'] * (cart_df['tva'].fillna(0.0) / 100)
                 
                 # 4. Affichage du tableau
                 st.dataframe(
