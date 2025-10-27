@@ -431,7 +431,7 @@ if authentication_status:
                 #    -> On force la présence des colonnes attendues même si le panier est vide
                 cart_df = pd.DataFrame(
                     st.session_state.cart,
-                    columns=["id", "nom", "prix_vente", "tva", "qty"],
+                    columns=["id", "nom", "prix_vente", "tva", "qte_init"],
                 )
                 
                 # 3. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
