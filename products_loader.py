@@ -1,10 +1,8 @@
 import os
 import sys
-import re
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, exc as sa_exc
 from sqlalchemy.engine import Connection
-from data_repository import exec_sql
 
 # --- Fonctions de BDD : helpers locaux utilisant SQLAlchemy et data_repository ---
 
@@ -21,9 +19,9 @@ def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str):
 
 def get_engine():
     """Crée et retourne l'engine de connexion à la base de données."""
-    # Utilise la variable d'environnement ou le défaut Docker Compose
-    DATABASE_URL = os.getenv("DATABASE_URL") or "postgresql+psycopg2://postgres:postgres@db:5432/epicerie"
-    return create_engine(DATABASE_URL, pool_pre_ping=True)
+    db_host = os.getenv("DB_HOST", "db")
+    database_url = os.getenv("DATABASE_URL") or f"postgresql+psycopg2://postgres:postgres@{db_host}:5432/epicerie"
+    return create_engine(database_url, pool_pre_ping=True)
 
 
 def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
@@ -70,6 +68,9 @@ def process_products_file(csv_path: str) -> dict:
     total_updated = 0
     total_stocked = 0
     total_rows = 0
+    total_codes_added = 0
+    total_codes_skipped = 0
+    total_codes_conflicts = 0
     errors = []
     
     try:
@@ -91,7 +92,8 @@ def process_products_file(csv_path: str) -> dict:
                 # --- Préparation des Données (avec gestion des colonnes manquantes) ---
                 nom = str(row["nom"]).strip()
                 # 💡 NOUVEAU : Lecture de la colonne 'codes' du CSV
-                codes = str(row.get('codes', '')).strip()
+                codes_raw = str(row.get('codes', '')).strip()
+                codes_list = [c.strip() for c in codes_raw.split(';') if c.strip()]
                 # S'assure que c'est une chaîne, même si elle est vide
         #codes = str(codes).strip() if codes is not None else ""
                 # Valeurs par défaut pour les colonnes manquantes
@@ -156,20 +158,27 @@ def process_products_file(csv_path: str) -> dict:
                     create_initial_stock(conn, produit_id, qte_init)
                     total_stocked += 1
                 
-                if produit_id and codes:  # Si on a un ID et que la chaîne 'codes' n'est pas vide
-                    print(f"DEBUG: Tentative d'insertion du code {codes} pour le produit ID {produit_id}")  # Journalisation pour suivi des imports
-                    insert_or_update_barcode(conn, produit_id, codes) 
-                    total_codes_added += 1
-                
+                if produit_id and codes_list:
+                    for code in codes_list:
+                        try:
+                            insert_or_update_barcode(conn, produit_id, code)
+                            total_codes_added += 1
+                        except sa_exc.IntegrityError:
+                            total_codes_conflicts += 1
+                        except Exception:
+                            total_codes_skipped += 1
+                            raise
+
             except Exception as e:
                 # Si l'insertion SQL échoue (IntegrityError, UniqueViolation, etc.)
                 errors.append({"ligne": i + 2, "nom": nom, "erreur": str(e)})
 
 # 4. Retour des résultats
     return {
-        "total_rows": total_rows, "total_created": total_created, "total_updated": total_updated, 
-        "total_stocked": total_stocked, "total_codes_added": 0, "total_codes_skipped": 0,
-        "total_codes_conflicts": 0, "errors": errors
+        "total_rows": total_rows, "total_created": total_created, "total_updated": total_updated,
+        "total_stocked": total_stocked, "total_codes_added": total_codes_added,
+        "total_codes_skipped": total_codes_skipped, "total_codes_conflicts": total_codes_conflicts,
+        "errors": errors
     }
 
 # --- Bloc d'Exécution Principal ---
