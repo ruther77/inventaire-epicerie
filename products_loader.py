@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 from data_repository import exec_sql
 
-# --- Fonctions de BDD EMBEDDÉES (Pas de dépendance à data_repository) ---
+# --- Fonctions de BDD : helpers locaux utilisant SQLAlchemy et data_repository ---
 
 def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str):
     """Insère un code-barres s'il n'existe pas, ou ne fait rien si le lien existe déjà."""
@@ -156,8 +156,8 @@ def process_products_file(csv_path: str) -> dict:
                     create_initial_stock(conn, produit_id, qte_init)
                     total_stocked += 1
                 
-                if produit_id and codes: # Si on a un ID et que la chaîne 'codes' n'est pas vide
-                    print(f"DEBUG: Tentative d'insertion du code {codes} pour le produit ID {produit_id}") # <--- AJOUTER CETTE LIGNE
+                if produit_id and codes:  # Si on a un ID et que la chaîne 'codes' n'est pas vide
+                    print(f"DEBUG: Tentative d'insertion du code {codes} pour le produit ID {produit_id}")  # Journalisation pour suivi des imports
                     insert_or_update_barcode(conn, produit_id, codes) 
                     total_codes_added += 1
                 
