@@ -75,10 +75,25 @@ def test_extract_products_from_metro_invoice_builds_dataframe():
     df = invoice_extractor.extract_products_from_metro_invoice(raw_text)
 
     assert isinstance(df, pd.DataFrame)
-    assert list(df.columns) == ["nom", "prix_vente", "tva", "qte_init", "codes"]
+    assert {"nom", "prix_vente", "tva", "qte_init", "codes", "prix_achat", "tva_code"}.issubset(df.columns)
     assert list(df["nom"]) == ["Produit Test", "Produit Deux"]
     assert list(df["qte_init"]) == [3, 1]
     assert list(df["codes"]) == ["1234567890123", "9876543210987"]
+    assert list(df["tva"]) == [20.0, 5.5]
+    assert list(df["prix_vente"]) == [1.0, 2.0]
+    assert list(df["prix_achat"]) == [1.0, 2.0]
+    assert list(df["tva_code"]) == ["D", "P"]
+
+
+def test_extract_products_with_custom_tva_map():
+    raw_text = """
+    1234567890123 123456 Produit Test 1.00 3 3.00 Z
+    """
+
+    df = invoice_extractor.extract_products_from_metro_invoice(raw_text, tva_map={"Z": 2.1}, default_tva=19.6)
+
+    assert df.loc[0, "tva"] == 2.1
+    assert df.loc[0, "tva_code"] == "Z"
 
 
 def test_extract_text_from_unsupported_type():

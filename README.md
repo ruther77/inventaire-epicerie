@@ -68,6 +68,24 @@ shell ouvert via `make shell`.
    make down
    ```
 
+#### Mettre à jour le conteneur `app`
+
+Lorsque vous modifiez le code Python ou les assets Streamlit, enregistrez vos
+fichiers puis rechargez simplement la page : grâce au montage du dossier du
+projet, la vue <http://localhost:8501> reflète immédiatement vos changements.
+
+En revanche, les environnements sans montage (production, CI, export d'une
+image) doivent être reconstruits pour embarquer les nouveaux fichiers :
+
+```bash
+make rebuild          # reconstruit l'image puis relance les services
+docker compose up --build app  # alternative équivalente
+```
+
+Cela garantit que le conteneur dispose bien des utilitaires comme
+`invoice_extractor.py` ou `cart_normalizer.py`, et évite tout décalage entre
+l'affichage local et l'image exécutée en production.
+
 ### En local (hors Docker)
 
 1. Créez et activez un environnement virtuel Python 3.11.
