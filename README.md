@@ -22,6 +22,33 @@ pytest
 
 ## Démarrer l'application
 
+### Vérifier votre version locale
+
+Toutes les commandes `git` ci-dessous sont à exécuter dans un terminal ouvert
+à la racine du dépôt cloné (le dossier `inventaire-epicerie`) **sans** les
+préfixer par `docker`. Elles fonctionnent aussi bien sur l'hôte que dans un
+shell ouvert via `make shell`.
+
+1. Afficher la branche active et l'état des fichiers :
+
+   ```bash
+   git status -sb
+   ```
+
+2. Mettre à jour les références distantes puis comparer avec la branche
+   distante suivie (ici `origin/work`) :
+
+   ```bash
+   git fetch origin
+   git log --oneline HEAD..origin/work
+   ```
+
+3. Si vous souhaitez aligner votre copie locale sur la branche distante :
+
+   ```bash
+   git pull --ff-only
+   ```
+
 ### Avec Docker (recommandé)
 
 1. Créez un fichier `.env` à partir de `env.prod.example` en adaptant les
