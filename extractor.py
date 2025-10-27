@@ -231,13 +231,13 @@ D
 "
 """
 
-# Exécution du script
-df_products = extract_products_from_metro_invoice(raw_invoice_data_example)
+if __name__ == "__main__":
+    df_products = extract_products_from_metro_invoice(raw_invoice_data_example)
 
-# Étape 2: Sauvegarde en CSV
-output_filename = "Produits_Facture_Extraits.csv"
-df_products.to_csv(output_filename, index=False, encoding='utf-8')
+    # Étape 2: Sauvegarde en CSV
+    output_filename = "Produits_Facture_Extraits.csv"
+    df_products.to_csv(output_filename, index=False, encoding='utf-8')
 
-print(f"Extraction terminée. Les données ont été sauvegardées dans {output_filename}")
-print("\nAperçu du DataFrame :")
-print(df_products.to_string())
+    print(f"Extraction terminée. Les données ont été sauvegardées dans {output_filename}")
+    print("\nAperçu du DataFrame :")
+    print(df_products.to_string())
