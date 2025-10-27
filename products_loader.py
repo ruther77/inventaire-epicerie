@@ -1,21 +1,23 @@
-import os
+from __future__ import annotations
+
 import sys
 import pandas as pd
 from sqlalchemy import create_engine, text, exc as sa_exc
 from sqlalchemy.engine import Connection
 
-# --- Fonctions de BDD : helpers locaux utilisant SQLAlchemy et data_repository ---
+from data_repository import get_engine
 
-def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str):
-    """Insère un code-barres s'il n'existe pas, ou ne fait rien si le lien existe déjà."""
-    # Le 'ON CONFLICT (code) DO NOTHING' est plus simple et sécuritaire pour cet usage
+# --- Fonctions utilitaires BDD ---
+
+
+def insert_or_update_barcode(conn: Connection, produit_id: int, barcode: str) -> str:
+    """Insère un code-barres et renvoie le statut de l'opération."""
+
     sql = """
     INSERT INTO produits_barcodes (produit_id, code)
     VALUES (:pid, :code)
-    ON CONFLICT (code) DO NOTHING; 
+    ON CONFLICT (code) DO NOTHING;
     """
-    # Exécution simple car nous utilisons déjà une connexion (conn)
-    conn.execute(text(sql), {"pid": produit_id, "code": barcode})
 
 def get_engine():
     """Crée et retourne l'engine de connexion à la base de données."""
@@ -26,30 +28,48 @@ def get_engine():
 
 def exec_sql_return_id_with_conn(conn: Connection, sql: str, params=None):
     """Exécute une requête SQL et retourne l'ID (colonne 0) en utilisant une connexion ouverte."""
+
     result = conn.execute(text(sql), params)
     row = result.fetchone()
     return row[0] if row else None
 
 
 # --- Fonctions Utilitaires ---
+
 ALCOHOL_KEYWORDS = [
-    "biere", "bière", "beer", "vin", "whisky", "rhum", "vodka",
-    "liqueur", "champagne", "cidre", "tequila", "gin", "pastis",
-    "cognac", "armagnac", "porto"
+    "biere",
+    "bière",
+    "beer",
+    "vin",
+    "whisky",
+    "rhum",
+    "vodka",
+    "liqueur",
+    "champagne",
+    "cidre",
+    "tequila",
+    "gin",
+    "pastis",
+    "cognac",
+    "armagnac",
+    "porto",
 ]
+
 
 def determine_categorie(nom_produit):
     """Détermine la catégorie à partir du nom du produit."""
+
     nom = str(nom_produit).upper()
     if any(k in nom for k in ALCOHOL_KEYWORDS):
-        return 'Alcool'
-    if 'JUS' in nom or 'BOISSON' in nom or 'EAU' in nom or 'SODA' in nom:
-        return 'Boissons'
-    if 'HYGIENE' in nom or 'SAVON' in nom or 'SHAMPOOING' in nom:
-        return 'Hygiene'
-    if 'AFRIQUE' in nom or 'YASSA' in nom or 'TIÈB' in nom:
-        return 'Afrique'
-    return 'Autre'
+        return "Alcool"
+    if "JUS" in nom or "BOISSON" in nom or "EAU" in nom or "SODA" in nom:
+        return "Boissons"
+    if "HYGIENE" in nom or "SAVON" in nom or "SHAMPOOING" in nom:
+        return "Hygiene"
+    if "AFRIQUE" in nom or "YASSA" in nom or "TIÈB" in nom:
+        return "Afrique"
+    return "Autre"
+
 
 def create_initial_stock(conn: Connection, produit_id: int, quantite: float):
     """Insère un mouvement de stock initial pour le produit."""
@@ -74,20 +94,55 @@ def process_products_file(csv_path: str) -> dict:
     errors = []
     
     try:
-        # CORRECTION : Utilisation du séparateur virgule (',')
-        df_produits = pd.read_csv(csv_path, sep=',', dtype=str, keep_default_na=False)
-        total_rows = len(df_produits)
-        
-    except Exception as e:
-        # Si ça échoue ici, il y a un problème de fichier ou de séparateur
-        return {"total_rows": 0, "total_created": 0, "total_updated": 0, "errors": [f"ERREUR FATALE LECTURE CSV: {e}"]}
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-    # 2. Ouverture de la connexion et de la transaction
+
+def _clean_codes(raw_codes: Any) -> List[str]:
+    if raw_codes is None:
+        return []
+
+    if isinstance(raw_codes, list):
+        iterator = raw_codes
+    else:
+        iterator = str(raw_codes).replace("\n", " ").split(";")
+
+    cleaned: List[str] = []
+    for chunk in iterator:
+        for item in str(chunk).split(","):
+            code = item.strip()
+            if code:
+                cleaned.append(code)
+    return cleaned
+
+
+# --- Fonction principale utilisée par l'application ---
+
+
+def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
+    """Charge les produits à partir d'un DataFrame et retourne un résumé détaillé."""
+
+    summary: Dict[str, Any] = {
+        "rows_received": int(len(df)),
+        "rows_processed": 0,
+        "created": 0,
+        "updated": 0,
+        "stock_initialized": 0,
+        "barcode": {"added": 0, "conflicts": 0, "skipped": 0},
+        "errors": [],
+    }
+
+    if df.empty:
+        return summary
+
     eng = get_engine()
-    with eng.begin() as conn: 
-        
-        # 3. Boucle d'itération et d'insertion
-        for i, row in df_produits.iterrows():
+    with eng.begin() as conn:
+        for idx, row in df.iterrows():
+            summary["rows_processed"] += 1
+
             try:
                 # --- Préparation des Données (avec gestion des colonnes manquantes) ---
                 nom = str(row["nom"]).strip()
@@ -110,42 +165,39 @@ def process_products_file(csv_path: str) -> dict:
                 
                 # 1. Tenter la mise à jour (UPDATE) si le produit existe déjà
                 update_result = conn.execute(
-                    text("""
-                        UPDATE produits SET 
-                            prix_achat = :prix_achat, 
-                            prix_vente = :prix_vente, 
-                            tva = :tva, 
+                    text(
+                        """
+                        UPDATE produits
+                        SET prix_achat = :prix_achat,
+                            prix_vente = :prix_vente,
+                            tva = :tva,
                             seuil_alerte = :seuil_alerte,
                             categorie = :categorie,
                             updated_at = now()
                         WHERE lower(nom) = lower(:nom)
                         RETURNING id
-                    """),
-                    {
-                        "nom": nom, "prix_achat": prix_achat, "prix_vente": prix_vente, 
-                        "tva": tva, "seuil_alerte": seuil_alerte_defaut, "categorie": categorie
-                    }
+                        """
+                    ),
+                    params,
                 )
-                
-                updated_row = update_result.fetchone()
-                
-                if updated_row:
-                    produit_id = updated_row[0]
-                    total_updated += 1
+
+                result_row = update_result.fetchone()
+
+                if result_row:
+                    produit_id = result_row[0]
+                    summary["updated"] += 1
                 else:
-                    # 2. Si aucune ligne mise à jour, effectuer l'insertion (INSERT)
                     insert_result = conn.execute(
-                        text("""
-                            INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, categorie) 
+                        text(
+                            """
+                            INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, categorie)
                             VALUES (:nom, :prix_achat, :prix_vente, :tva, :seuil_alerte, :categorie)
                             RETURNING id
-                        """),
-                        {
-                            "nom": nom, "prix_achat": prix_achat, "prix_vente": prix_vente, 
-                            "tva": tva, "seuil_alerte": seuil_alerte_defaut, "categorie": categorie
-                        }
+                            """
+                        ),
+                        params,
                     )
-                    
+
                     inserted_row = insert_result.fetchone()
                     if inserted_row:
                         produit_id = inserted_row[0]
@@ -181,18 +233,24 @@ def process_products_file(csv_path: str) -> dict:
         "errors": errors
     }
 
-# --- Bloc d'Exécution Principal ---
 if __name__ == "__main__":
-    csv_path = sys.argv[1] if len(sys.argv) > 1 else 'Produit.csv'
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else "Produit.csv"
     results = process_products_file(csv_path)
 
     print("--- RÉSULTATS DE L'IMPORTATION ---")
-    print(f"Total de lignes traitées : {results['total_rows']}")
-    print(f"Produits créés : {results['total_created']}, Mis à jour : {results['total_updated']}")
-    
-    if results['errors']:
-        print(f"\n🚨 {len(results['errors'])} ERREURS TROUVÉES lors de l'importation (Top 5):")
-        for error in results['errors'][:5]:
+    print(
+        f"Total de lignes reçues : {results['rows_received']} | "
+        f"Traitées : {results['rows_processed']}"
+    )
+    print(
+        f"Produits créés : {results['created']} | "
+        f"Mis à jour : {results['updated']}"
+    )
+
+    if results["errors"]:
+        print(f"\n🚨 {len(results['errors'])} erreur(s) rencontrée(s) lors de l'import.")
+        for error in results["errors"][:5]:
             print(f"  Ligne {error['ligne']} ({error['nom']}): {error['erreur']}")
     else:
-        print("✅ Aucune erreur d'importation trouvée. La base de données devrait être mise à jour.")
+        print("✅ Importation terminée sans erreur bloquante.")
+

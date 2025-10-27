@@ -57,22 +57,29 @@ if "cart" not in st.session_state:
     st.session_state["cart"] = []
     
 # --- Configuration de l'Authentification ---
-SECRET_KEY = '__auth_token_inventaire_secure_2025' 
+SECRET_KEY = os.getenv("STREAMLIT_SECRET_KEY", "__auth_token_inventaire_secure_2025")
 
-hashed_passwords = stauth.Hasher(['jemmysev', 'userpass']).generate()
+PASSWORD_HASHES = {
+    "admin": os.getenv(
+        "ADMIN_PASSWORD_HASH", "$2b$12$JA6jQijn5i21uQquBDOkR.gFIeXD82mri3DS0dcQ8HjB8.ycjYdI2"
+    ),
+    "user": os.getenv(
+        "USER_PASSWORD_HASH", "$2b$12$onUKmKMoVtAfpr.Lus9iW.bz.Q69Y/Ylf8nfSPzSL/avBHqeuuvTi"
+    ),
+}
 
 credentials = {
     "usernames": {
         "admin": {
             "email": "ulrich@inventaire.fr",
             "name": "ulrich",
-            "password": hashed_passwords[0], 
+            "password": PASSWORD_HASHES["admin"],
             "role": "admin"
         },
         "user": {
             "email": "user@inventaire.fr",
             "name": "user",
-            "password": hashed_passwords[1], 
+            "password": PASSWORD_HASHES["user"],
             "role": "standard"
         }
     }
@@ -159,6 +166,7 @@ def update_product_data():
     else:
         st.session_state.ajust_error = "Sélection de produit invalide."
 
+@st.cache_data(ttl=300)
 def load_products_list():
     sql_query = """
         SELECT
@@ -167,6 +175,7 @@ def load_products_list():
             p.prix_vente,
             p.tva,
             p.stock_actuel AS quantite_stock,
+            COALESCE(string_agg(pb.code, ', ' ORDER BY pb.code), '') AS codes_barres,
             CASE
                 WHEN p.stock_actuel <= 0 THEN '❌ Rupture'
                 WHEN p.stock_actuel < 5 THEN '⚠️ Faible'
@@ -298,9 +307,22 @@ if authentication_status:
                 st.divider()
                 if st.session_state.cart:
                     if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
-                        st.success("Vente Finalisée (Logique de mouvements de stock à implémenter ici)!")
-                        st.session_state.cart = []
-                        st.rerun()
+                        with st.spinner("Traitement de la vente en cours..."):
+                            sale_ok = process_sale_transaction(
+                                st.session_state.cart,
+                                st.session_state.get("username", "inconnu"),
+                            )
+
+                        if sale_ok:
+                            st.success("Vente finalisée et stock mis à jour ✅")
+                            st.session_state.cart = []
+                            load_products_list.clear()
+                            cached_product_options.clear()
+                            st.rerun()
+                        else:
+                            st.error(
+                                "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                            )
 
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -456,7 +478,8 @@ if authentication_status:
                                     updates_count += 1
 
                             st.success(f"{updates_count} produit(s) mis à jour avec succès!")
-                            load_products_list.clear() 
+                            load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         else:
                             st.info("Aucune modification n'a été détectée dans le tableau.")
@@ -477,6 +500,7 @@ if authentication_status:
                             exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
                             st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
                             load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
@@ -509,7 +533,8 @@ if authentication_status:
                                     exec_sql(sql_code.bindparams(pid=product_id, code=code))
 
                             st.success(f"Produit '{new_nom}' ajouté avec succès!")
-                            load_products_list.clear() 
+                            load_products_list.clear()
+                            cached_product_options.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de l'ajout: {e}")
@@ -790,8 +815,8 @@ if authentication_status:
                         with st.spinner("Importation en cours..."):
                             # Préparation du DataFrame pour l'import
                             cols_to_check = {
-                                "prix_vente": 0.0, 
-                                "tva": 20.0, 
+                                "prix_vente": 0.0,
+                                "tva": 20.0,
                                 "qte_init": 0.0, 
                                 "codes": ""
                             }
@@ -810,9 +835,35 @@ if authentication_status:
                             
                             # Logique d'importation
                             results = products_loader.load_products_from_df(df)
-                        
+
                         st.success("Importation terminée!")
-                        st.caption(f"{results['success_count']} produits ajoutés/mis à jour.")
+                        st.caption(
+                            f"Lignes traitées : {results['rows_processed']} / {results['rows_received']}"
+                        )
+
+                        product_summary = []
+                        if results["created"]:
+                            product_summary.append(f"{results['created']} créé(s)")
+                        if results["updated"]:
+                            product_summary.append(f"{results['updated']} mis à jour")
+                        if product_summary:
+                            st.info("Produits : " + ", ".join(product_summary))
+                        else:
+                            st.info("Produits : aucune modification apportée.")
+
+                        if results["stock_initialized"]:
+                            st.caption(
+                                f"{results['stock_initialized']} mouvement(s) de stock initial enregistrés."
+                            )
+
+                        barcode_stats = results["barcode"]
+                        if any(barcode_stats.values()):
+                            st.caption(
+                                "Codes-barres — "
+                                f"ajouts: {barcode_stats['added']}, "
+                                f"doublons ignorés: {barcode_stats['conflicts']}, "
+                                f"erreurs: {barcode_stats['skipped']}"
+                            )
 
                         # Afficher les erreurs d'importation
                         if results['errors']:
@@ -821,8 +872,9 @@ if authentication_status:
                             st.dataframe(errors_df, use_container_width=True, hide_index=True)
                         else:
                             st.success("Toutes les lignes valides ont été importées avec succès.")
-                        
+
                         load_products_list.clear()
+                        cached_product_options.clear()
                         st.rerun()
             
             except Exception as e:
