@@ -1,8 +1,14 @@
-import pandas as pd
-import re
+from __future__ import annotations
+
 import io
-from PyPDF2 import PdfReader 
-from docx import Document    
+import re
+from typing import Iterable, Mapping
+
+import pandas as pd
+from PyPDF2 import PdfReader
+from docx import Document
+
+DEFAULT_TVA_CODE_MAP: dict[str, float] = {"D": 20.0, "P": 5.5}
 
 def clean_data(value):
     """Nettoie une valeur numérique (remplace la virgule par le point)."""
@@ -16,7 +22,10 @@ def extract_text_from_file(uploaded_file):
     Extrait le texte brut d'un fichier téléversé (PDF ou DOCX/DOC).
     """
     file_type = uploaded_file.type
-    
+
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+
     # 1. Traitement des PDF
     if 'pdf' in file_type:
         try:
@@ -48,73 +57,121 @@ def extract_text_from_file(uploaded_file):
 
 # ... (les imports et la fonction clean_data restent inchangés) ...
 
-def extract_products_from_metro_invoice(raw_product_text):
+def _normalise_tva_code(code: str | None) -> str | None:
+    if not code:
+        return None
+    cleaned = str(code).strip().upper()
+    return cleaned or None
+
+
+def _resolve_tva_value(code: str | None, tva_lookup: Mapping[str, float], default_tva: float) -> float:
+    if code is None:
+        return default_tva
+    if code in tva_lookup:
+        return float(tva_lookup[code])
+    return default_tva
+
+
+def extract_products_from_metro_invoice(
+    raw_product_text: str,
+    *,
+    tva_map: Mapping[str, float] | None = None,
+    default_tva: float = 20.0,
+) -> pd.DataFrame:
+    """Analyse une facture METRO et renvoie un DataFrame exploitable.
+
+    Args:
+        raw_product_text: Texte brut de la facture (ou section produits).
+        tva_map: Dictionnaire optionnel pour surcharger le mapping TVA
+            (par exemple {"D": 20.0, "P": 5.5}).
+        default_tva: Valeur de TVA utilisée si le code n'est pas reconnu.
+
+    Returns:
+        DataFrame contenant au minimum les colonnes `nom`, `codes`,
+        `qte_init`, `prix_achat`, `prix_vente`, `tva` et `tva_code`.
     """
-    Analyse le texte brut de la section produit en utilisant une regex plus stricte
-    pour éviter l'agglomération de plusieurs lignes de produits dans une seule entrée.
-    """
-    
-    # Étape 1: Nettoyage et simplification du Texte
-    # On ajoute un point-virgule après chaque saut de ligne pour faciliter la détection de fin de ligne de produit
-    text = re.sub(r'["\s,]+', ' ', raw_product_text).strip()
-    text = text.replace('\n', '; ') # Remplacement des sauts de ligne par ; 
-    
-    data = []
-    
-    # Regex Pattern Ultra-Robuste et STRICTE : Cherche la séquence distinctive des nombres
-    # L'élément clé est la désignation (G3) qui s'arrête strictement avant le Prix Unitaire
+
+    # Étape 1: Nettoyage et simplification du texte
+    text = re.sub(r'["\s,]+', ' ', raw_product_text or "").strip()
+    text = text.replace('\n', '; ')
+
     pattern = re.compile(
-        # G1: EAN (10 à 14 chiffres)
-        r'(\d{10,14})'
-        # G2: Numéro Article (6 à 10 chiffres)
-        r'\s*(\d{6,10})'
-        
-        # G3: Désignation (capture tout, NON GOURMAND, jusqu'à la prochaine séquence de prix)
-        # On évite que la désignation "mange" la ligne suivante
-        r'\s*(.+?)'
-        
-        # G4: Prix Unitaire (nombre décimal avec point)
-        r'([\d\.]+)'
-        # G5: Quantité (un nombre entier)
-        r'\s*(\d+)'
-        # G6: Montant Total (nombre décimal avec point)
-        r'\s*([\d\.]+)'
-        # G7: Code TVA (D ou P)
-        r'\s*([DP])'
-        , re.IGNORECASE | re.DOTALL
+        r'(\d{10,14})'  # EAN
+        r'\s*(\d{6,10})'  # Numéro article
+        r'\s*(.+?)'  # Désignation
+        r'([\d\.]+)'  # Prix unitaire
+        r'\s*(\d+)'  # Quantité
+        r'\s*([\d\.]+)'  # Montant total
+        r'\s*([A-Z])',  # Code TVA
+        re.IGNORECASE | re.DOTALL,
     )
-    
-    # Pré-nettoyage du texte pour le rendre compatible avec la regex
-    text_processed = text.replace(',', '.') 
-    
-    # On itère sur tous les motifs trouvés dans le texte nettoyé
-    for match in pattern.finditer(text_processed):
+
+    processed_text = text.replace(',', '.')
+    overrides = {k.upper(): float(v) for k, v in (tva_map or {}).items()}
+    lookup = {**DEFAULT_TVA_CODE_MAP, **overrides}
+
+    records: list[dict[str, object]] = []
+
+    for match in pattern.finditer(processed_text):
         try:
             ean = match.group(1).strip()
-            num_article = match.group(2).strip()
-            
+            article = match.group(2).strip()
             designation_raw = match.group(3).strip()
-            # Nettoyage des chaînes de bruit connues
-            designation = re.sub(r'(Duplicata|PRIX AU KG OU AU LITRE|Plus COTIS SECURITE SOCIALE|Total:.*|Volume effectif|Montant TTC|PAGE:.*|Numéro Article|VE unit. L.).*', '', designation_raw).strip()
-            
-            prix_unitaire_raw = match.group(4)
-            quantite = match.group(5)
-            montant_total_raw = match.group(6)
-            code_tva = match.group(7)
-            
-            data.append({
-                'nom': designation,
-                'prix_vente': float(montant_total_raw)/float(prix_unitaire_raw),
-                'tva': code_tva,
-                'qte_init': int(quantite),
-                'codes': ean
-            })
-            
-        except Exception as e:
-            # Poursuit la recherche même en cas d'erreur de conversion de type
+            designation = re.sub(
+                r'(Duplicata|PRIX AU KG OU AU LITRE|Plus COTIS SECURITE SOCIALE|Total:.*|Volume effectif|Montant TTC|PAGE:.*|Numéro Article|VE unit. L.).*',
+                '',
+                designation_raw,
+            ).strip()
+
+            unit_price = float(match.group(4))
+            quantity = max(int(match.group(5)), 0)
+            total_amount = float(match.group(6))
+            tva_code = _normalise_tva_code(match.group(7))
+            tva_value = _resolve_tva_value(tva_code, lookup, default_tva)
+
+            records.append(
+                {
+                    'nom': designation,
+                    'codes': ean,
+                    'numero_article': article,
+                    'qte_init': quantity,
+                    'prix_achat': round(unit_price, 4),
+                    'prix_vente': round(unit_price, 4),
+                    'tva': round(tva_value, 4),
+                    'tva_code': tva_code,
+                    'montant_total_facture': round(total_amount, 4),
+                }
+            )
+        except Exception:
             continue
 
-    return pd.DataFrame(data)
+    if not records:
+        return pd.DataFrame(columns=[
+            'nom',
+            'codes',
+            'numero_article',
+            'qte_init',
+            'prix_achat',
+            'prix_vente',
+            'tva',
+            'tva_code',
+            'montant_total_facture',
+        ])
+
+    df = pd.DataFrame(records)
+    desired_order: Iterable[str] = (
+        'nom',
+        'codes',
+        'numero_article',
+        'qte_init',
+        'prix_achat',
+        'prix_vente',
+        'tva',
+        'tva_code',
+        'montant_total_facture',
+    )
+    columns = [col for col in desired_order if col in df.columns]
+    return df.loc[:, columns]
 
 # ... (le bloc if __name__ == '__main__': reste inchangé) ...
 if __name__ == '__main__':

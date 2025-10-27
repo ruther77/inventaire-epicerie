@@ -26,12 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq5 libgl1 l
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# 3. Copie du code source (Nouveaux noms de fichiers inclus : data_repository et inventory_service)
-COPY app.py .
-COPY data_repository.py .
-COPY inventory_service.py .
-COPY products_loader.py .
-COPY style.css .
+# 3. Copie du code source (application complète)
+COPY . .
 
 EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.folderWatchBlacklist", "."]
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]

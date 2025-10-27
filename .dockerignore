@@ -1,0 +1,33 @@
+# Fichiers inutiles pour l'image finale
+.git
+.gitignore
+.env
+.env.*
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.log
+*.sqlite*
+*.db
+*.sql
+venv/
+venv_extract/
+.vscode/
+.idea/
+.DS_Store
+
+# Artefacts locaux
+*.egg-info/
+*.whl
+
+# Jeux de tests et données volumineuses
+/tests/
+/test*.py
+/db/
+backup.sh
+
+# Environnements de build secondaires
+app/
+venv_extract/
+
