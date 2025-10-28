@@ -41,12 +41,12 @@ def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
             result = conn.execute(statement, params)
 
         columns = list(result.keys())
-        rows = result.mappings().all()
+        rows = result.fetchall()
 
         if not rows:
             return pd.DataFrame(columns=columns)
 
-        return pd.DataFrame(rows, columns=columns)
+        return pd.DataFrame([tuple(row) for row in rows], columns=columns)
 
 # db_manager.py (Renommé : data_repository.py)
 # ...

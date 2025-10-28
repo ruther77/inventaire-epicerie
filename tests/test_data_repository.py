@@ -25,16 +25,8 @@ class DummyQueryResult:
     def keys(self):
         return list(self._columns)
 
-    class _Mappings:
-        def __init__(self, rows, columns):
-            self._rows = rows
-            self._columns = columns
-
-        def all(self):
-            return [dict(zip(self._columns, row)) for row in self._rows]
-
-    def mappings(self):
-        return DummyQueryResult._Mappings(self._rows, self._columns)
+    def fetchall(self):
+        return list(self._rows)
 
 
 class DummyConnection:
