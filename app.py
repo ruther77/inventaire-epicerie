@@ -322,14 +322,7 @@ def load_stock_diagnostics() -> pd.DataFrame:
                     WHEN m.type = 'INVENTAIRE' THEN m.quantite
                     WHEN m.type = 'TRANSFERT' THEN m.quantite
                     ELSE 0
-                END), 0) AS stock_calcule,
-                ROUND(p.stock_actuel - COALESCE(SUM(CASE
-                    WHEN m.type = 'ENTREE' THEN m.quantite
-                    WHEN m.type = 'SORTIE' THEN -m.quantite
-                    WHEN m.type = 'INVENTAIRE' THEN m.quantite
-                    WHEN m.type = 'TRANSFERT' THEN m.quantite
-                    ELSE 0
-                END), 0), 3) AS ecart
+                END), 0) AS stock_calcule
             FROM produits p
             LEFT JOIN mouvements_stock m ON m.produit_id = p.id
             GROUP BY p.id, p.nom, p.stock_actuel
@@ -339,10 +332,10 @@ def load_stock_diagnostics() -> pd.DataFrame:
             nom,
             stock_actuel,
             stock_calcule,
-            ecart
+            ROUND(stock_actuel - stock_calcule, 3) AS ecart
         FROM stock_compare
-        WHERE ABS(ecart) > 0.001
-        ORDER BY ABS(ecart) DESC, nom
+        WHERE ABS(stock_actuel - stock_calcule) > 0.001
+        ORDER BY ABS(stock_actuel - stock_calcule) DESC, nom
     """
 
     try:

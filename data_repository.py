@@ -33,12 +33,25 @@ def _normalize_statement(sql: str | ClauseElement) -> ClauseElement:
 def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
     """Exécute une requête SELECT et retourne le résultat sous forme de DataFrame Pandas."""
     statement = _normalize_statement(sql)
+    if params is not None and not isinstance(params, dict):
+        raise TypeError("params must be a mapping when provided")
+
+    # Pré-lie les paramètres pour simplifier les tentatives de repli en cas d'erreur
+    bound_statement = statement.bindparams(**params) if params is not None else statement
+
     eng = get_engine()
     with eng.begin() as conn:
-        if params is None:
-            result = conn.execute(statement)
-        else:
-            result = conn.execute(statement, params)
+        try:
+            result = conn.execute(bound_statement)
+        except TypeError as exc:
+            # Certains drivers (ex: psycopg2 via pandas) peuvent exiger une chaîne brute.
+            # Dans ce cas, on recompile la requête avec valeurs littérales pour utiliser exec_driver_sql.
+            if isinstance(bound_statement, TextClause):
+                compiled = bound_statement.compile(compile_kwargs={"literal_binds": True})
+                sql_text = str(compiled)
+                result = conn.exec_driver_sql(sql_text)
+            else:
+                raise exc
 
         columns = list(result.keys())
         rows = result.fetchall()

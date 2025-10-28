@@ -94,7 +94,7 @@ def test_load_stock_diagnostics_orders_by_alias():
 
     df = func()
 
-    assert "ORDER BY ABS(ecart) DESC, nom" in captured["sql"]
+    assert "ORDER BY ABS(stock_actuel - stock_calcule) DESC, nom" in captured["sql"]
     pd_testing.assert_frame_equal(
         df,
         pd.DataFrame(
