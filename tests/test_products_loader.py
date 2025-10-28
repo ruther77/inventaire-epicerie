@@ -44,6 +44,8 @@ class DummyConnection:
         if "UPDATE produits" in sql:
             if nom == "Bière artisanale":
                 return DummyResult(None)
+            if "WHERE id = :pid" in sql and params.get("pid") == 303:
+                return DummyResult(None)
             return DummyResult((202,))
 
         if "INSERT INTO produits (" in sql:
@@ -151,6 +153,47 @@ def test_load_products_from_df_summarises_results(monkeypatch):
     assert summary["errors"] == []
     assert summary["barcode"] == {"added": 1, "conflicts": 1, "skipped": 1}
     assert barcode_calls == [(101, "111"), (101, "222"), (202, "333")]
+
+
+def test_load_products_from_df_updates_existing_with_barcode(monkeypatch):
+    df = pd.DataFrame(
+        [
+            {
+                "nom": "Produit existant",
+                "prix_vente": "12.50",
+                "tva": "20",
+                "prix_achat": "8.00",
+                "qte_init": "5",
+                "codes": "444",
+            }
+        ]
+    )
+
+    connection = DummyConnection()
+    connection.barcode_map["444"] = 303
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(products_loader, "get_engine", lambda: engine)
+
+    summary = products_loader.load_products_from_df(df)
+
+    assert summary["rows_received"] == 1
+    assert summary["rows_processed"] == 1
+    assert summary["created"] == 0
+    assert summary["updated"] == 1
+    assert summary["stock_initialized"] == 1
+    assert summary["barcode"] == {"added": 0, "conflicts": 0, "skipped": 1}
+
+    # Vérifie qu'aucune insertion n'a été réalisée et qu'une mise à jour par ID a eu lieu.
+    executed_sql = [sql for sql, _ in connection.executed]
+    assert not any("INSERT INTO produits (" in sql for sql in executed_sql)
+    assert any("WHERE id = :pid" in sql for sql in executed_sql)
+
+    movement_params = next(
+        params for sql, params in connection.executed if "INSERT INTO mouvements_stock" in sql
+    )
+    assert movement_params["produit_id"] == 303
+    assert movement_params["quantite"] == 5.0
+    assert movement_params["source"].startswith("Import facture")
 
 
 def test_load_products_from_df_counts_conflict_on_integrity_error(monkeypatch):
