@@ -4,6 +4,8 @@ import os
 import io
 import math
 import re
+from typing import Any, Dict, List
+
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
@@ -76,6 +78,42 @@ if "invoice_processed_signatures" not in st.session_state:
 
 MAX_INVOICE_UPLOADS = 20
 INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
+INVOICE_FILE_UPLOADER_KEYS = (
+    "extract_invoice_file_uploader",
+    "import_invoice_file_uploader",
+)
+
+
+def _ensure_cart_state() -> List[Dict[str, Any]]:
+    """Retourne la liste du panier depuis l'état de session en garantissant son existence."""
+
+    return st.session_state.setdefault("cart", [])
+
+
+def _clear_cart() -> None:
+    """Vide complètement le panier et force le rafraîchissement de la session."""
+
+    st.session_state["cart"] = []
+
+
+def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Construit un DataFrame propre à partir des éléments du panier."""
+
+    if not cart_items:
+        return pd.DataFrame(columns=["nom", "qty", "prix_vente", "tva"])
+
+    cart_df = pd.DataFrame.from_records(cart_items)
+
+    defaults = {"nom": "", "qty": 0, "prix_vente": 0.0, "tva": 0.0}
+    for column, default in defaults.items():
+        if column not in cart_df.columns:
+            cart_df[column] = default
+
+    cart_df["qty"] = pd.to_numeric(cart_df["qty"], errors="coerce").fillna(0).astype(int)
+    cart_df["prix_vente"] = pd.to_numeric(cart_df["prix_vente"], errors="coerce").fillna(0.0)
+    cart_df["tva"] = pd.to_numeric(cart_df["tva"], errors="coerce").fillna(0.0)
+
+    return cart_df
 
 
 def _reset_invoice_session_state() -> None:
@@ -95,6 +133,9 @@ def _reset_invoice_session_state() -> None:
     for selector_key in INVOICE_SELECTOR_KEYS:
         st.session_state.pop(selector_key, None)
         st.session_state.pop(f"{selector_key}__sync", None)
+
+    for uploader_key in INVOICE_FILE_UPLOADER_KEYS:
+        st.session_state.pop(uploader_key, None)
 
 
 def _queue_invoice_selector_sync(index: int) -> None:
@@ -193,12 +234,6 @@ def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
     processed_signatures.clear()
     processed_signatures.update(batch["signature"] for batch in batches)
     _set_active_invoice_from_index(len(batches) - 1)
-
-
-reset_origin = st.session_state.pop("invoice_reset_requested", None)
-if reset_origin:
-    _reset_invoice_session_state()
-    st.session_state["invoice_reset_notice_origin"] = reset_origin
 
 
 def _render_invoice_selector(label: str, widget_key: str) -> None:
@@ -581,82 +616,68 @@ if authentication_status:
         
         col_input, col_cart = st.columns([1, 2])
         
-        with col_cart: 
+        with col_cart:
             st.markdown('<div class="app-tile">', unsafe_allow_html=True)
             st.subheader("🛒 Panier Actuel")
-            
-            # 1. Vérifiez si le panier existe et n'est pas vide
-            if 'cart' not in st.session_state:
-                st.session_state.cart =  []
+
+            cart_items = _ensure_cart_state()
+            cart_df = _normalize_cart_dataframe(cart_items)
+
+            if cart_df.empty:
                 st.info("Le panier est vide. Veuillez ajouter des produits.")
-            else:
-                # 2. Création d'un DataFrame pour l'affichage
-                #    -> On force la présence des colonnes attendues même si le panier est vide
-                cart_df = pd.DataFrame(
-                    st.session_state.cart,
-                    columns=["id", "nom", "prix_vente", "tva", "qte_init"],
-                )
-                
-                # 3. Sécurisation des colonnes attendues et calcul du sous-total TTC et de la TVA par ligne
-                for column, default in (("prix_vente", 0.0), ("tva", 0.0), ("qty", 0)):
-                    if column not in cart_df.columns:
-                        cart_df[column] = default
 
-                cart_df['prix_total'] = cart_df['prix_vente'].fillna(0.0) * cart_df['qty'].fillna(0)
-                cart_df['total_tva'] = cart_df['prix_total'] * (cart_df['tva'].fillna(0.0) / 100)
+            cart_df["prix_total"] = cart_df["prix_vente"] * cart_df["qty"]
+            cart_df["total_tva"] = cart_df["prix_total"] * (cart_df["tva"] / 100)
 
-                # 5. Affichage du tableau
+            if not cart_df.empty:
                 st.dataframe(
-                    cart_df[['nom', 'qty', 'prix_vente', 'prix_total']],
+                    cart_df[["nom", "qty", "prix_vente", "prix_total"]],
                     column_config={
                         "nom": "Produit",
                         "qty": "Quantité",
                         "prix_vente": st.column_config.NumberColumn("P.U. (€)", format="%.2f €"),
-                        "prix_total": st.column_config.NumberColumn("Total Ligne (€)", format="%.2f €")
+                        "prix_total": st.column_config.NumberColumn("Total Ligne (€)", format="%.2f €"),
                     },
                     hide_index=True,
-                    use_container_width=True
+                    use_container_width=True,
                 )
-                
-                # 6. Calcul des totaux
-                total_ttc = cart_df['prix_total'].sum()
-                total_tva = cart_df['total_tva'].sum()
-                total_ht = total_ttc - total_tva
 
-                col_tva, col_ht, col_ttc = st.columns(3)
+            total_ttc = float(cart_df["prix_total"].sum()) if not cart_df.empty else 0.0
+            total_tva = float(cart_df["total_tva"].sum()) if not cart_df.empty else 0.0
+            total_ht = total_ttc - total_tva
 
-                col_ht.metric("Total HT", f"{total_ht:.2f} €")
-                col_tva.metric("Total TVA", f"{total_tva:.2f} €")
-                col_ttc.metric("Total TTC", f"{total_ttc:.2f} €", delta_color="off")
+            col_tva, col_ht, col_ttc = st.columns(3)
 
-                # 7. Bouton pour Vider le Panier
-                if st.button("Vider le Panier", help="Annule la transaction en cours.", key="clear_cart_btn"):
-                    st.session_state.cart = []
-                    st.rerun()
-                
-                # Bouton de Validation de Vente
-                st.divider()
-                if st.session_state.cart:
-                    if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
-                        with st.spinner("Traitement de la vente en cours..."):
-                            sale_ok, sale_msg = process_sale_transaction(
-                                st.session_state.cart,
-                                st.session_state.get("username", "inconnu"),
-                            )
+            col_ht.metric("Total HT", f"{total_ht:.2f} €")
+            col_tva.metric("Total TVA", f"{total_tva:.2f} €")
+            col_ttc.metric("Total TTC", f"{total_ttc:.2f} €", delta_color="off")
 
-                        if sale_ok:
-                            st.success("Vente finalisée et stock mis à jour ✅")
-                            st.session_state.cart = []
-                            load_products_list.clear()
-                            cached_product_options.clear()
-                            load_movement_timeseries.clear()
-                            load_recent_movements.clear()
-                            load_table_counts.clear()
-                            load_table_preview.clear()
-                            st.rerun()
-                        else:
-                            error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
-                            st.error(error_msg)
+            if st.button("Vider le Panier", help="Annule la transaction en cours.", key="clear_cart_btn"):
+                _clear_cart()
+                st.rerun()
+
+            st.divider()
+            if cart_items:
+                if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
+                    with st.spinner("Traitement de la vente en cours..."):
+                        sale_ok, sale_msg = process_sale_transaction(
+                            cart_items,
+                            st.session_state.get("username", "inconnu"),
+                        )
+
+                    if sale_ok:
+                        st.success("Vente finalisée et stock mis à jour ✅")
+                        _clear_cart()
+                        load_products_list.clear()
+                        cached_product_options.clear()
+                        load_movement_timeseries.clear()
+                        load_recent_movements.clear()
+                        load_table_counts.clear()
+                        load_table_preview.clear()
+                        st.rerun()
+                    else:
+                        error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                        st.error(error_msg)
 
             st.markdown('</div>', unsafe_allow_html=True)
         
@@ -708,32 +729,35 @@ if authentication_status:
             
             # --- BLOC D'EXÉCUTION DU PANIER ---
             if st.session_state.get("add_to_cart_triggered", False):
-                
+
                 product_id = st.session_state.get("product_to_add_id")
                 quantity = st.session_state.get("product_to_add_qty")
-                
+
                 if product_id and quantity > 0:
                     try:
                         product_row = df_products[df_products['id'] == product_id].iloc[0]
+
+                        quantity = int(quantity)
+                        cart_items = _ensure_cart_state()
 
                         product_data = {
                             'id': int(product_row['id']),
                             'nom': product_row['nom'],
                             'prix_vente': float(product_row['prix_vente']),
                             'tva': float(product_row['tva']),
-                            'qty': quantity 
+                            'qty': quantity
                         }
 
                         found = False
-                        for item in st.session_state.cart:
+                        for item in cart_items:
                             if item['id'] == product_id:
                                 item['qty'] += quantity
                                 found = True
                                 break
-                        
+
                         if not found:
-                            st.session_state.cart.append(product_data)
-                        
+                            cart_items.append(product_data)
+
                         st.toast(f"✅ {quantity} x {product_data['nom']} ajouté(s) au panier !", icon='🛒')
                         st.rerun()
                         
@@ -1268,8 +1292,9 @@ if authentication_status:
                         )
         with col_reset_btn:
             if st.button("Réinitialiser l'extraction", key="extract_invoice_reset_button"):
-                st.session_state["invoice_reset_requested"] = "extract"
-                st.experimental_rerun()
+                _reset_invoice_session_state()
+                st.session_state["invoice_reset_notice_origin"] = "extract"
+                st.rerun()
 
         if st.session_state.get("invoice_reset_notice_origin") == "extract":
             st.info("Extraction réinitialisée.")
@@ -1403,8 +1428,9 @@ if authentication_status:
                         )
         with col_reset_btn:
             if st.button("Réinitialiser l'extraction", key="import_invoice_reset_button"):
-                st.session_state["invoice_reset_requested"] = "import"
-                st.experimental_rerun()
+                _reset_invoice_session_state()
+                st.session_state["invoice_reset_notice_origin"] = "import"
+                st.rerun()
 
         if st.session_state.get("invoice_reset_notice_origin") == "import":
             st.info("Extraction réinitialisée.")
