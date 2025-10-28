@@ -3,6 +3,8 @@ import sys
 import types
 from collections import namedtuple
 
+import pandas as pd
+import pandas.testing as pd_testing
 import pytest
 from sqlalchemy import column, select, table
 
@@ -13,6 +15,26 @@ class DummyResult:
 
     def fetchone(self):
         return self._fetchone_value
+
+
+class DummyQueryResult:
+    def __init__(self, rows=None, columns=None):
+        self._rows = rows or []
+        self._columns = columns or []
+
+    def keys(self):
+        return list(self._columns)
+
+    class _Mappings:
+        def __init__(self, rows, columns):
+            self._rows = rows
+            self._columns = columns
+
+        def all(self):
+            return [dict(zip(self._columns, row)) for row in self._rows]
+
+    def mappings(self):
+        return DummyQueryResult._Mappings(self._rows, self._columns)
 
 
 class DummyConnection:
@@ -126,73 +148,76 @@ def test_get_product_details_accepts_string_identifier(monkeypatch, data_reposit
 
 def test_query_df_accepts_string_sql(monkeypatch, data_repository):
     captured = {}
-    dummy_df = object()
 
-    def fake_read_sql(statement, conn, params=None):
+    def handler(statement, params):
         captured["statement"] = statement
         captured["params"] = params
-        captured["conn"] = conn
-        return dummy_df
+        return DummyQueryResult(rows=[(1, "foo")], columns=["id", "name"])
 
-    connection = object()
+    connection = DummyConnection(handler=handler)
     engine = DummyEngine(connection)
     monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
-    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
 
-    result = data_repository.query_df("SELECT 1", params={"foo": "bar"})
+    df = data_repository.query_df("SELECT 1", params={"foo": "bar"})
 
-    assert result is dummy_df
     assert isinstance(captured["statement"], data_repository.TextClause)
     assert captured["statement"].text == "SELECT 1"
     assert captured["params"] == {"foo": "bar"}
-    assert captured["conn"] is connection
+    pd_testing.assert_frame_equal(df, pd.DataFrame([[1, "foo"]], columns=["id", "name"]))
 
 
 def test_query_df_accepts_text_clause(monkeypatch, data_repository):
     captured = {}
-    dummy_df = object()
 
-    def fake_read_sql(statement, conn, params=None):
+    def handler(statement, params):
         captured["statement"] = statement
         captured["params"] = params
-        captured["conn"] = conn
-        return dummy_df
+        return DummyQueryResult(rows=[(2,)], columns=["count"])
 
-    connection = object()
+    connection = DummyConnection(handler=handler)
     engine = DummyEngine(connection)
     monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
-    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
 
-    text_clause = data_repository.text("SELECT * FROM produits")
-    result = data_repository.query_df(text_clause)
+    text_clause = data_repository.text("SELECT COUNT(*) AS count FROM produits")
+    df = data_repository.query_df(text_clause)
 
-    assert result is dummy_df
     assert captured["statement"] is text_clause
     assert captured["params"] is None
-    assert captured["conn"] is connection
+    pd_testing.assert_frame_equal(df, pd.DataFrame([[2]], columns=["count"]))
 
 
 def test_query_df_accepts_clause_element(monkeypatch, data_repository):
     captured = {}
-    dummy_df = object()
 
-    def fake_read_sql(statement, conn, params=None):
+    def handler(statement, params):
         captured["statement"] = statement
         captured["params"] = params
-        captured["conn"] = conn
-        return dummy_df
+        return DummyQueryResult(rows=[(3, "Banane")], columns=["id", "nom"])
 
-    connection = object()
+    connection = DummyConnection(handler=handler)
     engine = DummyEngine(connection)
     monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
-    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
 
     produits = table("produits", column("id"), column("nom"))
     selectable = select(produits.c.id, produits.c.nom).limit(10)
 
-    result = data_repository.query_df(selectable)
+    df = data_repository.query_df(selectable)
 
-    assert result is dummy_df
     assert captured["statement"] is selectable
     assert captured["params"] is None
-    assert captured["conn"] is connection
+    pd_testing.assert_frame_equal(df, pd.DataFrame([[3, "Banane"]], columns=["id", "nom"]))
+
+
+def test_query_df_returns_empty_dataframe_with_columns(monkeypatch, data_repository):
+
+    def handler(statement, params):
+        return DummyQueryResult(rows=[], columns=["id", "nom"])
+
+    connection = DummyConnection(handler=handler)
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
+
+    df = data_repository.query_df("SELECT id, nom FROM produits")
+
+    expected = pd.DataFrame(columns=["id", "nom"])
+    pd_testing.assert_frame_equal(df, expected)

@@ -3,10 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text, TextClause
 from sqlalchemy.sql.elements import ClauseElement
 from sqlalchemy.engine import Engine
-import streamlit as st 
-
-
-from functools import lru_cache
+import streamlit as st
 
 # Utilisation d'une variable d'environnement ou d'une valeur par défaut
 _DEFAULT_DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -38,7 +35,18 @@ def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
     statement = _normalize_statement(sql)
     eng = get_engine()
     with eng.begin() as conn:
-        return pd.read_sql(statement, conn, params=params)
+        if params is None:
+            result = conn.execute(statement)
+        else:
+            result = conn.execute(statement, params)
+
+        columns = list(result.keys())
+        rows = result.mappings().all()
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return pd.DataFrame(rows, columns=columns)
 
 # db_manager.py (Renommé : data_repository.py)
 # ...
