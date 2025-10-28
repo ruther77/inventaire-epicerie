@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import math
 
 import pandas as pd
-from sqlalchemy import text, exc as sa_exc
+from sqlalchemy import exc as sa_exc, text
 from sqlalchemy.engine import Connection
 
 from data_repository import get_engine
@@ -129,20 +129,66 @@ def determine_categorie(nom_produit: Any) -> str:
     return "Autre"
 
 
-def create_initial_stock(conn: Connection, produit_id: int, quantite: float) -> bool:
-    """Insère un mouvement de stock initial pour le produit et indique s'il a été créé."""
+def create_initial_stock(
+    conn: Connection,
+    produit_id: int,
+    quantite: float,
+    *,
+    source: str = "Inventaire Initial",
+) -> bool:
+    """Insère un mouvement de stock positif et renvoie ``True`` s'il est créé."""
 
-    if quantite <= 0:
+    try:
+        qty = float(quantite)
+    except (TypeError, ValueError):
+        return False
+
+    if qty <= 0:
         return False
 
     sql = text(
         """
         INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-        VALUES (:produit_id, 'ENTREE', :quantite, 'Inventaire Initial')
+        VALUES (:produit_id, 'ENTREE', :quantite, :source)
         """
     )
-    conn.execute(sql, {"produit_id": produit_id, "quantite": quantite})
+    conn.execute(sql, {"produit_id": produit_id, "quantite": qty, "source": source})
     return True
+
+
+def _find_existing_product_by_barcode(
+    conn: Connection, codes: List[str]
+) -> tuple[int | None, str | None]:
+    """Recherche un produit par ses codes-barres et renvoie l'ID et le code associé."""
+
+    for code in codes:
+        normalized = (code or "").strip()
+        if not normalized:
+            continue
+
+        row = conn.execute(
+            text(
+                """
+                SELECT produit_id
+                FROM produits_barcodes
+                WHERE lower(code) = lower(:code)
+                LIMIT 1
+                """
+            ),
+            {"code": normalized},
+        ).fetchone()
+
+        if row:
+            if hasattr(row, "produit_id"):
+                produit_id = getattr(row, "produit_id")
+            elif isinstance(row, dict):
+                produit_id = row.get("produit_id")
+            else:
+                produit_id = row[0]
+            if produit_id is not None:
+                return int(produit_id), normalized
+
+    return None, None
 
 
 def _clean_codes(raw_codes: Any) -> List[str]:
@@ -202,8 +248,14 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
                 codes_list = _clean_codes(row.get("codes"))
                 categorie = determine_categorie(nom)
 
-                params = {
-                    "nom": nom,
+                produit_id: int | None = None
+                matched_code: str | None = None
+                if codes_list:
+                    produit_id, matched_code = _find_existing_product_by_barcode(
+                        conn, codes_list
+                    )
+
+                params_common = {
                     "prix_achat": prix_achat,
                     "prix_vente": prix_vente,
                     "tva": tva,
@@ -211,45 +263,75 @@ def load_products_from_df(df: pd.DataFrame) -> Dict[str, Any]:
                     "categorie": categorie,
                 }
 
-                update_result = conn.execute(
-                    text(
-                        """
-                        UPDATE produits
-                        SET prix_achat = :prix_achat,
-                            prix_vente = :prix_vente,
-                            tva = :tva,
-                            seuil_alerte = :seuil_alerte,
-                            categorie = :categorie,
-                            updated_at = now()
-                        WHERE lower(nom) = lower(:nom)
-                        RETURNING id
-                        """
-                    ),
-                    params,
-                )
+                created_new = False
 
-                produit_row = update_result.fetchone()
-                if produit_row:
-                    produit_id = produit_row[0]
-                    summary["updated"] += 1
-                else:
-                    insert_result = conn.execute(
+                if produit_id is not None:
+                    conn.execute(
                         text(
                             """
-                            INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, categorie)
-                            VALUES (:nom, :prix_achat, :prix_vente, :tva, :seuil_alerte, :categorie)
+                            UPDATE produits
+                            SET prix_achat = :prix_achat,
+                                prix_vente = :prix_vente,
+                                tva = :tva,
+                                seuil_alerte = :seuil_alerte,
+                                categorie = :categorie,
+                                updated_at = now()
+                            WHERE id = :pid
+                            """
+                        ),
+                        {**params_common, "pid": produit_id},
+                    )
+                    summary["updated"] += 1
+                else:
+                    params_with_name = {"nom": nom, **params_common}
+                    update_result = conn.execute(
+                        text(
+                            """
+                            UPDATE produits
+                            SET prix_achat = :prix_achat,
+                                prix_vente = :prix_vente,
+                                tva = :tva,
+                                seuil_alerte = :seuil_alerte,
+                                categorie = :categorie,
+                                updated_at = now()
+                            WHERE lower(nom) = lower(:nom)
                             RETURNING id
                             """
                         ),
-                        params,
+                        params_with_name,
                     )
-                    inserted_row = insert_result.fetchone()
-                    if inserted_row is None:
-                        raise RuntimeError("Insertion du produit sans ID retourné")
-                    produit_id = inserted_row[0]
-                    summary["created"] += 1
 
-                if create_initial_stock(conn, produit_id, qte_init):
+                    produit_row = update_result.fetchone()
+                    if produit_row:
+                        produit_id = int(produit_row[0])
+                        summary["updated"] += 1
+                    else:
+                        insert_result = conn.execute(
+                            text(
+                                """
+                                INSERT INTO produits (nom, prix_achat, prix_vente, tva, seuil_alerte, categorie)
+                                VALUES (:nom, :prix_achat, :prix_vente, :tva, :seuil_alerte, :categorie)
+                                RETURNING id
+                                """
+                            ),
+                            params_with_name,
+                        )
+                        inserted_row = insert_result.fetchone()
+                        if inserted_row is None:
+                            raise RuntimeError("Insertion du produit sans ID retourné")
+                        produit_id = int(inserted_row[0])
+                        summary["created"] += 1
+                        created_new = True
+
+                movement_source = "Import facture"
+                if created_new:
+                    movement_source = "Import facture - création"
+                elif matched_code:
+                    movement_source = f"Import facture - code {matched_code}"
+
+                if produit_id is not None and create_initial_stock(
+                    conn, produit_id, qte_init, source=movement_source
+                ):
                     summary["stock_initialized"] += 1
 
                 for code in codes_list:
