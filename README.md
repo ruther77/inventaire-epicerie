@@ -115,3 +115,43 @@ make import-data
 Par défaut, le fichier `Produit.csv` sera chargé et les codes barres seront
 enregistrés. Redémarrez ensuite l'application ou videz le cache Streamlit pour
 voir les nouveaux produits.
+
+### Sauvegardes PostgreSQL & onglet Maintenance
+
+L'onglet **Maintenance (Admin)** de l'application affiche maintenant un
+diagnostic des utilitaires PostgreSQL attendus (`pg_dump` et `psql`). Pour que
+les boutons de sauvegarde/restauration fonctionnent :
+
+1. Assurez-vous que le client PostgreSQL est installé sur la machine qui
+   exécute Streamlit. Sous Debian/Ubuntu la commande suivante suffit en général
+   (exécutez-la depuis l'hôte ou le conteneur concerné) :
+
+   ```bash
+   sudo apt-get update
+   sudo apt-get install postgresql-client
+   ```
+
+   Dans certains environnements, des variables `http_proxy`/`https_proxy`
+   héritées peuvent forcer l'utilisation d'un proxy inaccessible et provoquer
+   des erreurs `403 Forbidden`. Relancez alors la commande en désactivant ces
+   variables :
+
+   ```bash
+   sudo env -u http_proxy -u https_proxy apt-get update
+   sudo env -u http_proxy -u https_proxy apt-get install postgresql-client
+   ```
+
+2. Vérifiez que l'utilisateur système qui exécute Streamlit dispose des
+   binaires dans son `PATH`. Si ce n'est pas le cas, configurez explicitement
+   les chemins via les variables d'environnement `PG_DUMP_PATH` et `PSQL_PATH`
+   (par exemple `/usr/lib/postgresql/16/bin/pg_dump`).
+
+3. Une fois les utilitaires détectés, l'onglet Maintenance expose :
+   - le statut courant de chaque binaire (✅ disponible ou ❌ introuvable),
+   - la liste des sauvegardes existantes avec téléchargement, restauration ou
+     suppression,
+   - des messages d'aide si un prérequis manque.
+
+Le dossier de sauvegarde par défaut est `backups/` (ou `/app/backups` en
+production). Adaptez la variable `BACKUP_DIR` si besoin pour pointer vers un
+volume persistant.
