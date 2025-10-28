@@ -78,6 +78,25 @@ MAX_INVOICE_UPLOADS = 20
 INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
 
 
+def _reset_invoice_session_state() -> None:
+    """Réinitialise toutes les variables de session liées aux factures."""
+
+    st.session_state["invoice_raw_text"] = ""
+    st.session_state["invoice_text_input"] = ""
+    st.session_state["extract_invoice_text_input"] = ""
+    st.session_state["import_invoice_text_input"] = ""
+    st.session_state["invoice_products_df"] = None
+    st.session_state["invoice_import_summary"] = None
+    st.session_state["invoice_uploaded_name"] = "facture.txt"
+    st.session_state["invoice_uploaded_batches"] = []
+    st.session_state["invoice_processed_signatures"] = set()
+    st.session_state["invoice_selection_index"] = None
+
+    for selector_key in INVOICE_SELECTOR_KEYS:
+        st.session_state.pop(selector_key, None)
+        st.session_state.pop(f"{selector_key}__sync", None)
+
+
 def _queue_invoice_selector_sync(index: int) -> None:
     for selector_key in INVOICE_SELECTOR_KEYS:
         st.session_state[f"{selector_key}__sync"] = index
@@ -174,6 +193,12 @@ def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
     processed_signatures.clear()
     processed_signatures.update(batch["signature"] for batch in batches)
     _set_active_invoice_from_index(len(batches) - 1)
+
+
+reset_origin = st.session_state.pop("invoice_reset_requested", None)
+if reset_origin:
+    _reset_invoice_session_state()
+    st.session_state["invoice_reset_notice_origin"] = reset_origin
 
 
 def _render_invoice_selector(label: str, widget_key: str) -> None:
@@ -1243,19 +1268,12 @@ if authentication_status:
                         )
         with col_reset_btn:
             if st.button("Réinitialiser l'extraction", key="extract_invoice_reset_button"):
-                st.session_state["invoice_raw_text"] = ""
-                st.session_state["invoice_text_input"] = ""
-                st.session_state["extract_invoice_text_input"] = ""
-                st.session_state["import_invoice_text_input"] = ""
-                st.session_state["invoice_products_df"] = None
-                st.session_state["invoice_import_summary"] = None
-                st.session_state["invoice_uploaded_name"] = "facture.txt"
-                st.session_state["invoice_uploaded_batches"] = []
-                st.session_state["invoice_processed_signatures"] = set()
-                st.session_state["invoice_selection_index"] = None
-                for selector_key in INVOICE_SELECTOR_KEYS:
-                    st.session_state.pop(selector_key, None)
-                st.info("Extraction réinitialisée.")
+                st.session_state["invoice_reset_requested"] = "extract"
+                st.experimental_rerun()
+
+        if st.session_state.get("invoice_reset_notice_origin") == "extract":
+            st.info("Extraction réinitialisée.")
+            st.session_state.pop("invoice_reset_notice_origin", None)
 
         if st.session_state.get("invoice_raw_text"):
             st.download_button(
@@ -1385,19 +1403,12 @@ if authentication_status:
                         )
         with col_reset_btn:
             if st.button("Réinitialiser l'extraction", key="import_invoice_reset_button"):
-                st.session_state["invoice_raw_text"] = ""
-                st.session_state["invoice_text_input"] = ""
-                st.session_state["extract_invoice_text_input"] = ""
-                st.session_state["import_invoice_text_input"] = ""
-                st.session_state["invoice_products_df"] = None
-                st.session_state["invoice_import_summary"] = None
-                st.session_state["invoice_uploaded_name"] = "facture.txt"
-                st.session_state["invoice_uploaded_batches"] = []
-                st.session_state["invoice_processed_signatures"] = set()
-                st.session_state["invoice_selection_index"] = None
-                for selector_key in INVOICE_SELECTOR_KEYS:
-                    st.session_state.pop(selector_key, None)
-                st.info("Extraction réinitialisée.")
+                st.session_state["invoice_reset_requested"] = "import"
+                st.experimental_rerun()
+
+        if st.session_state.get("invoice_reset_notice_origin") == "import":
+            st.info("Extraction réinitialisée.")
+            st.session_state.pop("invoice_reset_notice_origin", None)
 
         if st.session_state.get("invoice_raw_text"):
             st.download_button(
