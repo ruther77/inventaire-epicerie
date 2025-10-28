@@ -1,11 +1,9 @@
 import os
 import pandas as pd
 from sqlalchemy import create_engine, text, TextClause
+from sqlalchemy.sql.elements import ClauseElement
 from sqlalchemy.engine import Engine
-import streamlit as st 
-
-
-from functools import lru_cache
+import streamlit as st
 
 # Utilisation d'une variable d'environnement ou d'une valeur par défaut
 _DEFAULT_DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -24,21 +22,41 @@ def get_engine() -> Engine:
         max_overflow=20      # Permet 20 connexions temporaires en cas de pic
     )
 
-def query_df(sql: str, params=None) -> pd.DataFrame:
+def _normalize_statement(sql: str | ClauseElement) -> ClauseElement:
+    if isinstance(sql, str):
+        return text(sql)
+    if isinstance(sql, ClauseElement):
+        return sql
+    raise TypeError("sql must be a string or SQLAlchemy ClauseElement")
+
+
+def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
     """Exécute une requête SELECT et retourne le résultat sous forme de DataFrame Pandas."""
+    statement = _normalize_statement(sql)
     eng = get_engine()
     with eng.begin() as conn:
-        return pd.read_sql(text(sql), conn, params=params)
+        if params is None:
+            result = conn.execute(statement)
+        else:
+            result = conn.execute(statement, params)
+
+        columns = list(result.keys())
+        rows = result.fetchall()
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return pd.DataFrame([tuple(row) for row in rows], columns=columns)
 
 # db_manager.py (Renommé : data_repository.py)
 # ...
 
-def exec_sql(sql: str | TextClause, params=None) -> None:
+def exec_sql(sql: str | ClauseElement, params=None) -> None:
     """
     Exécute une requête d'écriture (INSERT, UPDATE, DELETE).
     Supporte l'exécution en lot si params est une liste.
     """
-    statement = text(sql) if isinstance(sql, str) else sql
+    statement = _normalize_statement(sql)
     eng = get_engine()
     with eng.begin() as conn:
         # Si params est une liste (exécution en lot), utilise executemany
@@ -49,12 +67,12 @@ def exec_sql(sql: str | TextClause, params=None) -> None:
         else:
             conn.execute(statement, params)
 
-def exec_sql_return_id(sql: str | TextClause, params=None):
+def exec_sql_return_id(sql: str | ClauseElement, params=None):
     """
     Exécute une requête et retourne l'ID (via RETURNING id). 
     Ne supporte pas l'exécution en lot (car une seule ID est retournée).
     """
-    statement = text(sql) if isinstance(sql, str) else sql
+    statement = _normalize_statement(sql)
     eng = get_engine()
     with eng.begin() as conn:
         # params doit être un dict ou None, non une liste pour l'insertion simple.

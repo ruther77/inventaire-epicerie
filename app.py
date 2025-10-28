@@ -333,7 +333,13 @@ def load_stock_diagnostics() -> pd.DataFrame:
             WHEN m.type = 'TRANSFERT' THEN m.quantite
             ELSE 0
         END), 0)) > 0.001
-        ORDER BY ABS(ecart) DESC, p.nom
+        ORDER BY ABS(p.stock_actuel - COALESCE(SUM(CASE
+            WHEN m.type = 'ENTREE' THEN m.quantite
+            WHEN m.type = 'SORTIE' THEN -m.quantite
+            WHEN m.type = 'INVENTAIRE' THEN m.quantite
+            WHEN m.type = 'TRANSFERT' THEN m.quantite
+            ELSE 0
+        END), 0)) DESC, p.nom
     """
 
     try:
