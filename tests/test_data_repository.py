@@ -4,6 +4,7 @@ import types
 from collections import namedtuple
 
 import pytest
+from sqlalchemy import column, select, table
 
 
 class DummyResult:
@@ -167,5 +168,31 @@ def test_query_df_accepts_text_clause(monkeypatch, data_repository):
 
     assert result is dummy_df
     assert captured["statement"] is text_clause
+    assert captured["params"] is None
+    assert captured["conn"] is connection
+
+
+def test_query_df_accepts_clause_element(monkeypatch, data_repository):
+    captured = {}
+    dummy_df = object()
+
+    def fake_read_sql(statement, conn, params=None):
+        captured["statement"] = statement
+        captured["params"] = params
+        captured["conn"] = conn
+        return dummy_df
+
+    connection = object()
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
+    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
+
+    produits = table("produits", column("id"), column("nom"))
+    selectable = select(produits.c.id, produits.c.nom).limit(10)
+
+    result = data_repository.query_df(selectable)
+
+    assert result is dummy_df
+    assert captured["statement"] is selectable
     assert captured["params"] is None
     assert captured["conn"] is connection
