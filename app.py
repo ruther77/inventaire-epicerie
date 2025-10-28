@@ -78,10 +78,9 @@ MAX_INVOICE_UPLOADS = 20
 INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
 
 
-def _sync_invoice_selector_widgets(index: int) -> None:
+def _queue_invoice_selector_sync(index: int) -> None:
     for selector_key in INVOICE_SELECTOR_KEYS:
-        if selector_key in st.session_state:
-            st.session_state[selector_key] = index
+        st.session_state[f"{selector_key}__sync"] = index
 
 
 def _set_active_invoice_from_index(index: int) -> None:
@@ -102,7 +101,7 @@ def _set_active_invoice_from_index(index: int) -> None:
     st.session_state["invoice_uploaded_name"] = batch["download_name"]
     st.session_state["invoice_selection_index"] = index
 
-    _sync_invoice_selector_widgets(index)
+    _queue_invoice_selector_sync(index)
 
 
 def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
@@ -187,7 +186,10 @@ def _render_invoice_selector(label: str, widget_key: str) -> None:
         current_index = len(batches) - 1
         _set_active_invoice_from_index(current_index)
 
-    if widget_key not in st.session_state:
+    pending_key = f"{widget_key}__sync"
+    if pending_key in st.session_state:
+        st.session_state[widget_key] = st.session_state.pop(pending_key)
+    elif widget_key not in st.session_state:
         st.session_state[widget_key] = current_index
 
     options = list(range(len(batches)))
@@ -1261,6 +1263,7 @@ if authentication_status:
                 data=st.session_state["invoice_raw_text"].encode("utf-8"),
                 file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
                 mime="text/plain",
+                key="extract_invoice_raw_text_download",
             )
 
         extracted_df = st.session_state.get("invoice_products_df")
@@ -1299,6 +1302,7 @@ if authentication_status:
                     data=csv_data,
                     file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
                     mime="text/csv",
+                    key="extract_invoice_csv_download",
                 )
             with col_import:
                 if st.button("Importer ces produits", key="extract_invoice_import_button", type="primary"):
@@ -1401,6 +1405,7 @@ if authentication_status:
                 data=st.session_state["invoice_raw_text"].encode("utf-8"),
                 file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
                 mime="text/plain",
+                key="import_invoice_raw_text_download",
             )
 
         extracted_df = st.session_state.get("invoice_products_df")
@@ -1420,7 +1425,7 @@ if authentication_status:
                 column_config={
                     "nom": st.column_config.TextColumn("Nom du produit"),
                     "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
-                    "tva": st.column_config.TextColumn("TVA (%)"),
+                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
                     "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
                     "codes": st.column_config.TextColumn("Codes-barres"),
                 },
@@ -1439,6 +1444,7 @@ if authentication_status:
                     data=csv_data,
                     file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
                     mime="text/csv",
+                    key="import_invoice_csv_download",
                 )
             with col_import:
                 if st.button("Importer ces produits", key="import_invoice_import_button", type="primary"):
