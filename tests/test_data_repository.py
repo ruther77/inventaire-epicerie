@@ -59,10 +59,8 @@ def stub_streamlit(monkeypatch):
 
 
 @pytest.fixture
-def data_repository(monkeypatch):
-    module = importlib.import_module("data_repository")
-    monkeypatch.setattr(module, "text", lambda sql: sql)
-    return module
+def data_repository():
+    return importlib.import_module("data_repository")
 
 
 def test_exec_sql_supports_batch_params(monkeypatch, data_repository):
@@ -73,7 +71,11 @@ def test_exec_sql_supports_batch_params(monkeypatch, data_repository):
     params = [{"value": 1}, {"value": 2}]
     data_repository.exec_sql("INSERT INTO table VALUES (:value)", params=params)
 
-    assert connection.executions == [("INSERT INTO table VALUES (:value)", params)]
+    assert len(connection.executions) == 1
+    statement, received_params = connection.executions[0]
+    assert isinstance(statement, data_repository.TextClause)
+    assert statement.text == "INSERT INTO table VALUES (:value)"
+    assert received_params == params
 
 
 def test_exec_sql_return_id_fetches_first_column(monkeypatch, data_repository):
@@ -119,3 +121,51 @@ def test_get_product_details_accepts_string_identifier(monkeypatch, data_reposit
 
     details = data_repository.get_product_details("ABC")
     assert details == product_row._asdict()
+
+
+def test_query_df_accepts_string_sql(monkeypatch, data_repository):
+    captured = {}
+    dummy_df = object()
+
+    def fake_read_sql(statement, conn, params=None):
+        captured["statement"] = statement
+        captured["params"] = params
+        captured["conn"] = conn
+        return dummy_df
+
+    connection = object()
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
+    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
+
+    result = data_repository.query_df("SELECT 1", params={"foo": "bar"})
+
+    assert result is dummy_df
+    assert isinstance(captured["statement"], data_repository.TextClause)
+    assert captured["statement"].text == "SELECT 1"
+    assert captured["params"] == {"foo": "bar"}
+    assert captured["conn"] is connection
+
+
+def test_query_df_accepts_text_clause(monkeypatch, data_repository):
+    captured = {}
+    dummy_df = object()
+
+    def fake_read_sql(statement, conn, params=None):
+        captured["statement"] = statement
+        captured["params"] = params
+        captured["conn"] = conn
+        return dummy_df
+
+    connection = object()
+    engine = DummyEngine(connection)
+    monkeypatch.setattr(data_repository, "get_engine", lambda: engine)
+    monkeypatch.setattr(data_repository.pd, "read_sql", fake_read_sql)
+
+    text_clause = data_repository.text("SELECT * FROM produits")
+    result = data_repository.query_df(text_clause)
+
+    assert result is dummy_df
+    assert captured["statement"] is text_clause
+    assert captured["params"] is None
+    assert captured["conn"] is connection

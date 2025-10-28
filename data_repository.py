@@ -24,11 +24,12 @@ def get_engine() -> Engine:
         max_overflow=20      # Permet 20 connexions temporaires en cas de pic
     )
 
-def query_df(sql: str, params=None) -> pd.DataFrame:
+def query_df(sql: str | TextClause, params=None) -> pd.DataFrame:
     """Exécute une requête SELECT et retourne le résultat sous forme de DataFrame Pandas."""
+    statement = sql if isinstance(sql, TextClause) else text(sql)
     eng = get_engine()
     with eng.begin() as conn:
-        return pd.read_sql(text(sql), conn, params=params)
+        return pd.read_sql(statement, conn, params=params)
 
 # db_manager.py (Renommé : data_repository.py)
 # ...
