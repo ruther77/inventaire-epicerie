@@ -305,41 +305,33 @@ def load_table_counts() -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def load_stock_diagnostics() -> pd.DataFrame:
     sql = """
-        SELECT
-            p.id,
-            p.nom,
-            p.stock_actuel,
-            COALESCE(SUM(CASE
-                WHEN m.type = 'ENTREE' THEN m.quantite
-                WHEN m.type = 'SORTIE' THEN -m.quantite
-                WHEN m.type = 'INVENTAIRE' THEN m.quantite
-                WHEN m.type = 'TRANSFERT' THEN m.quantite
-                ELSE 0
-            END), 0) AS stock_calcule,
-            ROUND(p.stock_actuel - COALESCE(SUM(CASE
-                WHEN m.type = 'ENTREE' THEN m.quantite
-                WHEN m.type = 'SORTIE' THEN -m.quantite
-                WHEN m.type = 'INVENTAIRE' THEN m.quantite
-                WHEN m.type = 'TRANSFERT' THEN m.quantite
-                ELSE 0
-            END), 0), 3) AS ecart
-        FROM produits p
-        LEFT JOIN mouvements_stock m ON m.produit_id = p.id
-        GROUP BY p.id, p.nom, p.stock_actuel
-        HAVING ABS(p.stock_actuel - COALESCE(SUM(CASE
-            WHEN m.type = 'ENTREE' THEN m.quantite
-            WHEN m.type = 'SORTIE' THEN -m.quantite
-            WHEN m.type = 'INVENTAIRE' THEN m.quantite
-            WHEN m.type = 'TRANSFERT' THEN m.quantite
-            ELSE 0
-        END), 0)) > 0.001
-        ORDER BY ABS(p.stock_actuel - COALESCE(SUM(CASE
-            WHEN m.type = 'ENTREE' THEN m.quantite
-            WHEN m.type = 'SORTIE' THEN -m.quantite
-            WHEN m.type = 'INVENTAIRE' THEN m.quantite
-            WHEN m.type = 'TRANSFERT' THEN m.quantite
-            ELSE 0
-        END), 0)) DESC, p.nom
+        WITH stock_compare AS (
+            SELECT
+                p.id,
+                p.nom,
+                p.stock_actuel,
+                COALESCE(SUM(CASE
+                    WHEN m.type = 'ENTREE' THEN m.quantite
+                    WHEN m.type = 'SORTIE' THEN -m.quantite
+                    WHEN m.type = 'INVENTAIRE' THEN m.quantite
+                    WHEN m.type = 'TRANSFERT' THEN m.quantite
+                    ELSE 0
+                END), 0) AS stock_calcule,
+                ROUND(p.stock_actuel - COALESCE(SUM(CASE
+                    WHEN m.type = 'ENTREE' THEN m.quantite
+                    WHEN m.type = 'SORTIE' THEN -m.quantite
+                    WHEN m.type = 'INVENTAIRE' THEN m.quantite
+                    WHEN m.type = 'TRANSFERT' THEN m.quantite
+                    ELSE 0
+                END), 0), 3) AS ecart
+            FROM produits p
+            LEFT JOIN mouvements_stock m ON m.produit_id = p.id
+            GROUP BY p.id, p.nom, p.stock_actuel
+        )
+        SELECT *
+        FROM stock_compare
+        WHERE ABS(ecart) > 0.001
+        ORDER BY ABS(ecart) DESC, nom
     """
 
     try:
