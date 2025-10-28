@@ -1261,6 +1261,7 @@ if authentication_status:
                 data=st.session_state["invoice_raw_text"].encode("utf-8"),
                 file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
                 mime="text/plain",
+                key="extract_invoice_raw_text_download",
             )
 
         extracted_df = st.session_state.get("invoice_products_df")
@@ -1299,6 +1300,7 @@ if authentication_status:
                     data=csv_data,
                     file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
                     mime="text/csv",
+                    key="extract_invoice_csv_download",
                 )
             with col_import:
                 if st.button("Importer ces produits", key="extract_invoice_import_button", type="primary"):
@@ -1401,6 +1403,7 @@ if authentication_status:
                 data=st.session_state["invoice_raw_text"].encode("utf-8"),
                 file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
                 mime="text/plain",
+                key="import_invoice_raw_text_download",
             )
 
         extracted_df = st.session_state.get("invoice_products_df")
@@ -1420,7 +1423,7 @@ if authentication_status:
                 column_config={
                     "nom": st.column_config.TextColumn("Nom du produit"),
                     "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
-                    "tva": st.column_config.TextColumn("TVA (%)"),
+                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
                     "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
                     "codes": st.column_config.TextColumn("Codes-barres"),
                 },
@@ -1439,6 +1442,7 @@ if authentication_status:
                     data=csv_data,
                     file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
                     mime="text/csv",
+                    key="import_invoice_csv_download",
                 )
             with col_import:
                 if st.button("Importer ces produits", key="import_invoice_import_button", type="primary"):
