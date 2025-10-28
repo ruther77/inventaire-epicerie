@@ -13,6 +13,14 @@ from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
+from backup_manager import (
+    BackupError,
+    create_backup,
+    delete_backup,
+    get_backup_directory,
+    list_backups,
+    restore_backup,
+)
 
 # Imports pour le Scanner et la Vidéo
 import cv2 
@@ -22,6 +30,7 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, 
 
 # Importation des fonctions de gestion de la BDD et du chargeur 
 from data_repository import (
+    DATABASE_URL,
     query_df,
     exec_sql,
     exec_sql_return_id,
@@ -1855,18 +1864,126 @@ if authentication_status:
         if st.session_state["user_role"] == "admin":
             
             st.subheader("Vérification et Réparation BDD")
-            
+
             if st.button("Tester la connexion BDD"):
                 try:
-                    df = query_df("SELECT NOW() as now") 
+                    df = query_df("SELECT NOW() as now")
                     st.success(f"Connexion OK — serveur répond: {df.loc[0,'now']}")
                 except Exception as e:
                     st.error("Connexion échouée :")
                     st.exception(e)
-            
+
             if st.button("Vider le Cache Streamlit"):
                 st.cache_data.clear()
                 st.toast("Cache vidé. Les données seront rechargées au prochain rafraîchissement.", icon='🧹')
+
+            st.divider()
+            st.subheader("Gestion des sauvegardes de la base de données")
+
+            def _trigger_rerun():
+                try:
+                    st.rerun()
+                except AttributeError:
+                    st.experimental_rerun()
+
+            backup_directory = get_backup_directory()
+            st.caption(
+                "Les fichiers générés sont conservés dans le dossier suivant : "
+                f"`{backup_directory.resolve()}`"
+            )
+
+            feedback = st.session_state.pop("admin_backup_feedback", None)
+            if feedback:
+                level, message = feedback
+                display = getattr(st, level, st.info)
+                display(message)
+
+            st.text_input(
+                "Étiquette optionnelle pour la prochaine sauvegarde",
+                key="admin_backup_label",
+                placeholder="ex: apres_inventaire",
+                help="L'étiquette est ajoutée au nom du fichier pour faciliter l'identification.",
+            )
+
+            if st.button("Créer une sauvegarde maintenant", key="admin_backup_create"):
+                label = st.session_state.get("admin_backup_label", "").strip()
+                with st.spinner("Création de la sauvegarde en cours..."):
+                    try:
+                        metadata = create_backup(
+                            label=label or None,
+                            database_url=DATABASE_URL,
+                        )
+                    except BackupError as exc:
+                        st.error(f"Échec de la sauvegarde : {exc}")
+                    else:
+                        st.session_state["admin_backup_label"] = ""
+                        st.session_state["admin_backup_feedback"] = (
+                            "success",
+                            f"Sauvegarde créée : {metadata.name} — {metadata.size_mb:.2f} Mo",
+                        )
+                        st.toast("Sauvegarde terminée", icon="💾")
+                        _trigger_rerun()
+
+            backups = list_backups()
+            if not backups:
+                st.info("Aucune sauvegarde trouvée pour le moment.")
+            else:
+                st.warning(
+                    "La restauration réinitialise la base avec le contenu du fichier sélectionné.",
+                    icon="⚠️",
+                )
+                for index, backup in enumerate(backups):
+                    row = st.container()
+                    with row:
+                        cols = st.columns([3.2, 1.6, 1.2, 1.5, 1.3, 1.1])
+                        cols[0].write(f"**{backup.name}**")
+                        cols[1].write(backup.created_at.astimezone().strftime("%d/%m/%Y %H:%M"))
+                        cols[2].write(f"{backup.size_mb:.2f} Mo")
+                        mime = "application/gzip" if backup.path.suffix == ".gz" else "application/sql"
+                        cols[3].download_button(
+                            "Télécharger",
+                            data=backup.path.read_bytes(),
+                            file_name=backup.name,
+                            mime=mime,
+                            key=f"backup_download_{index}",
+                            use_container_width=True,
+                        )
+                        if cols[4].button(
+                            "Restaurer",
+                            key=f"backup_restore_{index}",
+                            use_container_width=True,
+                        ):
+                            with st.spinner("Restauration de la base en cours..."):
+                                try:
+                                    restore_backup(
+                                        backup.name,
+                                        database_url=DATABASE_URL,
+                                    )
+                                except BackupError as exc:
+                                    st.error(f"Échec de la restauration : {exc}")
+                                else:
+                                    st.session_state["admin_backup_feedback"] = (
+                                        "success",
+                                        f"Base restaurée depuis {backup.name}.",
+                                    )
+                                    st.toast("Restauration effectuée", icon="✅")
+                                    _trigger_rerun()
+                        if cols[5].button(
+                            "Supprimer",
+                            key=f"backup_delete_{index}",
+                            use_container_width=True,
+                        ):
+                            try:
+                                delete_backup(backup.name)
+                            except BackupError as exc:
+                                st.error(f"Suppression impossible : {exc}")
+                            else:
+                                st.session_state["admin_backup_feedback"] = (
+                                    "success",
+                                    f"Sauvegarde supprimée : {backup.name}",
+                                )
+                                st.toast("Fichier supprimé", icon="🗑️")
+                                _trigger_rerun()
 
             st.divider()
             st.subheader("Aperçu des Tables Brutes & Diagnostics")
