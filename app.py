@@ -67,6 +67,140 @@ if "invoice_import_summary" not in st.session_state:
     st.session_state["invoice_import_summary"] = None
 if "invoice_uploaded_name" not in st.session_state:
     st.session_state["invoice_uploaded_name"] = "facture.txt"
+if "invoice_uploaded_batches" not in st.session_state:
+    st.session_state["invoice_uploaded_batches"] = []
+if "invoice_selection_index" not in st.session_state:
+    st.session_state["invoice_selection_index"] = None
+if "invoice_processed_signatures" not in st.session_state:
+    st.session_state["invoice_processed_signatures"] = set()
+
+MAX_INVOICE_UPLOADS = 20
+INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
+
+
+def _sync_invoice_selector_widgets(index: int) -> None:
+    for selector_key in INVOICE_SELECTOR_KEYS:
+        if selector_key in st.session_state:
+            st.session_state[selector_key] = index
+
+
+def _set_active_invoice_from_index(index: int) -> None:
+    batches = st.session_state.get("invoice_uploaded_batches", [])
+    if not batches:
+        st.session_state["invoice_selection_index"] = None
+        return
+
+    index = max(0, min(index, len(batches) - 1))
+    batch = batches[index]
+
+    st.session_state["invoice_raw_text"] = batch["text"]
+    st.session_state["invoice_text_input"] = batch["text"]
+    st.session_state["extract_invoice_text_input"] = batch["text"]
+    st.session_state["import_invoice_text_input"] = batch["text"]
+    st.session_state["invoice_products_df"] = None
+    st.session_state["invoice_import_summary"] = None
+    st.session_state["invoice_uploaded_name"] = batch["download_name"]
+    st.session_state["invoice_selection_index"] = index
+
+    _sync_invoice_selector_widgets(index)
+
+
+def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
+    if not uploaded_files:
+        return
+
+    if not isinstance(uploaded_files, (list, tuple)):
+        uploaded_files = [uploaded_files]
+
+    if len(uploaded_files) > MAX_INVOICE_UPLOADS:
+        st.info(f"Seuls les {MAX_INVOICE_UPLOADS} premiers fichiers seront traités.")
+
+    processed_signatures = st.session_state.setdefault("invoice_processed_signatures", set())
+    batches = st.session_state.setdefault("invoice_uploaded_batches", [])
+    seen_signatures = set(processed_signatures)
+
+    new_batches = []
+    for uploaded_invoice_file in uploaded_files[:MAX_INVOICE_UPLOADS]:
+        signature = f"{uploaded_invoice_file.name}|{getattr(uploaded_invoice_file, 'size', '0')}"
+        if signature in seen_signatures:
+            st.info(f"{uploaded_invoice_file.name} a déjà été traité.")
+            continue
+
+        try:
+            raw_bytes = uploaded_invoice_file.getvalue()
+        except Exception as exc:  # pragma: no cover - protection runtime Streamlit
+            st.error(f"Erreur lors de la lecture du fichier {uploaded_invoice_file.name} : {exc}")
+            continue
+
+        proxy_file = io.BytesIO(raw_bytes)
+        proxy_file.name = uploaded_invoice_file.name
+        proxy_file.type = uploaded_invoice_file.type
+
+        try:
+            extracted_text = invoice_extractor.extract_text_from_file(proxy_file)
+        except Exception as exc:  # pragma: no cover - protection runtime Streamlit
+            st.error(f"Erreur lors de la lecture du fichier {uploaded_invoice_file.name} : {exc}")
+            continue
+
+        if extracted_text is None or not str(extracted_text).strip():
+            st.warning(f"{uploaded_invoice_file.name} : aucun texte exploitable détecté.")
+            continue
+
+        if str(extracted_text).lower().startswith("erreur"):
+            st.error(f"{uploaded_invoice_file.name} : {extracted_text}")
+            continue
+
+        base_name, _ = os.path.splitext(uploaded_invoice_file.name)
+        safe_name = base_name or "facture"
+        download_name = f"{safe_name}_extraction.txt"
+
+        new_batches.append(
+            {
+                "name": uploaded_invoice_file.name,
+                "text": extracted_text,
+                "download_name": download_name,
+                "signature": signature,
+            }
+        )
+        seen_signatures.add(signature)
+        st.success(f"Texte extrait depuis {uploaded_invoice_file.name} ({context_label}).")
+
+    if not new_batches:
+        return
+
+    batches.extend(new_batches)
+    if len(batches) > MAX_INVOICE_UPLOADS:
+        batches[:] = batches[-MAX_INVOICE_UPLOADS:]
+
+    processed_signatures.clear()
+    processed_signatures.update(batch["signature"] for batch in batches)
+    _set_active_invoice_from_index(len(batches) - 1)
+
+
+def _render_invoice_selector(label: str, widget_key: str) -> None:
+    batches = st.session_state.get("invoice_uploaded_batches", [])
+    if not batches:
+        return
+
+    current_index = st.session_state.get("invoice_selection_index")
+    if current_index is None or current_index >= len(batches):
+        current_index = len(batches) - 1
+        _set_active_invoice_from_index(current_index)
+
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = current_index
+
+    options = list(range(len(batches)))
+
+    selected_index = st.selectbox(
+        label,
+        options,
+        format_func=lambda idx: batches[idx]["name"],
+        key=widget_key,
+    )
+
+    if selected_index != st.session_state.get("invoice_selection_index"):
+        _set_active_invoice_from_index(selected_index)
     
 # --- Configuration de l'Authentification ---
 SECRET_KEY = os.getenv("STREAMLIT_SECRET_KEY", "__auth_token_inventaire_secure_2025")
@@ -1067,38 +1201,16 @@ if authentication_status:
             "les corriger si nécessaire, puis importez-les dans le catalogue."
         )
 
-        uploaded_invoice_file = st.file_uploader(
+        uploaded_invoice_files = st.file_uploader(
             "Déposer une facture Metro",
             type=["pdf", "docx", "txt"],
             key="extract_invoice_file_uploader",
             help="Les formats PDF, DOCX et TXT sont pris en charge.",
+            accept_multiple_files=True,
         )
 
-        if uploaded_invoice_file is not None:
-            raw_bytes = uploaded_invoice_file.getvalue()
-            proxy_file = io.BytesIO(raw_bytes)
-            proxy_file.name = uploaded_invoice_file.name
-            proxy_file.type = uploaded_invoice_file.type
-            try:
-                extracted_text = invoice_extractor.extract_text_from_file(proxy_file)
-            except Exception as exc:  # pragma: no cover - protection runtime Streamlit
-                st.error(f"Erreur lors de la lecture du fichier : {exc}")
-            else:
-                if extracted_text is None or not str(extracted_text).strip():
-                    st.warning("Le fichier a été chargé mais aucun texte exploitable n'a été détecté.")
-                elif str(extracted_text).lower().startswith("erreur"):
-                    st.error(extracted_text)
-                else:
-                    base_name, _ = os.path.splitext(uploaded_invoice_file.name)
-                    safe_name = base_name or "facture"
-                    st.session_state["invoice_raw_text"] = extracted_text
-                    st.session_state["invoice_text_input"] = extracted_text
-                    st.session_state["extract_invoice_text_input"] = extracted_text
-                    st.session_state["import_invoice_text_input"] = extracted_text
-                    st.session_state["invoice_products_df"] = None
-                    st.session_state["invoice_import_summary"] = None
-                    st.session_state["invoice_uploaded_name"] = f"{safe_name}_extraction.txt"
-                    st.success(f"Texte extrait depuis {uploaded_invoice_file.name}.")
+        _process_uploaded_invoices(uploaded_invoice_files, "Extraction")
+        _render_invoice_selector("Facture chargée", "extract_invoice_selector")
 
         extract_invoice_text = st.text_area(
             "Texte de la facture à analyser",
@@ -1136,6 +1248,11 @@ if authentication_status:
                 st.session_state["invoice_products_df"] = None
                 st.session_state["invoice_import_summary"] = None
                 st.session_state["invoice_uploaded_name"] = "facture.txt"
+                st.session_state["invoice_uploaded_batches"] = []
+                st.session_state["invoice_processed_signatures"] = set()
+                st.session_state["invoice_selection_index"] = None
+                for selector_key in INVOICE_SELECTOR_KEYS:
+                    st.session_state.pop(selector_key, None)
                 st.info("Extraction réinitialisée.")
 
         if st.session_state.get("invoice_raw_text"):
@@ -1224,38 +1341,16 @@ if authentication_status:
     with import_tab:
         st.header("Importation de Produits par Fichier CSV")
 
-        uploaded_invoice_file = st.file_uploader(
+        uploaded_invoice_files = st.file_uploader(
             "Déposer une facture Metro",
             type=["pdf", "docx", "txt"],
             key="import_invoice_file_uploader",
             help="Les formats PDF, DOCX et TXT sont pris en charge.",
+            accept_multiple_files=True,
         )
 
-        if uploaded_invoice_file is not None:
-            raw_bytes = uploaded_invoice_file.getvalue()
-            proxy_file = io.BytesIO(raw_bytes)
-            proxy_file.name = uploaded_invoice_file.name
-            proxy_file.type = uploaded_invoice_file.type
-            try:
-                extracted_text = invoice_extractor.extract_text_from_file(proxy_file)
-            except Exception as exc:  # pragma: no cover - protection runtime Streamlit
-                st.error(f"Erreur lors de la lecture du fichier : {exc}")
-            else:
-                if extracted_text is None or not str(extracted_text).strip():
-                    st.warning("Le fichier a été chargé mais aucun texte exploitable n'a été détecté.")
-                elif str(extracted_text).lower().startswith("erreur"):
-                    st.error(extracted_text)
-                else:
-                    base_name, _ = os.path.splitext(uploaded_invoice_file.name)
-                    safe_name = base_name or "facture"
-                    st.session_state["invoice_raw_text"] = extracted_text
-                    st.session_state["invoice_text_input"] = extracted_text
-                    st.session_state["extract_invoice_text_input"] = extracted_text
-                    st.session_state["import_invoice_text_input"] = extracted_text
-                    st.session_state["invoice_products_df"] = None
-                    st.session_state["invoice_import_summary"] = None
-                    st.session_state["invoice_uploaded_name"] = f"{safe_name}_extraction.txt"
-                    st.success(f"Texte extrait depuis {uploaded_invoice_file.name}.")
+        _process_uploaded_invoices(uploaded_invoice_files, "Import")
+        _render_invoice_selector("Facture chargée", "import_invoice_selector")
 
         import_invoice_text = st.text_area(
             "Texte de la facture à analyser",
@@ -1293,6 +1388,11 @@ if authentication_status:
                 st.session_state["invoice_products_df"] = None
                 st.session_state["invoice_import_summary"] = None
                 st.session_state["invoice_uploaded_name"] = "facture.txt"
+                st.session_state["invoice_uploaded_batches"] = []
+                st.session_state["invoice_processed_signatures"] = set()
+                st.session_state["invoice_selection_index"] = None
+                for selector_key in INVOICE_SELECTOR_KEYS:
+                    st.session_state.pop(selector_key, None)
                 st.info("Extraction réinitialisée.")
 
         if st.session_state.get("invoice_raw_text"):
