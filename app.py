@@ -277,9 +277,15 @@ def load_table_preview(table_name: str, limit: int = 20) -> pd.DataFrame:
     if table_name not in allowed:
         raise ValueError(f"Table non autorisée pour l'aperçu: {table_name}")
 
-    sql = text(f"SELECT * FROM public.{table_name} ORDER BY id DESC LIMIT :limit")
     try:
-        return query_df(sql, params={"limit": int(limit)})
+        limit_value = max(1, int(limit))
+    except (TypeError, ValueError):
+        limit_value = 20
+
+    sql = f"SELECT * FROM public.{table_name} ORDER BY id DESC LIMIT {limit_value}"
+
+    try:
+        return query_df(sql)
     except Exception as exc:
         st.warning(f"Impossible de lire la table {table_name}: {exc}")
         return pd.DataFrame()
@@ -316,22 +322,20 @@ def load_stock_diagnostics() -> pd.DataFrame:
                     WHEN m.type = 'INVENTAIRE' THEN m.quantite
                     WHEN m.type = 'TRANSFERT' THEN m.quantite
                     ELSE 0
-                END), 0) AS stock_calcule,
-                ROUND(p.stock_actuel - COALESCE(SUM(CASE
-                    WHEN m.type = 'ENTREE' THEN m.quantite
-                    WHEN m.type = 'SORTIE' THEN -m.quantite
-                    WHEN m.type = 'INVENTAIRE' THEN m.quantite
-                    WHEN m.type = 'TRANSFERT' THEN m.quantite
-                    ELSE 0
-                END), 0), 3) AS ecart
+                END), 0) AS stock_calcule
             FROM produits p
             LEFT JOIN mouvements_stock m ON m.produit_id = p.id
             GROUP BY p.id, p.nom, p.stock_actuel
         )
-        SELECT *
+        SELECT
+            id,
+            nom,
+            stock_actuel,
+            stock_calcule,
+            ROUND(stock_actuel - stock_calcule, 3) AS ecart
         FROM stock_compare
-        WHERE ABS(ecart) > 0.001
-        ORDER BY ABS(ecart) DESC, nom
+        WHERE ABS(stock_actuel - stock_calcule) > 0.001
+        ORDER BY ABS(stock_actuel - stock_calcule) DESC, nom
     """
 
     try:
