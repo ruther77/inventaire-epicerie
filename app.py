@@ -1280,7 +1280,7 @@ if authentication_status:
                 column_config={
                     "nom": st.column_config.TextColumn("Nom du produit"),
                     "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
-                    "tva": st.column_config.TextColumn("TVA (%)"),
+                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
                     "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
                     "codes": st.column_config.TextColumn("Codes-barres"),
                 },
