@@ -1070,7 +1070,7 @@ if authentication_status:
         uploaded_invoice_file = st.file_uploader(
             "Déposer une facture Metro",
             type=["pdf", "docx", "txt"],
-            key="invoice_file_uploader",
+            key="extract_invoice_file_uploader",
             help="Les formats PDF, DOCX et TXT sont pris en charge.",
         )
 
@@ -1093,21 +1093,27 @@ if authentication_status:
                     safe_name = base_name or "facture"
                     st.session_state["invoice_raw_text"] = extracted_text
                     st.session_state["invoice_text_input"] = extracted_text
+                    st.session_state["extract_invoice_text_input"] = extracted_text
+                    st.session_state["import_invoice_text_input"] = extracted_text
                     st.session_state["invoice_products_df"] = None
                     st.session_state["invoice_import_summary"] = None
                     st.session_state["invoice_uploaded_name"] = f"{safe_name}_extraction.txt"
                     st.success(f"Texte extrait depuis {uploaded_invoice_file.name}.")
 
-        st.text_area(
+        extract_invoice_text = st.text_area(
             "Texte de la facture à analyser",
-            key="invoice_text_input",
+            value=st.session_state.get("invoice_text_input", ""),
+            key="extract_invoice_text_input",
             height=260,
             placeholder="Collez ici la section produits de la facture si nécessaire...",
         )
+        if extract_invoice_text != st.session_state.get("invoice_text_input"):
+            st.session_state["invoice_text_input"] = extract_invoice_text
+            st.session_state["import_invoice_text_input"] = extract_invoice_text
 
         col_extract_btn, col_reset_btn = st.columns(2)
         with col_extract_btn:
-            if st.button("Analyser le texte", key="invoice_extract_button", type="primary"):
+            if st.button("Analyser le texte", key="extract_invoice_extract_button", type="primary"):
                 text_to_parse = st.session_state.get("invoice_text_input", "")
                 if not text_to_parse.strip():
                     st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
@@ -1122,9 +1128,11 @@ if authentication_status:
                             f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous."
                         )
         with col_reset_btn:
-            if st.button("Réinitialiser l'extraction", key="invoice_reset_button"):
+            if st.button("Réinitialiser l'extraction", key="extract_invoice_reset_button"):
                 st.session_state["invoice_raw_text"] = ""
                 st.session_state["invoice_text_input"] = ""
+                st.session_state["extract_invoice_text_input"] = ""
+                st.session_state["import_invoice_text_input"] = ""
                 st.session_state["invoice_products_df"] = None
                 st.session_state["invoice_import_summary"] = None
                 st.session_state["invoice_uploaded_name"] = "facture.txt"
@@ -1148,7 +1156,7 @@ if authentication_status:
 
             editable_df = st.data_editor(
                 extracted_df,
-                key="invoice_products_editor",
+                key="extract_invoice_products_editor",
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True,
@@ -1176,7 +1184,7 @@ if authentication_status:
                     mime="text/csv",
                 )
             with col_import:
-                if st.button("Importer ces produits", key="invoice_import_button", type="primary"):
+                if st.button("Importer ces produits", key="extract_invoice_import_button", type="primary"):
                     with st.spinner("Import des produits en cours..."):
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
@@ -1219,7 +1227,7 @@ if authentication_status:
         uploaded_invoice_file = st.file_uploader(
             "Déposer une facture Metro",
             type=["pdf", "docx", "txt"],
-            key="invoice_file_uploader",
+            key="import_invoice_file_uploader",
             help="Les formats PDF, DOCX et TXT sont pris en charge.",
         )
 
@@ -1242,21 +1250,27 @@ if authentication_status:
                     safe_name = base_name or "facture"
                     st.session_state["invoice_raw_text"] = extracted_text
                     st.session_state["invoice_text_input"] = extracted_text
+                    st.session_state["extract_invoice_text_input"] = extracted_text
+                    st.session_state["import_invoice_text_input"] = extracted_text
                     st.session_state["invoice_products_df"] = None
                     st.session_state["invoice_import_summary"] = None
                     st.session_state["invoice_uploaded_name"] = f"{safe_name}_extraction.txt"
                     st.success(f"Texte extrait depuis {uploaded_invoice_file.name}.")
 
-        st.text_area(
+        import_invoice_text = st.text_area(
             "Texte de la facture à analyser",
-            key="invoice_text_input",
+            value=st.session_state.get("invoice_text_input", ""),
+            key="import_invoice_text_input",
             height=260,
             placeholder="Collez ici la section produits de la facture si nécessaire...",
         )
+        if import_invoice_text != st.session_state.get("invoice_text_input"):
+            st.session_state["invoice_text_input"] = import_invoice_text
+            st.session_state["extract_invoice_text_input"] = import_invoice_text
 
         col_extract_btn, col_reset_btn = st.columns(2)
         with col_extract_btn:
-            if st.button("Analyser le texte", key="invoice_extract_button", type="primary"):
+            if st.button("Analyser le texte", key="import_invoice_extract_button", type="primary"):
                 text_to_parse = st.session_state.get("invoice_text_input", "")
                 if not text_to_parse.strip():
                     st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
@@ -1271,9 +1285,11 @@ if authentication_status:
                             f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous."
                         )
         with col_reset_btn:
-            if st.button("Réinitialiser l'extraction", key="invoice_reset_button"):
+            if st.button("Réinitialiser l'extraction", key="import_invoice_reset_button"):
                 st.session_state["invoice_raw_text"] = ""
                 st.session_state["invoice_text_input"] = ""
+                st.session_state["extract_invoice_text_input"] = ""
+                st.session_state["import_invoice_text_input"] = ""
                 st.session_state["invoice_products_df"] = None
                 st.session_state["invoice_import_summary"] = None
                 st.session_state["invoice_uploaded_name"] = "facture.txt"
@@ -1297,7 +1313,7 @@ if authentication_status:
 
             editable_df = st.data_editor(
                 extracted_df,
-                key="invoice_products_editor",
+                key="import_invoice_products_editor",
                 hide_index=True,
                 num_rows="dynamic",
                 use_container_width=True,
@@ -1325,7 +1341,7 @@ if authentication_status:
                     mime="text/csv",
                 )
             with col_import:
-                if st.button("Importer ces produits", key="invoice_import_button", type="primary"):
+                if st.button("Importer ces produits", key="import_invoice_import_button", type="primary"):
                     with st.spinner("Import des produits en cours..."):
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
