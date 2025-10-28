@@ -65,6 +65,20 @@ class BinaryStatus:
         return self.resolved is not None
 
 
+@dataclass(frozen=True, slots=True)
+class BinaryStatus:
+    """Describe how a required external command is resolved."""
+
+    name: str
+    configured: str
+    resolved: Optional[str]
+    source: str
+
+    @property
+    def available(self) -> bool:
+        return self.resolved is not None
+
+
 def get_backup_directory(
     directory: str | os.PathLike[str] | None = None,
     *,
