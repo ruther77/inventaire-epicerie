@@ -15,7 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
@@ -41,6 +41,12 @@ class BackupMetadata:
         return self.size_bytes / (1024 * 1024)
 
 
+_DEFAULT_BACKUP_LOCATIONS: Tuple[Path, ...] = (
+    Path("/app/backups"),
+    Path("backups"),
+)
+
+
 def get_backup_directory(
     directory: str | os.PathLike[str] | None = None,
     *,
@@ -50,20 +56,39 @@ def get_backup_directory(
 
     Args:
         directory: Optional override path.  When omitted the BACKUP_DIR
-            environment variable is used, or ``./backups`` as a fallback.
+            environment variable is used, or ``/app/backups`` (falling back to
+            ``./backups`` if the former cannot be created).
         create: Whether the directory should be created when missing.
 
     Returns:
         A :class:`~pathlib.Path` object pointing to the backup folder.
     """
 
-    if directory is None:
-        directory = os.getenv("BACKUP_DIR", "backups")
+    candidates: Tuple[Path, ...]
+    if directory is not None:
+        candidates = (Path(directory),)
+    else:
+        env_directory = os.getenv("BACKUP_DIR")
+        if env_directory:
+            candidates = (Path(env_directory),)
+        else:
+            candidates = _DEFAULT_BACKUP_LOCATIONS
 
-    path = Path(directory)
+    for candidate in candidates:
+        path = candidate
+        if create:
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                continue
+        return path
+
+    # If all automatic locations failed because of permissions, fall back to a
+    # relative directory that Streamlit can create in the working tree.
+    fallback = Path("backups")
     if create:
-        path.mkdir(parents=True, exist_ok=True)
-    return path
+        fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 def _normalise_database_url(database_url: str) -> Tuple[str, Optional[str]]:

@@ -17,6 +17,7 @@ from backup_manager import (
     BackupError,
     create_backup,
     delete_backup,
+    get_backup_directory,
     list_backups,
     restore_backup,
 )
@@ -112,3 +113,42 @@ def test_create_backup_without_database_url_raises(monkeypatch, tmp_path):
 
     with pytest.raises(BackupError):
         create_backup(backup_dir=tmp_path)
+
+
+def test_get_backup_directory_prefers_default_location(monkeypatch, tmp_path):
+    monkeypatch.delenv("BACKUP_DIR", raising=False)
+    primary = tmp_path / "primary"
+    secondary = tmp_path / "secondary"
+    monkeypatch.setattr(
+        "backup_manager._DEFAULT_BACKUP_LOCATIONS",
+        (primary, secondary),
+    )
+
+    path = get_backup_directory(create=True)
+
+    assert path == primary
+    assert primary.exists()
+
+
+def test_get_backup_directory_falls_back_on_permission_error(monkeypatch, tmp_path):
+    monkeypatch.delenv("BACKUP_DIR", raising=False)
+    primary = tmp_path / "locked"
+    secondary = tmp_path / "usable"
+    monkeypatch.setattr(
+        "backup_manager._DEFAULT_BACKUP_LOCATIONS",
+        (primary, secondary),
+    )
+
+    original_mkdir = Path.mkdir
+
+    def fake_mkdir(self, parents=False, exist_ok=False):  # type: ignore[override]
+        if self == primary:
+            raise PermissionError("denied")
+        return original_mkdir(self, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", fake_mkdir, raising=False)
+
+    path = get_backup_directory(create=True)
+
+    assert path == secondary
+    assert secondary.exists()
