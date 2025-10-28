@@ -15,6 +15,8 @@ import plotly.express as px
 import invoice_extractor
 from backup_manager import (
     BackupError,
+    BinaryStatus,
+    check_backup_tools,
     create_backup,
     delete_backup,
     get_backup_directory,
@@ -1879,6 +1881,38 @@ if authentication_status:
 
             st.divider()
             st.subheader("Gestion des sauvegardes de la base de données")
+
+            tool_statuses = check_backup_tools()
+            missing_tools = [status for status in tool_statuses if not status.available]
+
+            st.markdown(
+                "ℹ️ **Pré-requis système** : l'utilisateur exécutant Streamlit doit disposer "
+                "du client PostgreSQL (`pg_dump` et `psql`). Sur Debian/Ubuntu, installez-le "
+                "via `apt install postgresql-client` ou fournissez les chemins via les "
+                "variables `PG_DUMP_PATH`/`PSQL_PATH`."
+            )
+
+            status_lines = []
+            for status in tool_statuses:
+                if status.available:
+                    status_lines.append(
+                        f"- ✅ `{status.name}` disponible : `{status.resolved}` (détecté via {status.source})."
+                    )
+                else:
+                    status_lines.append(
+                        f"- ❌ `{status.name}` introuvable avec la configuration actuelle "
+                        f"(`{status.configured}` depuis {status.source})."
+                    )
+
+            st.markdown("\n".join(status_lines))
+
+            if missing_tools:
+                st.error(
+                    "Installez le client PostgreSQL ou ajustez les variables d'environnement "
+                    "pour activer la sauvegarde et la restauration."
+                )
+            else:
+                st.success("Les utilitaires PostgreSQL requis sont disponibles.")
 
             def _trigger_rerun():
                 try:

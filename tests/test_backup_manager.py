@@ -15,6 +15,8 @@ import pytest
 
 from backup_manager import (
     BackupError,
+    BinaryStatus,
+    check_backup_tools,
     create_backup,
     delete_backup,
     get_backup_directory,
@@ -53,9 +55,9 @@ def test_create_backup_invokes_pg_dump_and_creates_gzip(monkeypatch, tmp_path):
         "DATABASE_URL",
         "postgresql+psycopg2://user:secret@localhost:5432/epicerie",
     )
-    monkeypatch.setenv("PG_DUMP_BIN", "pg_dump")
+    monkeypatch.setenv("PG_DUMP_PATH", "pg_dump")
     monkeypatch.setenv("BACKUP_DIR", str(tmp_path))
-    monkeypatch.setenv("PSQL_BIN", "psql")
+    monkeypatch.setenv("PSQL_PATH", "psql")
     monkeypatch.setenv("PGPASSWORD", "should-not-be-overwritten")
     monkeypatch.setattr("subprocess.run", fake_run)
 
@@ -106,6 +108,32 @@ def test_delete_backup_removes_file(tmp_path):
     delete_backup(backup_file.name, backup_dir=tmp_path)
 
     assert not backup_file.exists()
+
+
+def test_check_backup_tools_reports_resolution(monkeypatch):
+    monkeypatch.delenv("PG_DUMP_BIN", raising=False)
+    monkeypatch.delenv("PSQL_BIN", raising=False)
+    monkeypatch.setenv("PG_DUMP_PATH", "pg_dump")
+    monkeypatch.setenv("PSQL_PATH", "psql")
+
+    def fake_which(command: str) -> str | None:
+        return f"/usr/bin/{command}"
+
+    monkeypatch.setattr("backup_manager.shutil.which", fake_which)
+
+    pg_status, psql_status = check_backup_tools()
+
+    assert isinstance(pg_status, BinaryStatus)
+    assert pg_status.name == "pg_dump"
+    assert pg_status.configured == "pg_dump"
+    assert pg_status.available is True
+    assert pg_status.resolved == "/usr/bin/pg_dump"
+    assert "PG_DUMP_PATH" in pg_status.source
+
+    assert isinstance(psql_status, BinaryStatus)
+    assert psql_status.available is True
+    assert psql_status.resolved == "/usr/bin/psql"
+    assert "PSQL_PATH" in psql_status.source
 
 
 def test_create_backup_without_database_url_raises(monkeypatch, tmp_path):

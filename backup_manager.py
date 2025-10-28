@@ -11,6 +11,7 @@ from __future__ import annotations
 import gzip
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +46,20 @@ _DEFAULT_BACKUP_LOCATIONS: Tuple[Path, ...] = (
     Path("/app/backups"),
     Path("backups"),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryStatus:
+    """Describe how a required external command is resolved."""
+
+    name: str
+    configured: str
+    resolved: Optional[str]
+    source: str
+
+    @property
+    def available(self) -> bool:
+        return self.resolved is not None
 
 
 def get_backup_directory(
@@ -89,6 +104,38 @@ def get_backup_directory(
     if create:
         fallback.mkdir(parents=True, exist_ok=True)
     return fallback
+
+
+def _select_binary(
+    explicit: Optional[str],
+    *,
+    env_vars: Tuple[str, ...],
+    default: str,
+    argument_label: str,
+) -> Tuple[str, str]:
+    """Return the binary path and describe how it was resolved."""
+
+    if explicit:
+        return explicit, f"l'argument {argument_label}"
+
+    for env_var in env_vars:
+        value = os.getenv(env_var)
+        if value:
+            return value, f"la variable d'environnement {env_var}"
+
+    return default, "la valeur par défaut du système"
+
+
+def _resolve_binary_location(command: str) -> Optional[str]:
+    """Return the absolute location of *command* if available."""
+
+    path = Path(command)
+    if path.is_absolute() or path.parent != Path("."):
+        if path.exists() and os.access(path, os.X_OK):
+            return str(path.resolve())
+        return None
+
+    return shutil.which(command)
 
 
 def _normalise_database_url(database_url: str) -> Tuple[str, Optional[str]]:
@@ -196,7 +243,12 @@ def create_backup(
     normalised_url, password = _normalise_database_url(database_url)
     env = _prepare_env(password)
 
-    pg_dump_path = pg_dump_path or os.getenv("PG_DUMP_BIN", "pg_dump")
+    pg_dump_path, pg_dump_source = _select_binary(
+        pg_dump_path,
+        env_vars=("PG_DUMP_PATH", "PG_DUMP_BIN"),
+        default="pg_dump",
+        argument_label="pg_dump_path",
+    )
 
     backup_directory = get_backup_directory(backup_dir, create=True)
     filename = _build_backup_name(label)
@@ -211,8 +263,11 @@ def create_backup(
         )
     except FileNotFoundError as exc:
         raise BackupError(
-            "L'outil 'pg_dump' est introuvable. Vérifiez son installation ou "
-            "définissez la variable d'environnement PG_DUMP_BIN."
+            "L'outil 'pg_dump' est introuvable (chemin utilisé : "
+            f"{pg_dump_path!r} depuis {pg_dump_source}). Assurez-vous que le "
+            "client PostgreSQL est installé et que l'utilitaire est présent "
+            "dans le PATH ou définissez les variables d'environnement "
+            "PG_DUMP_PATH/PG_DUMP_BIN."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise BackupError("La commande pg_dump a échoué.") from exc
@@ -257,7 +312,12 @@ def restore_backup(
     env = _prepare_env(password)
 
     path = _resolve_backup_path(filename, directory=backup_dir)
-    psql_path = psql_path or os.getenv("PSQL_BIN", "psql")
+    psql_path, psql_source = _select_binary(
+        psql_path,
+        env_vars=("PSQL_PATH", "PSQL_BIN"),
+        default="psql",
+        argument_label="psql_path",
+    )
 
     if path.suffix == ".gz":
         with gzip.open(path, "rb") as buffer:
@@ -274,16 +334,49 @@ def restore_backup(
         )
     except FileNotFoundError as exc:
         raise BackupError(
-            "L'outil 'psql' est introuvable. Vérifiez son installation ou "
-            "définissez la variable d'environnement PSQL_BIN."
+            "L'outil 'psql' est introuvable (chemin utilisé : "
+            f"{psql_path!r} depuis {psql_source}). Assurez-vous que le client "
+            "PostgreSQL est installé et que l'utilitaire est présent dans le "
+            "PATH ou définissez les variables d'environnement PSQL_PATH/PSQL_BIN."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise BackupError("La commande psql a échoué lors de la restauration.") from exc
 
 
+def check_backup_tools(
+    *,
+    pg_dump_path: Optional[str] = None,
+    psql_path: Optional[str] = None,
+) -> Tuple[BinaryStatus, BinaryStatus]:
+    """Return diagnostic information about pg_dump and psql availability."""
+
+    pg_dump, pg_dump_source = _select_binary(
+        pg_dump_path,
+        env_vars=("PG_DUMP_PATH", "PG_DUMP_BIN"),
+        default="pg_dump",
+        argument_label="pg_dump_path",
+    )
+    psql, psql_source = _select_binary(
+        psql_path,
+        env_vars=("PSQL_PATH", "PSQL_BIN"),
+        default="psql",
+        argument_label="psql_path",
+    )
+
+    pg_dump_resolved = _resolve_binary_location(pg_dump)
+    psql_resolved = _resolve_binary_location(psql)
+
+    return (
+        BinaryStatus("pg_dump", pg_dump, pg_dump_resolved, pg_dump_source),
+        BinaryStatus("psql", psql, psql_resolved, psql_source),
+    )
+
+
 __all__ = [
     "BackupError",
     "BackupMetadata",
+    "BinaryStatus",
+    "check_backup_tools",
     "create_backup",
     "delete_backup",
     "get_backup_directory",
