@@ -78,10 +78,9 @@ MAX_INVOICE_UPLOADS = 20
 INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
 
 
-def _sync_invoice_selector_widgets(index: int) -> None:
+def _queue_invoice_selector_sync(index: int) -> None:
     for selector_key in INVOICE_SELECTOR_KEYS:
-        if selector_key in st.session_state:
-            st.session_state[selector_key] = index
+        st.session_state[f"{selector_key}__sync"] = index
 
 
 def _set_active_invoice_from_index(index: int) -> None:
@@ -102,7 +101,7 @@ def _set_active_invoice_from_index(index: int) -> None:
     st.session_state["invoice_uploaded_name"] = batch["download_name"]
     st.session_state["invoice_selection_index"] = index
 
-    _sync_invoice_selector_widgets(index)
+    _queue_invoice_selector_sync(index)
 
 
 def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
@@ -187,7 +186,10 @@ def _render_invoice_selector(label: str, widget_key: str) -> None:
         current_index = len(batches) - 1
         _set_active_invoice_from_index(current_index)
 
-    if widget_key not in st.session_state:
+    pending_key = f"{widget_key}__sync"
+    if pending_key in st.session_state:
+        st.session_state[widget_key] = st.session_state.pop(pending_key)
+    elif widget_key not in st.session_state:
         st.session_state[widget_key] = current_index
 
     options = list(range(len(batches)))
