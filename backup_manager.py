@@ -47,6 +47,23 @@ _DEFAULT_BACKUP_LOCATIONS: Tuple[Path, ...] = (
     Path("backups"),
 )
 
+_PG_DUMP_ENV_VARS: Tuple[str, ...] = ("PG_DUMP_PATH", "PG_DUMP_BIN")
+_PSQL_ENV_VARS: Tuple[str, ...] = ("PSQL_PATH", "PSQL_BIN")
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryStatus:
+    """Describe how a required external command is resolved."""
+
+    name: str
+    configured: str
+    resolved: Optional[str]
+    source: str
+
+    @property
+    def available(self) -> bool:
+        return self.resolved is not None
+
 
 @dataclass(frozen=True, slots=True)
 class BinaryStatus:
@@ -124,6 +141,14 @@ def _select_binary(
             return value, f"la variable d'environnement {env_var}"
 
     return default, "la valeur par défaut du système"
+
+
+def _format_env_var_hint(env_vars: Tuple[str, ...]) -> str:
+    if not env_vars:
+        return ""
+    if len(env_vars) == 1:
+        return env_vars[0]
+    return ", ".join(env_vars[:-1]) + f" ou {env_vars[-1]}"
 
 
 def _resolve_binary_location(command: str) -> Optional[str]:
@@ -245,7 +270,7 @@ def create_backup(
 
     pg_dump_path, pg_dump_source = _select_binary(
         pg_dump_path,
-        env_vars=("PG_DUMP_PATH", "PG_DUMP_BIN"),
+        env_vars=_PG_DUMP_ENV_VARS,
         default="pg_dump",
         argument_label="pg_dump_path",
     )
@@ -267,7 +292,7 @@ def create_backup(
             f"{pg_dump_path!r} depuis {pg_dump_source}). Assurez-vous que le "
             "client PostgreSQL est installé et que l'utilitaire est présent "
             "dans le PATH ou définissez les variables d'environnement "
-            "PG_DUMP_PATH/PG_DUMP_BIN."
+            f"{_format_env_var_hint(_PG_DUMP_ENV_VARS)}."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise BackupError("La commande pg_dump a échoué.") from exc
@@ -314,7 +339,7 @@ def restore_backup(
     path = _resolve_backup_path(filename, directory=backup_dir)
     psql_path, psql_source = _select_binary(
         psql_path,
-        env_vars=("PSQL_PATH", "PSQL_BIN"),
+        env_vars=_PSQL_ENV_VARS,
         default="psql",
         argument_label="psql_path",
     )
@@ -337,7 +362,8 @@ def restore_backup(
             "L'outil 'psql' est introuvable (chemin utilisé : "
             f"{psql_path!r} depuis {psql_source}). Assurez-vous que le client "
             "PostgreSQL est installé et que l'utilitaire est présent dans le "
-            "PATH ou définissez les variables d'environnement PSQL_PATH/PSQL_BIN."
+            "PATH ou définissez les variables d'environnement "
+            f"{_format_env_var_hint(_PSQL_ENV_VARS)}."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise BackupError("La commande psql a échoué lors de la restauration.") from exc
@@ -352,13 +378,13 @@ def check_backup_tools(
 
     pg_dump, pg_dump_source = _select_binary(
         pg_dump_path,
-        env_vars=("PG_DUMP_PATH", "PG_DUMP_BIN"),
+        env_vars=_PG_DUMP_ENV_VARS,
         default="pg_dump",
         argument_label="pg_dump_path",
     )
     psql, psql_source = _select_binary(
         psql_path,
-        env_vars=("PSQL_PATH", "PSQL_BIN"),
+        env_vars=_PSQL_ENV_VARS,
         default="psql",
         argument_label="psql_path",
     )

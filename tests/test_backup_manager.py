@@ -143,6 +143,28 @@ def test_create_backup_without_database_url_raises(monkeypatch, tmp_path):
         create_backup(backup_dir=tmp_path)
 
 
+def test_create_backup_missing_pg_dump_mentions_new_env_vars(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://user:secret@localhost:5432/epicerie",
+    )
+    monkeypatch.setenv("BACKUP_DIR", str(tmp_path))
+    monkeypatch.delenv("PG_DUMP_PATH", raising=False)
+    monkeypatch.delenv("PG_DUMP_BIN", raising=False)
+
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("missing pg_dump")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(BackupError) as excinfo:
+        create_backup(backup_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert "PG_DUMP_PATH" in message
+    assert "PG_DUMP_BIN" in message
+
+
 def test_get_backup_directory_prefers_default_location(monkeypatch, tmp_path):
     monkeypatch.delenv("BACKUP_DIR", raising=False)
     primary = tmp_path / "primary"
@@ -180,3 +202,28 @@ def test_get_backup_directory_falls_back_on_permission_error(monkeypatch, tmp_pa
 
     assert path == secondary
     assert secondary.exists()
+
+
+def test_restore_backup_missing_psql_mentions_new_env_vars(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://user:secret@localhost:5432/epicerie",
+    )
+    monkeypatch.delenv("PSQL_PATH", raising=False)
+    monkeypatch.delenv("PSQL_BIN", raising=False)
+
+    payload_path = tmp_path / "restore.sql.gz"
+    with gzip.open(payload_path, "wb") as handle:
+        handle.write(b"SELECT 1;\n")
+
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("missing psql")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(BackupError) as excinfo:
+        restore_backup(payload_path.name, backup_dir=tmp_path)
+
+    message = str(excinfo.value)
+    assert "PSQL_PATH" in message
+    assert "PSQL_BIN" in message
