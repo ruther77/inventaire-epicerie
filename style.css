@@ -31869,6 +31869,233 @@ screen and (max-height:300px) {
     box-shadow: 0 30px 70px rgba(244, 114, 182, 0.24);
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Workspace CMS - Bandeaux et panneaux transverses                          */
+/* -------------------------------------------------------------------------- */
+.workspace-hero {
+    margin-top: 1.5rem;
+    margin-bottom: 2rem;
+    padding: 2.4rem 2.6rem;
+    border-radius: 22px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+    gap: 2rem;
+    color: #0f172a;
+    box-shadow: 0 26px 60px rgba(15, 23, 42, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.workspace-hero::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle at top right, rgba(255, 255, 255, 0.35), transparent 60%);
+}
+
+.workspace-hero--sunset {
+    background: linear-gradient(135deg, rgba(254, 215, 170, 0.88), rgba(251, 191, 36, 0.72));
+}
+
+.workspace-hero--citrus {
+    background: linear-gradient(135deg, rgba(254, 240, 138, 0.85), rgba(253, 186, 116, 0.75));
+}
+
+.workspace-hero--lagoon {
+    background: linear-gradient(135deg, rgba(125, 211, 252, 0.85), rgba(56, 189, 248, 0.78));
+}
+
+.workspace-hero--marine {
+    background: linear-gradient(135deg, rgba(125, 211, 252, 0.45), rgba(59, 130, 246, 0.65));
+}
+
+.workspace-hero--violet {
+    background: linear-gradient(135deg, rgba(196, 181, 253, 0.85), rgba(167, 139, 250, 0.78));
+}
+
+.workspace-hero--emerald {
+    background: linear-gradient(135deg, rgba(134, 239, 172, 0.82), rgba(52, 211, 153, 0.76));
+}
+
+.workspace-hero--amber {
+    background: linear-gradient(135deg, rgba(253, 230, 138, 0.86), rgba(251, 191, 36, 0.78));
+}
+
+.workspace-hero--teal {
+    background: linear-gradient(135deg, rgba(94, 234, 212, 0.82), rgba(45, 212, 191, 0.76));
+}
+
+.workspace-hero--slate {
+    background: linear-gradient(135deg, rgba(226, 232, 240, 0.86), rgba(148, 163, 184, 0.78));
+}
+
+.workspace-hero__content {
+    position: relative;
+    z-index: 1;
+}
+
+.workspace-hero__eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: rgba(15, 23, 42, 0.75);
+    margin-bottom: 0.65rem;
+}
+
+.workspace-hero h2 {
+    font-size: 2.05rem;
+    margin-bottom: 0.8rem;
+}
+
+.workspace-hero p {
+    font-size: 0.98rem;
+    color: rgba(15, 23, 42, 0.75);
+    margin-bottom: 1rem;
+}
+
+.workspace-hero__actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.workspace-hero__chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.32rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.45);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.workspace-hero__metrics {
+    display: grid;
+    gap: 0.85rem;
+    align-content: start;
+}
+
+.workspace-hero__metric {
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 18px;
+    padding: 1rem 1.2rem;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.workspace-hero__metric-label {
+    display: block;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(15, 23, 42, 0.55);
+    margin-bottom: 0.25rem;
+}
+
+.workspace-hero__metric-value {
+    display: block;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.workspace-hero__metric-hint {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.78rem;
+    color: rgba(15, 23, 42, 0.65);
+}
+
+@media (max-width: 1200px) {
+    .workspace-hero {
+        grid-template-columns: 1fr;
+    }
+}
+
+.workspace-panel {
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 18px;
+    padding: 1.6rem 1.8rem;
+    margin-bottom: 1.4rem;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+
+.workspace-panel--citrus {
+    border-top: 4px solid rgba(249, 115, 22, 0.55);
+    background: linear-gradient(180deg, rgba(255, 247, 237, 0.96), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(249, 115, 22, 0.18);
+}
+
+.workspace-panel--lagoon {
+    border-top: 4px solid rgba(56, 189, 248, 0.55);
+    background: linear-gradient(180deg, rgba(224, 242, 254, 0.95), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(14, 165, 233, 0.16);
+}
+
+.workspace-panel--marine {
+    border-top: 4px solid rgba(37, 99, 235, 0.55);
+    background: linear-gradient(180deg, rgba(219, 234, 254, 0.94), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(37, 99, 235, 0.18);
+}
+
+.workspace-panel--violet {
+    border-top: 4px solid rgba(168, 85, 247, 0.55);
+    background: linear-gradient(180deg, rgba(237, 233, 254, 0.95), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(168, 85, 247, 0.18);
+}
+
+.workspace-panel--emerald {
+    border-top: 4px solid rgba(16, 185, 129, 0.55);
+    background: linear-gradient(180deg, rgba(209, 250, 229, 0.94), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(16, 185, 129, 0.18);
+}
+
+.workspace-panel--amber {
+    border-top: 4px solid rgba(245, 158, 11, 0.55);
+    background: linear-gradient(180deg, rgba(254, 243, 199, 0.95), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(245, 158, 11, 0.18);
+}
+
+.workspace-panel--teal {
+    border-top: 4px solid rgba(20, 184, 166, 0.55);
+    background: linear-gradient(180deg, rgba(204, 251, 241, 0.95), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(20, 184, 166, 0.18);
+}
+
+.workspace-panel--slate {
+    border-top: 4px solid rgba(100, 116, 139, 0.55);
+    background: linear-gradient(180deg, rgba(226, 232, 240, 0.95), rgba(255, 255, 255, 0.98));
+    box-shadow: 0 24px 48px rgba(100, 116, 139, 0.18);
+}
+
+.workspace-panel__heading {
+    display: flex;
+    gap: 0.85rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.workspace-panel__icon {
+    font-size: 1.35rem;
+}
+
+.workspace-panel__titles h3 {
+    margin: 0;
+    font-size: 1.3rem;
+}
+
+.workspace-panel__description {
+    margin: 0.2rem 0 0;
+    color: rgba(71, 85, 105, 0.85);
+    font-size: 0.95rem;
+}
+
 .catalog-card__head {
     display: flex;
     justify-content: space-between;

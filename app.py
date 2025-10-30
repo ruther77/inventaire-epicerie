@@ -5,6 +5,7 @@ import io
 import math
 import re
 import json
+from contextlib import contextmanager
 from html import escape
 from typing import Any, Dict, List
 
@@ -310,6 +311,137 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
             with col:
                 card_html = _build_product_card(product)
                 st.markdown(card_html, unsafe_allow_html=True)
+
+
+def _format_human_number(value: float | int, decimals: int = 0) -> str:
+    """Formate un nombre en utilisant un séparateur fin non cassant."""
+
+    return f"{value:,.{decimals}f}".replace(",", " ")
+
+
+def _build_chip_markup(labels: List[str] | None, chip_class: str) -> str:
+    if not labels:
+        return ""
+
+    chips = "".join(
+        f'<span class="{chip_class}">{escape(str(label))}</span>' for label in labels if label
+    )
+    if not chips:
+        return ""
+    return f'<div class="workspace-hero__actions">{chips}</div>'
+
+
+def render_workspace_hero(
+    *,
+    eyebrow: str,
+    title: str,
+    description: str,
+    badges: List[str] | None = None,
+    metrics: List[Dict[str, str]] | None = None,
+    tone: str = "sunset",
+) -> None:
+    """Affiche un bandeau héro pour les espaces CMS."""
+
+    badges_html = _build_chip_markup(badges, "workspace-hero__chip")
+
+    metric_cards: list[str] = []
+    if metrics:
+        for metric in metrics:
+            label = escape(str(metric.get("label", "")))
+            value = escape(str(metric.get("value", "")))
+            hint = metric.get("hint")
+            hint_html = (
+                f'<span class="workspace-hero__metric-hint">{escape(str(hint))}</span>'
+                if hint
+                else ""
+            )
+            metric_cards.append(
+                """
+                <div class="workspace-hero__metric">
+                    <span class="workspace-hero__metric-label">{label}</span>
+                    <span class="workspace-hero__metric-value">{value}</span>
+                    {hint_html}
+                </div>
+                """.format(label=label, value=value, hint_html=hint_html)
+            )
+
+    metrics_html = (
+        f'<div class="workspace-hero__metrics">{"".join(metric_cards)}</div>'
+        if metric_cards
+        else ""
+    )
+
+    st.markdown(
+        """
+        <section class="workspace-hero workspace-hero--{tone}">
+            <div class="workspace-hero__content">
+                <p class="workspace-hero__eyebrow">{eyebrow}</p>
+                <h2>{title}</h2>
+                <p>{description}</p>
+                {badges_html}
+            </div>
+            {metrics_html}
+        </section>
+        """.format(
+            tone=escape(tone),
+            eyebrow=escape(eyebrow),
+            title=escape(title),
+            description=escape(description),
+            badges_html=badges_html,
+            metrics_html=metrics_html,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+@contextmanager
+def workspace_panel(
+    title: str | None = None,
+    description: str | None = None,
+    *,
+    icon: str | None = None,
+    accent: str | None = None,
+):
+    """Crée un conteneur de panneau stylisé pour structurer les onglets."""
+
+    accent_attr = f" workspace-panel--{escape(accent)}" if accent else ""
+    st.markdown(
+        f'<div class="workspace-panel{accent_attr}">',
+        unsafe_allow_html=True,
+    )
+
+    if title or description:
+        icon_html = (
+            f'<span class="workspace-panel__icon">{escape(icon)}</span>'
+            if icon
+            else ""
+        )
+        desc_html = (
+            f'<p class="workspace-panel__description">{escape(description)}</p>'
+            if description
+            else ""
+        )
+        st.markdown(
+            """
+            <header class="workspace-panel__heading">
+                {icon_html}
+                <div class="workspace-panel__titles">
+                    <h3>{title}</h3>
+                    {desc_html}
+                </div>
+            </header>
+            """.format(
+                icon_html=icon_html,
+                title=escape(title or ""),
+                desc_html=desc_html,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    try:
+        yield
+    finally:
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     """Construit un DataFrame propre à partir des éléments du panier."""
@@ -1215,505 +1347,316 @@ if authentication_status:
 
 
     # ---------------- Vente (PoS) ----------------
+
     with pos_tab:
-        st.header("Terminal Point de Vente (PoS)")
-        
-        col_input, col_cart = st.columns([1, 2])
-        
-        with col_cart:
-            st.markdown('<div class="app-tile">', unsafe_allow_html=True)
-            st.subheader("🛒 Panier Actuel")
+        cart_items = _ensure_cart_state()
+        cart_df = _normalize_cart_dataframe(cart_items)
+        cart_df = cart_df.assign(
+            prix_total=lambda df_: df_["prix_vente"] * df_["qty"],
+        )
+        cart_df = cart_df.assign(
+            total_tva=lambda df_: df_["prix_total"] * (df_["tva"] / 100),
+        )
 
-            cart_items = _ensure_cart_state()
-            cart_df = _normalize_cart_dataframe(cart_items)
+        total_ttc = float(cart_df["prix_total"].sum()) if not cart_df.empty else 0.0
+        total_tva = float(cart_df["total_tva"].sum()) if not cart_df.empty else 0.0
+        total_ht = total_ttc - total_tva
+        cart_quantity = int(cart_df["qty"].sum()) if not cart_df.empty else 0
+        references_count = int(cart_df.shape[0])
 
-            if cart_df.empty:
-                st.info("Le panier est vide. Veuillez ajouter des produits.")
+        render_workspace_hero(
+            eyebrow="Terminal de vente",
+            title="Encaissez en douceur chaque passage en caisse",
+            description="Ajoutez, scannez et finalisez vos ventes tout en maintenant l'inventaire à jour automatiquement.",
+            badges=["Panier connecté", "Synchro stock"],
+            metrics=[
+                {"label": "Articles panier", "value": str(cart_quantity), "hint": f"{references_count} référence(s)" if references_count else "Aucun produit"},
+                {"label": "Total TTC", "value": f"{_format_human_number(total_ttc, 2)} €", "hint": f"HT {_format_human_number(total_ht, 2)} €"},
+                {"label": "TVA cumulée", "value": f"{_format_human_number(total_tva, 2)} €", "hint": "Incluse dans le total"},
+            ],
+            tone="citrus",
+        )
 
-            cart_df["prix_total"] = cart_df["prix_vente"] * cart_df["qty"]
-            cart_df["total_tva"] = cart_df["prix_total"] * (cart_df["tva"] / 100)
+        cart_col, input_col = st.columns([1.35, 1])
 
-            if not cart_df.empty:
-                st.dataframe(
-                    cart_df[["nom", "qty", "prix_vente", "prix_total"]],
-                    column_config={
-                        "nom": "Produit",
-                        "qty": "Quantité",
-                        "prix_vente": st.column_config.NumberColumn("P.U. (€)", format="%.2f €"),
-                        "prix_total": st.column_config.NumberColumn("Total Ligne (€)", format="%.2f €"),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
+        with cart_col:
+            with workspace_panel(
+                "Panier en direct",
+                "Visualisez les lignes en cours avant validation.",
+                icon="🛍️",
+                accent="citrus",
+            ):
+                if cart_df.empty:
+                    st.info("Le panier est vide. Ajoutez un produit pour démarrer la vente.")
+                else:
+                    st.dataframe(
+                        cart_df[["nom", "qty", "prix_vente", "prix_total"]],
+                        column_config={
+                            "nom": "Produit",
+                            "qty": "Quantité",
+                            "prix_vente": st.column_config.NumberColumn("P.U. (€)", format="%.2f €"),
+                            "prix_total": st.column_config.NumberColumn("Total ligne (€)", format="%.2f €"),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                    )
 
-            total_ttc = float(cart_df["prix_total"].sum()) if not cart_df.empty else 0.0
-            total_tva = float(cart_df["total_tva"].sum()) if not cart_df.empty else 0.0
-            total_ht = total_ttc - total_tva
+                metric_cols = st.columns(3)
+                metric_cols[0].metric("Total HT", f"{total_ht:.2f} €")
+                metric_cols[1].metric("Total TVA", f"{total_tva:.2f} €")
+                metric_cols[2].metric("Total TTC", f"{total_ttc:.2f} €", delta_color="off")
 
-            col_tva, col_ht, col_ttc = st.columns(3)
-
-            col_ht.metric("Total HT", f"{total_ht:.2f} €")
-            col_tva.metric("Total TVA", f"{total_tva:.2f} €")
-            col_ttc.metric("Total TTC", f"{total_ttc:.2f} €", delta_color="off")
-
-            if st.button("Vider le Panier", help="Annule la transaction en cours.", key="clear_cart_btn"):
-                _clear_cart()
-                st.rerun()
-
-            st.divider()
-            if cart_items:
-                if st.button("Finaliser la Vente", key="btn_finalize_sale", type="primary"):
-                    with st.spinner("Traitement de la vente en cours..."):
-                        sale_ok, sale_msg = process_sale_transaction(
-                            cart_items,
-                            st.session_state.get("username", "inconnu"),
-                        )
-
-                    if sale_ok:
-                        st.success("Vente finalisée et stock mis à jour ✅")
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if st.button(
+                        "Vider le panier",
+                        help="Annule la transaction en cours.",
+                        key="clear_cart_btn",
+                    ):
                         _clear_cart()
-                        invalidate_data_caches(
-                            "products_list",
-                            "catalog",
-                            "trending",
-                            "product_options",
-                            "movement_timeseries",
-                            "recent_movements",
-                            "table_counts",
-                            "table_preview",
-                        )
                         st.rerun()
-                    else:
-                        error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
-                        st.error(error_msg)
 
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col_input:
-            st.markdown('<div class="app-tile">', unsafe_allow_html=True) 
-            
-            st.subheader("🛒 Saisie Produit")
+                with action_cols[1]:
+                    if cart_items and st.button(
+                        "Finaliser la vente",
+                        key="btn_finalize_sale",
+                        type="primary",
+                    ):
+                        with st.spinner("Traitement de la vente en cours..."):
+                            sale_ok, sale_msg = process_sale_transaction(
+                                cart_items,
+                                st.session_state.get("username", "inconnu"),
+                            )
 
-            # --- 1. CHARGEMENT DYNAMIQUE DES PRODUITS ---
-            try:
-                product_options = cached_product_options()
-                product_names = ["-- Sélectionner un produit --"] + list(product_options.keys())
+                        if sale_ok:
+                            st.success("Vente finalisée et stock mis à jour ✅")
+                            _clear_cart()
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "movement_timeseries",
+                                "recent_movements",
+                                "table_counts",
+                                "table_preview",
+                            )
+                            st.rerun()
+                        else:
+                            error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                            st.error(error_msg)
 
-                initial_input = st.session_state.get("last_barcode", "")
-                if st.session_state.get("last_barcode"):
-                    st.session_state["last_barcode"] = None
+        with input_col:
+            with workspace_panel(
+                "Ajout rapide",
+                "Scannez ou recherchez un produit pour l'ajouter au panier.",
+                icon="✨",
+                accent="citrus",
+            ):
+                try:
+                    product_options = cached_product_options()
+                    product_names = ["-- Sélectionner un produit --"] + list(product_options.keys())
 
-            except Exception as e:
-                st.error(f"Erreur lors du chargement des produits: {e}")
-                product_names = ["-- Erreur de chargement --"]
-                product_options = {}
+                    if st.session_state.get("last_barcode"):
+                        st.session_state["last_barcode"] = None
 
-            # --- 2. FORMULAIRE DE SAISIE ---
-            with st.form("pos_input_form", clear_on_submit=False):
-                
-                selected_product_name = st.selectbox(
-                    "Sélectionner un Produit (Nom)", 
-                    options=product_names,
-                    index=0, 
-                    key="pos_product_selectbox"
-                )
-                
-                qty_to_add = st.number_input("Quantité", min_value=1, value=1, step=1, key='pos_qty_add')
-                add_button = st.form_submit_button("Ajouter au Panier")
-                
-                # --- 3. LOGIQUE D'AJOUT ---
+                except Exception as e:
+                    st.error(f"Erreur lors du chargement des produits: {e}")
+                    product_names = ["-- Erreur de chargement --"]
+                    product_options = {}
+
+                with st.form("pos_input_form", clear_on_submit=False):
+                    selected_product_name = st.selectbox(
+                        "Sélectionner un produit (nom)",
+                        options=product_names,
+                        index=0,
+                        key="pos_product_selectbox",
+                    )
+                    qty_to_add = st.number_input(
+                        "Quantité",
+                        min_value=1,
+                        value=1,
+                        step=1,
+                        key="pos_qty_input",
+                    )
+                    add_button = st.form_submit_button("Ajouter au panier")
+
                 if add_button and selected_product_name != "-- Sélectionner un produit --":
                     selected_product_id = product_options.get(selected_product_name)
-                    
+
                     if selected_product_id:
                         st.session_state["product_to_add_id"] = selected_product_id
                         st.session_state["product_to_add_qty"] = qty_to_add
                         st.session_state["add_to_cart_triggered"] = True
                     else:
                         st.error("Erreur: ID produit non trouvé après sélection.")
-
                 elif add_button:
                     st.warning("Veuillez sélectionner un produit pour l'ajouter au panier.")
-            
-            # --- BLOC D'EXÉCUTION DU PANIER ---
-            if st.session_state.get("add_to_cart_triggered", False):
 
-                product_id = st.session_state.get("product_to_add_id")
-                quantity = st.session_state.get("product_to_add_qty")
+                if st.session_state.get("add_to_cart_triggered", False):
+                    product_id = st.session_state.get("product_to_add_id")
+                    quantity = st.session_state.get("product_to_add_qty")
 
-                if product_id and quantity > 0:
-                    try:
-                        product_row = df_products[df_products['id'] == product_id].iloc[0]
-
-                        quantity = int(quantity)
-                        cart_items = _ensure_cart_state()
-
-                        product_data = {
-                            'id': int(product_row['id']),
-                            'nom': product_row['nom'],
-                            'prix_vente': float(product_row['prix_vente']),
-                            'tva': float(product_row['tva']),
-                            'qty': quantity
-                        }
-
-                        found = False
-                        for item in cart_items:
-                            if item['id'] == product_id:
-                                item['qty'] += quantity
-                                found = True
-                                break
-
-                        if not found:
-                            cart_items.append(product_data)
-
-                        st.toast(f"✅ {quantity} x {product_data['nom']} ajouté(s) au panier !", icon='🛒')
-                        st.rerun()
-                        
-                    except IndexError:
-                        st.error(f"Erreur : Produit ID {product_id} non trouvé dans le catalogue.")
-                    except Exception as e:
-                        st.error(f"Erreur inattendue lors de l'ajout au panier : {e}")
-
-                # Réinitialisation des variables de session
-                if "product_to_add_id" in st.session_state:
-                    del st.session_state["product_to_add_id"]
-                if "product_to_add_qty" in st.session_state:
-                    del st.session_state["product_to_add_qty"]
-                if "add_to_cart_triggered" in st.session_state:
-                    del st.session_state["add_to_cart_triggered"]
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-
-    # ---------------- Catalogue ----------------
-    with catalog_tab:
-        st.header("Catalogue Produits et Administration")
-        
-        # --- LOGIQUE DE DÉSACTIVATION DES COLONNES ---
-        non_editable_columns = ['id', 'quantite_stock', 'statut_stock',"codes_barres"]
-        if st.session_state.get("user_role") == "admin":
-            disabled_cols = non_editable_columns 
-        else:
-            disabled_cols = ['nom', 'prix_vente', 'tva', 'quantite_stock', 'statut_stock'] 
-        
-        st.caption("Le stock ne peut être modifié que via les mouvements (ventes/ajustements), pas ici.")
-        
-        if df_products.empty:
-            st.info("Aucun produit n'est actuellement enregistré.")
-        else:
-            editable_df = st.data_editor(
-                df_products,
-                key="catalog_editor",
-                hide_index=True,
-                use_container_width=True,
-                num_rows="dynamic" if st.session_state.get("user_role") == "admin" else "fixed",
-                disabled=disabled_cols, 
-                column_config={
-                    "id": "ID",
-                    "nom": "Nom du Produit",
-                    "prix_vente": st.column_config.NumberColumn("Prix Vente (€)", format="%.2f"),
-                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
-                    "quantite_stock": st.column_config.NumberColumn("Stock Actuel", format="%.2f"),
-                    "codes_barres": st.column_config.TextColumn("Codes-barres (Séparés par ', ')"),
-                    "statut_stock": st.column_config.TextColumn("Statut Stock")
-                }
-            )
-
-            # Logique de persistance des modifications et suppression
-            if st.session_state.get("user_role") == "admin":
-                
-                col_save, col_delete = st.columns([1, 1])
-                
-                # --- Enregistrement des modifications ---
-                if col_save.button("Enregistrer les modifications du Catalogue", key="save_catalog_changes", type="primary"):
-                    try:
-                        changes = st.session_state["catalog_editor"]["edited_rows"]
-                        
-                        if changes:
-                            updates_count = 0
-                            for index, row_changes in changes.items():
-                                product_id = df_products.loc[index, 'id']
-                                
-                                set_clauses = [f"{col}=:{col}" for col in row_changes.keys() if col not in non_editable_columns]
-                                
-                                if set_clauses:
-                                    sql = f"UPDATE produits SET {', '.join(set_clauses)} WHERE id = :id"
-                                    params = row_changes
-                                    params['id'] = product_id
-                                    exec_sql(text(sql).bindparams(**params))
-                                    updates_count += 1
-
-                            st.success(f"{updates_count} produit(s) mis à jour avec succès!")
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
-                        else:
-                            st.info("Aucune modification n'a été détectée dans le tableau.")
-                    
-                    except Exception as e:
-                        st.error(f"Erreur lors de l'enregistrement: {e}")
-                
-                # --- Suppression de produits ---
-                product_to_delete = col_delete.selectbox(
-                    "Sélectionner un produit à supprimer", 
-                    df_products['nom'], 
-                    index=None
-                )
-                if product_to_delete:
-                    id_to_delete = df_products[df_products['nom'] == product_to_delete]['id'].iloc[0]
-                    if col_delete.button(f"Confirmer la Suppression de {product_to_delete}", key="confirm_delete"):
+                    if product_id and quantity > 0:
                         try:
-                            exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
-                            st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
+                            product_row = df_products[df_products['id'] == product_id].iloc[0]
 
-        st.divider()
+                            quantity = int(quantity)
+                            cart_items = _ensure_cart_state()
 
-        # Bloc d'ajout rapide de produit
-        if st.session_state.get("user_role") == "admin":
-            st.subheader("Ajout Rapide de Produit")
-            
-            with st.form("add_product_form", clear_on_submit=True):
-                colA, colB = st.columns(2)
-                with colA:
-                    new_nom = st.text_input("Nom du Produit", max_chars=100)
-                    new_prix = st.number_input("Prix de Vente (€)", min_value=0.01, format="%.2f", value=1.0)
-                with colB:
-                    new_tva = st.number_input("TVA (%)", min_value=0.0, max_value=100.0, value=20.0, format="%.2f")
-                    new_codes = st.text_input("Codes-barres (séparés par ;) [Optionnel]", max_chars=255)
-                
-                if st.form_submit_button("Ajouter le Produit au Catalogue"):
-                    if new_nom and new_prix > 0:
-                        try:
-                            sql_prod = text("INSERT INTO produits (nom, prix_vente, tva) VALUES (:nom, :prix, :tva) RETURNING id")
-                            product_id = exec_sql_return_id(sql_prod.bindparams(nom=new_nom, prix=new_prix, tva=new_tva))
-                            
-                            if new_codes:
-                                codes_list = [c.strip() for c in new_codes.split(';') if c.strip()]
-                                barcode_outcome = {"added": 0, "conflicts": 0, "skipped": 0}
-                                engine = get_engine()
-                                with engine.begin() as conn:
-                                    for code in codes_list:
-                                        status = products_loader.insert_or_update_barcode(conn, product_id, code)
-                                        if status == "added":
-                                            barcode_outcome["added"] += 1
-                                        elif status == "conflict":
-                                            barcode_outcome["conflicts"] += 1
-                                        else:
-                                            barcode_outcome["skipped"] += 1
-
-                            st.success(f"Produit '{new_nom}' ajouté avec succès!")
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "table_preview",
-                                "recent_movements",
-                                "table_counts",
-                            )
-
-                            if new_codes:
-                                st.caption(
-                                    "Codes-barres — "
-                                    f"ajouts: {barcode_outcome['added']}, "
-                                    f"conflits: {barcode_outcome['conflicts']}, "
-                                    f"ignorés: {barcode_outcome['skipped']}"
-                                )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erreur lors de l'ajout: {e}")
-                    else:
-                        st.warning("Veuillez entrer un nom et un prix de produit valide (> 0).")
-
-
-    # ---------------- Stock & Mvt ----------------
-    with mvt_tab:
-        st.header("Gestion des Mouvements de Stock")
-
-        if df_products.empty:
-            st.info("Veuillez ajouter des produits au catalogue d'abord.")
-            st.stop()
-
-        product_options = cached_product_options()
-        product_names = list(product_options.keys())
-        filter_products = ["Tous les produits"] + product_names
-
-        col_filter_product, col_filter_window, col_filter_limit = st.columns([3, 1, 1])
-        selected_product_name = col_filter_product.selectbox(
-            "Produit suivi",
-            filter_products,
-            key="movement_filter_product"
-        )
-        selected_product_id = (
-            product_options.get(selected_product_name)
-            if selected_product_name in product_options
-            else None
-        )
-
-        window_days = col_filter_window.selectbox(
-            "Période",
-            options=[7, 30, 90, 180],
-            format_func=lambda d: f"{d} jours",
-            index=1,
-            key="movement_filter_window",
-        )
-
-        recent_limit = col_filter_limit.selectbox(
-            "Lignes",
-            options=[25, 50, 100, 200],
-            index=2,
-            key="movement_filter_limit",
-        )
-
-        movement_ts = load_movement_timeseries(window_days=window_days, product_id=selected_product_id)
-        recent_movements = load_recent_movements(limit=recent_limit, product_id=selected_product_id)
-
-        if movement_ts.empty:
-            st.info("Aucun mouvement enregistré pour la période sélectionnée.")
-        else:
-            total_entries = float(movement_ts.loc[movement_ts['type'] == 'ENTREE', 'quantite'].sum())
-            total_outputs = float(movement_ts.loc[movement_ts['type'] == 'SORTIE', 'quantite'].sum())
-            net_balance = total_entries - total_outputs
-
-            col_metrics = st.columns(3)
-            col_metrics[0].metric("Entrées enregistrées", f"+{total_entries:.2f}")
-            col_metrics[1].metric("Sorties enregistrées", f"-{total_outputs:.2f}")
-            col_metrics[2].metric("Variation nette", f"{net_balance:+.2f}")
-
-            chart_col_1, chart_col_2 = st.columns(2)
-            with chart_col_1:
-                chart_df = movement_ts.copy()
-                chart_df.sort_values(["jour", "type"], inplace=True)
-                st.plotly_chart(
-                    px.bar(
-                        chart_df,
-                        x="jour",
-                        y="quantite",
-                        color="type",
-                        barmode="group",
-                        title="Mouvements par type",
-                        labels={"jour": "Jour", "quantite": "Quantité", "type": "Type"},
-                    ),
-                    use_container_width=True,
-                )
-
-            with chart_col_2:
-                net_daily = movement_ts.copy()
-                net_daily["delta"] = net_daily.apply(
-                    lambda row: -row["quantite"] if row["type"] == "SORTIE" else row["quantite"],
-                    axis=1,
-                )
-                net_daily = (
-                    net_daily.groupby("jour")["delta"]
-                    .sum()
-                    .reset_index(name="variation")
-                    .sort_values("jour")
-                )
-                net_daily["cumul"] = net_daily["variation"].cumsum()
-                line_fig = px.line(
-                    net_daily,
-                    x="jour",
-                    y="cumul",
-                    markers=True,
-                    title="Variation cumulée",
-                    labels={"jour": "Jour", "cumul": "Δ cumulée"},
-                )
-                line_fig.add_hline(y=0, line_dash="dot", line_color="#999999")
-                st.plotly_chart(line_fig, use_container_width=True)
-
-        st.caption("Les données ci-dessus sont actualisées après chaque vente ou ajustement.")
-
-        st.subheader("Mouvements récents détaillés")
-        recent_display = recent_movements.copy()
-        if recent_display.empty:
-            st.info("Aucun mouvement à afficher pour le filtre en cours.")
-        else:
-            recent_display["date_mvt"] = pd.to_datetime(recent_display["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
-            st.dataframe(recent_display, use_container_width=True, hide_index=True)
-
-        st.divider()
-
-        if st.session_state.get("user_role") == "admin":
-            with st.form("stock_adjustment_form", clear_on_submit=True):
-                st.subheader("Ajustement/Inventaire de Stock (Admin)")
-
-                col_prod, col_qty = st.columns(2)
-                selected_product_name = col_prod.selectbox("Produit à ajuster", product_names, key='adj_product',)
-                selected_product_id = product_options.get(selected_product_name)
-                product_details = (
-                    get_product_details(selected_product_id) if selected_product_id else None
-                )
-
-                current_stock = 0.0
-                if product_details:
-                    current_stock = float(product_details.get('quantite_stock') or 0)
-                    st.info(f"Produit trouvé: **{product_details['nom']}**")
-                    st.warning(f"Stock actuel: **{current_stock:.2f}**")
-                elif selected_product_name:
-                    st.error("Produit non trouvé.")
-                else:
-                    st.info("Sélectionnez un produit pour afficher le stock actuel.")
-
-                target_stock = col_qty.number_input(
-                    "Nouvelle Quantité Totale (Inventaire)",
-                    min_value=0.00,
-                    value=current_stock,
-                    step=0.01,
-                    format="%.2f",
-                    key='adj_target_qty'
-                )
-
-                if st.form_submit_button("Enregistrer l'Ajustement", type="primary"):
-                    if not selected_product_id:
-                        st.error("Erreur: Le produit n'a pas été trouvé ou sélectionné. Veuillez réessayer.")
-                    else:
-                        quantite_mvt = target_stock - current_stock
-
-                        if abs(quantite_mvt) < 0.001:
-                            st.warning(
-                                f"Le stock de **{selected_product_name}** n'a pas changé. ({current_stock:.2f} -> {target_stock:.2f})"
-                            )
-                        else:
-                            mouvement_type = 'ENTREE' if quantite_mvt > 0 else 'SORTIE'
-                            mouvement_params = {
-                                'pid': selected_product_id,
-                                'type': mouvement_type,
-                                'quantite': abs(quantite_mvt),
-                                'source': f"Inventaire par {st.session_state.get('username', 'inconnu')}"
+                            product_data = {
+                                'id': int(product_row['id']),
+                                'nom': product_row['nom'],
+                                'prix_vente': float(product_row['prix_vente']),
+                                'tva': float(product_row['tva']),
+                                'qty': quantity
                             }
 
-                            sql_mvt = text(
-                                """
-                                INSERT INTO mouvements_stock (produit_id, type, quantite, source)
-                                VALUES (:pid, :type, :quantite, :source)
-                                """
-                            )
+                            found = False
+                            for item in cart_items:
+                                if item['id'] == product_id:
+                                    item['qty'] += quantity
+                                    found = True
+                                    break
 
+                            if not found:
+                                cart_items.append(product_data)
+
+                            st.toast(f"✅ {quantity} x {product_data['nom']} ajouté(s) au panier !", icon='🛒')
+                            st.rerun()
+
+                        except IndexError:
+                            st.error(f"Erreur : Produit ID {product_id} non trouvé dans le catalogue.")
+                        except Exception as e:
+                            st.error(f"Erreur inattendue lors de l'ajout au panier : {e}")
+
+                    for key in ("product_to_add_id", "product_to_add_qty", "add_to_cart_triggered"):
+                        st.session_state.pop(key, None)
+
+    # ---------------- Catalogue ----------------
+
+    with catalog_tab:
+        total_products = int(df_products.shape[0])
+        low_stock_count = int((df_products["quantite_stock"] < 5).sum()) if not df_products.empty else 0
+        average_price = float(df_products["prix_vente"].mean()) if not df_products.empty else 0.0
+        barcode_ratio = 0
+        if not df_products.empty:
+            coverage_series = df_products.get("codes_barres", pd.Series(dtype=str)).fillna("")
+            barcode_ratio = int((coverage_series.str.strip() != "").mean() * 100)
+
+        render_workspace_hero(
+            eyebrow="Catalogue produits",
+            title="Pilotez votre base articles avec précision",
+            description="Éditez les fiches, gérez les codes-barres et synchronisez votre catalogue avec le terrain.",
+            badges=["Administration", "Qualité des données"],
+            metrics=[
+                {"label": "Références actives", "value": str(total_products), "hint": f"{low_stock_count} alerte(s) < 5"},
+                {"label": "Prix moyen", "value": f"{_format_human_number(average_price, 2)} €"},
+                {"label": "Codes-barres", "value": f"{barcode_ratio}%", "hint": "Couverture"},
+            ],
+            tone="lagoon",
+        )
+
+        non_editable_columns = ['id', 'quantite_stock', 'statut_stock', "codes_barres"]
+        if st.session_state.get("user_role") == "admin":
+            disabled_cols = non_editable_columns
+        else:
+            disabled_cols = ['nom', 'prix_vente', 'tva', 'quantite_stock', 'statut_stock']
+
+        with workspace_panel(
+            "Gestion du catalogue",
+            "Consultez et ajustez les informations clés de vos références.",
+            icon="📚",
+            accent="lagoon",
+        ):
+            st.caption("Le stock ne peut être modifié que via les mouvements — utilisez cette grille pour corriger les fiches.")
+
+            if df_products.empty:
+                st.info("Aucun produit n'est actuellement enregistré.")
+            else:
+                editable_df = st.data_editor(
+                    df_products,
+                    key="catalog_editor",
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="dynamic" if st.session_state.get("user_role") == "admin" else "fixed",
+                    disabled=disabled_cols,
+                    column_config={
+                        "id": "ID",
+                        "nom": "Nom du Produit",
+                        "prix_vente": st.column_config.NumberColumn("Prix Vente (€)", format="%.2f"),
+                        "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
+                        "quantite_stock": st.column_config.NumberColumn("Stock Actuel", format="%.2f"),
+                        "codes_barres": st.column_config.TextColumn("Codes-barres (Séparés par ', ')", help="Séparation par virgule"),
+                        "statut_stock": st.column_config.TextColumn("Statut Stock"),
+                    },
+                )
+
+                if st.session_state.get("user_role") == "admin":
+                    action_cols = st.columns([2, 1.3])
+
+                    with action_cols[0]:
+                        if st.button(
+                            "Enregistrer les modifications du catalogue",
+                            key="save_catalog_changes",
+                            type="primary",
+                        ):
                             try:
-                                exec_sql(sql_mvt, mouvement_params)
-                                st.success(
-                                    f"Ajustement réussi. Le stock de {selected_product_name} est maintenant à {target_stock:.2f} unités."
+                                changes = st.session_state["catalog_editor"].get("edited_rows", {})
+
+                                if changes:
+                                    updates_count = 0
+                                    for index, row_changes in changes.items():
+                                        product_id = df_products.loc[index, 'id']
+
+                                        set_clauses = [
+                                            f"{col}=:{col}"
+                                            for col in row_changes.keys()
+                                            if col not in non_editable_columns
+                                        ]
+
+                                        if set_clauses:
+                                            sql = f"UPDATE produits SET {', '.join(set_clauses)} WHERE id = :id"
+                                            params = dict(row_changes)
+                                            params['id'] = product_id
+                                            exec_sql(text(sql).bindparams(**params))
+                                            updates_count += 1
+
+                                    st.success(f"{updates_count} produit(s) mis à jour avec succès!")
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "trending",
+                                        "product_options",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                        "table_counts",
+                                        "table_preview",
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.info("Aucune modification n'a été détectée dans le tableau.")
+
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'enregistrement: {e}")
+
+                    with action_cols[1]:
+                        product_to_delete = st.selectbox(
+                            "Produit à supprimer",
+                            df_products['nom'],
+                            index=None,
+                            key="catalog_delete_select",
+                        )
+                        if product_to_delete and st.button(
+                            f"Confirmer la suppression",
+                            key="confirm_delete",
+                        ):
+                            try:
+                                id_to_delete = df_products[df_products['nom'] == product_to_delete]['id'].iloc[0]
+                                exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
+                                st.toast(
+                                    f"✅ Produit '{product_to_delete}' et données associées supprimés.",
+                                    icon='🗑️',
                                 )
                                 invalidate_data_caches(
                                     "products_list",
@@ -1727,38 +1670,305 @@ if authentication_status:
                                 )
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
+                                st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
 
+        if st.session_state.get("user_role") == "admin":
+            with workspace_panel(
+                "Ajout rapide de produit",
+                "Créez une nouvelle référence et attribuez-lui éventuellement des codes-barres.",
+                icon="✨",
+                accent="lagoon",
+            ):
+                with st.form("add_product_form", clear_on_submit=True):
+                    colA, colB = st.columns(2)
+                    with colA:
+                        new_nom = st.text_input("Nom du Produit", max_chars=100)
+                        new_prix = st.number_input("Prix de Vente (€)", min_value=0.01, format="%.2f", value=1.0)
+                    with colB:
+                        new_tva = st.number_input("TVA (%)", min_value=0.0, max_value=100.0, value=20.0, format="%.2f")
+                        new_codes = st.text_input("Codes-barres (séparés par ;) [Optionnel]", max_chars=255)
+
+                    if st.form_submit_button("Ajouter le Produit au Catalogue"):
+                        if new_nom and new_prix > 0:
+                            try:
+                                sql_prod = text("INSERT INTO produits (nom, prix_vente, tva) VALUES (:nom, :prix, :tva) RETURNING id")
+                                product_id = exec_sql_return_id(sql_prod.bindparams(nom=new_nom, prix=new_prix, tva=new_tva))
+
+                                if new_codes:
+                                    codes_list = [c.strip() for c in new_codes.split(';') if c.strip()]
+                                    barcode_outcome = {"added": 0, "conflicts": 0, "skipped": 0}
+                                    engine = get_engine()
+                                    with engine.begin() as conn:
+                                        for code in codes_list:
+                                            status = products_loader.insert_or_update_barcode(conn, product_id, code)
+                                            if status == "added":
+                                                barcode_outcome["added"] += 1
+                                            elif status == "conflict":
+                                                barcode_outcome["conflicts"] += 1
+                                            else:
+                                                barcode_outcome["skipped"] += 1
+
+                                st.success(f"Produit '{new_nom}' ajouté avec succès!")
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "table_preview",
+                                    "recent_movements",
+                                    "table_counts",
+                                )
+
+                                if new_codes:
+                                    st.caption(
+                                        "Codes-barres — "
+                                        f"ajouts: {barcode_outcome['added']}, "
+                                        f"conflits: {barcode_outcome['conflicts']}, "
+                                        f"ignorés: {barcode_outcome['skipped']}"
+                                    )
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'ajout: {e}")
+                        else:
+                            st.warning("Veuillez entrer un nom et un prix de produit valide (> 0).")
+
+    # ---------------- Stock & Mvt ----------------
+
+    with mvt_tab:
+        if df_products.empty:
+            st.info("Veuillez ajouter des produits au catalogue d'abord.")
+            st.stop()
+
+        product_options = cached_product_options()
+        product_names = list(product_options.keys())
+        filter_products = ["Tous les produits"] + product_names
+
+        hero_placeholder = st.container()
+
+        with workspace_panel(
+            "Paramètres d'analyse",
+            "Sélectionnez le périmètre de suivi pour explorer les mouvements.",
+            icon="🎯",
+            accent="marine",
+        ):
+            col_filter_product, col_filter_window, col_filter_limit = st.columns([3, 1, 1])
+            selected_product_name = col_filter_product.selectbox(
+                "Produit suivi",
+                filter_products,
+                key="movement_filter_product",
+            )
+            selected_product_id = (
+                product_options.get(selected_product_name)
+                if selected_product_name in product_options
+                else None
+            )
+
+            window_days = col_filter_window.selectbox(
+                "Période",
+                options=[7, 30, 90, 180],
+                format_func=lambda d: f"{d} jours",
+                index=1,
+                key="movement_filter_window",
+            )
+
+            recent_limit = col_filter_limit.selectbox(
+                "Lignes",
+                options=[25, 50, 100, 200],
+                index=2,
+                key="movement_filter_limit",
+            )
+
+        movement_ts = load_movement_timeseries(window_days=window_days, product_id=selected_product_id)
+        recent_movements = load_recent_movements(limit=recent_limit, product_id=selected_product_id)
+
+        total_entries = float(movement_ts.loc[movement_ts['type'] == 'ENTREE', 'quantite'].sum()) if not movement_ts.empty else 0.0
+        total_outputs = float(movement_ts.loc[movement_ts['type'] == 'SORTIE', 'quantite'].sum()) if not movement_ts.empty else 0.0
+        net_balance = total_entries - total_outputs
+
+        selection_label = "Catalogue complet" if not selected_product_id else selected_product_name
+
+        with hero_placeholder:
+            render_workspace_hero(
+                eyebrow="Mouvements de stock",
+                title=f"Analyse des flux — {selection_label}",
+                description="Visualisez l'équilibre des entrées/sorties et anticipez les ruptures.",
+                badges=["Pilotage quotidien", f"Fenêtre {window_days} j"],
+                metrics=[
+                    {"label": "Entrées", "value": f"+{_format_human_number(total_entries, 2)}", "hint": "Quantités"},
+                    {"label": "Sorties", "value": f"-{_format_human_number(total_outputs, 2)}", "hint": "Déstockage"},
+                    {"label": "Variation nette", "value": f"{_format_human_number(net_balance, 2)}", "hint": "Entrées - sorties"},
+                ],
+                tone="marine",
+            )
+
+        with workspace_panel(
+            "Visualisations des mouvements",
+            "Comparez les volumes quotidiens et la tendance cumulative.",
+            icon="📈",
+            accent="marine",
+        ):
+            if movement_ts.empty:
+                st.info("Aucun mouvement enregistré pour la période sélectionnée.")
+            else:
+                chart_col_1, chart_col_2 = st.columns(2)
+                with chart_col_1:
+                    chart_df = movement_ts.copy()
+                    chart_df.sort_values(["jour", "type"], inplace=True)
+                    st.plotly_chart(
+                        px.bar(
+                            chart_df,
+                            x="jour",
+                            y="quantite",
+                            color="type",
+                            barmode="group",
+                            title="Mouvements par type",
+                            labels={"jour": "Jour", "quantite": "Quantité", "type": "Type"},
+                        ),
+                        use_container_width=True,
+                    )
+
+                with chart_col_2:
+                    net_daily = movement_ts.copy()
+                    net_daily["delta"] = net_daily.apply(
+                        lambda row: -row["quantite"] if row["type"] == "SORTIE" else row["quantite"],
+                        axis=1,
+                    )
+                    net_daily = (
+                        net_daily.groupby("jour")["delta"]
+                        .sum()
+                        .reset_index(name="variation")
+                        .sort_values("jour")
+                    )
+                    net_daily["cumul"] = net_daily["variation"].cumsum()
+                    line_fig = px.line(
+                        net_daily,
+                        x="jour",
+                        y="cumul",
+                        markers=True,
+                        title="Variation cumulée",
+                        labels={"jour": "Jour", "cumul": "Δ cumulée"},
+                    )
+                    line_fig.add_hline(y=0, line_dash="dot", line_color="#999999")
+                    st.plotly_chart(line_fig, use_container_width=True)
+
+        with workspace_panel(
+            "Mouvements récents",
+            "Consultez le détail des derniers mouvements enregistrés.",
+            icon="🗂️",
+            accent="marine",
+        ):
+            if recent_movements.empty:
+                st.info("Aucun mouvement à afficher pour le filtre en cours.")
+            else:
+                recent_display = recent_movements.copy()
+                recent_display["date_mvt"] = pd.to_datetime(recent_display["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
+                st.dataframe(recent_display, use_container_width=True, hide_index=True)
+
+        if st.session_state.get("user_role") == "admin":
+            with workspace_panel(
+                "Ajustement / Inventaire",
+                "Corrigez une quantité de stock en enregistrant un mouvement dédié.",
+                icon="🛠️",
+                accent="marine",
+            ):
+                with st.form("stock_adjustment_form", clear_on_submit=True):
+                    col_prod, col_qty = st.columns(2)
+                    selected_product_name = col_prod.selectbox("Produit à ajuster", product_names, key='adj_product',)
+                    selected_product_id = product_options.get(selected_product_name)
+                    product_details = (
+                        get_product_details(selected_product_id) if selected_product_id else None
+                    )
+
+                    current_stock = 0.0
+                    if product_details:
+                        current_stock = float(product_details.get('quantite_stock') or 0)
+                        st.info(f"Produit trouvé: **{product_details['nom']}**")
+                        st.warning(f"Stock actuel: **{current_stock:.2f}**")
+                    elif selected_product_name:
+                        st.error("Produit non trouvé.")
+                    else:
+                        st.info("Sélectionnez un produit pour afficher le stock actuel.")
+
+                    target_stock = col_qty.number_input(
+                        "Nouvelle Quantité Totale (Inventaire)",
+                        min_value=0.00,
+                        value=current_stock,
+                        step=0.01,
+                        format="%.2f",
+                        key='adj_target_qty'
+                    )
+
+                    if st.form_submit_button("Enregistrer l'Ajustement", type="primary"):
+                        if not selected_product_id:
+                            st.error("Erreur: Le produit n'a pas été trouvé ou sélectionné. Veuillez réessayer.")
+                        else:
+                            quantite_mvt = target_stock - current_stock
+
+                            if abs(quantite_mvt) < 0.001:
+                                st.warning(
+                                    f"Le stock de **{selected_product_name}** n'a pas changé. ({current_stock:.2f} -> {target_stock:.2f})"
+                                )
+                            else:
+                                mouvement_type = 'ENTREE' if quantite_mvt > 0 else 'SORTIE'
+                                mouvement_params = {
+                                    'pid': selected_product_id,
+                                    'type': mouvement_type,
+                                    'quantite': abs(quantite_mvt),
+                                    'source': f"Inventaire par {st.session_state.get('username', 'inconnu')}"
+                                }
+
+                                sql_mvt = text(
+                                    "INSERT INTO mouvements_stock (produit_id, type, quantite, source) VALUES (:pid, :type, :quantite, :source)"
+                                )
+
+                                try:
+                                    exec_sql(sql_mvt, mouvement_params)
+                                    st.success(
+                                        f"Ajustement réussi. Le stock de {selected_product_name} est maintenant à {target_stock:.2f} unités."
+                                    )
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "trending",
+                                        "product_options",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                        "table_counts",
+                                        "table_preview",
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
 
     # ---------------- Dashboard ----------------
+
     with dash_tab:
-        st.header("Tableau de Bord de l'Inventaire")
-        
-        # --- Requêtes SQL pour charger les données du Dashboard ---
         try:
-            # 1. Requête des indicateurs clés (KPIs)
-            df_kpis = query_df("""
-                SELECT 
+            df_kpis = query_df(
+                """
+                SELECT
                     COUNT(id) AS total_produits,
                     SUM(quantite_stock * prix_vente) AS valeur_stock_ht,
                     SUM(quantite_stock) AS quantite_stock_total,
                     SUM(CASE WHEN quantite_stock <= 5 AND quantite_stock > 0 THEN 1 ELSE 0 END) AS alerte_stock_bas,
                     SUM(CASE WHEN quantite_stock = 0 THEN 1 ELSE 0 END) AS stock_epuise
                 FROM v_stock_produits
-            """)
+                """
+            )
 
-            # 2. Requête pour les 5 produits les plus stockés (en valeur)
-            df_top_stock_value = query_df("""
+            df_top_stock_value = query_df(
+                """
                 SELECT nom, (quantite_stock * prix_vente) as valeur_stock
                 FROM v_stock_produits
                 ORDER BY valeur_stock DESC
                 LIMIT 5
-            """)
+                """
+            )
 
-            # 3. Requête pour les 5 produits ayant généré le plus de sorties (ventes)
-            df_top_sales = query_df("""
-                SELECT 
-                    p.nom, 
+            df_top_sales = query_df(
+                """
+                SELECT
+                    p.nom,
                     SUM(m.quantite) AS quantite_vendue
                 FROM mouvements_stock m
                 JOIN produits p ON m.produit_id = p.id
@@ -1766,97 +1976,131 @@ if authentication_status:
                 GROUP BY p.nom
                 ORDER BY quantite_vendue DESC
                 LIMIT 5
-            """)
-            
-            # 4. Requête du Stock par Statut
-            df_status_count = df_products.groupby('statut_stock').size().reset_index(name='Nombre')
+                """
+            )
 
+            df_status_count = df_products.groupby('statut_stock').size().reset_index(name='Nombre')
         except Exception as e:
             st.error(f"Erreur lors du chargement des données du tableau de bord: {e}")
             df_kpis = pd.DataFrame({'total_produits': [0], 'valeur_stock_ht': [0.0], 'quantite_stock_total': [0.0], 'alerte_stock_bas': [0], 'stock_epuise': [0]})
             df_top_stock_value = pd.DataFrame({'nom': [], 'valeur_stock': []})
             df_top_sales = pd.DataFrame({'nom': [], 'quantite_vendue': []})
             df_status_count = pd.DataFrame({'statut_stock': ['Stock OK', 'Alerte Basse', 'Épuisé'], 'Nombre': [0, 0, 0]})
-        
-        # Affichage des métriques (KPIs)
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        kpis = df_kpis.iloc[0]
-        
-        with col1:
-            st.metric("Total Produits", f"{kpis['total_produits']}")
-        with col2:
-            st.metric("Valeur Stock HT (€)", f"💰 {kpis['valeur_stock_ht']:.2f} €")
-        with col3:
-            st.metric("Quantité Totale", f"{kpis['quantite_stock_total']:.2f}")
-        with col4:
-            alert_value = int(kpis['alerte_stock_bas'])
-            st.metric("Produits en Alerte", f"⚠️ {alert_value}", delta=alert_value, delta_color="inverse")
-        with col5:
-            exhausted_value = int(kpis['stock_epuise'])
-            st.metric("Produits Épuisés", f"❌ {exhausted_value}", delta=exhausted_value, delta_color="inverse")
-        
-        st.divider()
-        
-        col_chart_1, col_chart_2, col_chart_3 = st.columns(3)
-        
-        # Graphique 1: Top 5 Stock (Valeur)
-        with col_chart_1:
-            st.subheader("Top 5 Stock (Valeur HT)")
-            if not df_top_stock_value.empty:
-                st.bar_chart(df_top_stock_value, x='nom', y='valeur_stock', height=300)
-            else:
-                st.info("Aucune donnée de stock à afficher.")
-        
-        # Graphique 2: Top 5 Ventes (Quantité)
-        with col_chart_2:
-            st.subheader("Top 5 Ventes (Quantité)")
-            if not df_top_sales.empty:
-                st.bar_chart(df_top_sales, x='nom', y='quantite_vendue', height=300, color="#FF5733")
-            else:
-                st.info("Aucune donnée de vente à afficher.")
-        
-        # Graphique 3: Répartition du Stock par Statut
-        with col_chart_3:
-            st.subheader("Statut des Stocks")
-            if not df_status_count.empty:
-                st.plotly_chart(
-                    px.pie(df_status_count, values='Nombre', names='statut_stock', title='Répartition'),
-                    use_container_width=True,
-                    config={}
-                )
-            else:
-                st.info("Aucune donnée de statut à afficher.")
 
+        kpis = df_kpis.iloc[0]
+        stock_value = float(kpis.get('valeur_stock_ht') or 0.0)
+        stock_units = float(kpis.get('quantite_stock_total') or 0.0)
+        alert_count = int(kpis.get('alerte_stock_bas') or 0)
+        exhausted_count = int(kpis.get('stock_epuise') or 0)
+
+        render_workspace_hero(
+            eyebrow="Tableau de bord",
+            title="Pilotez l'inventaire en un clin d'œil",
+            description="Suivez la valeur du stock, détectez les alertes et identifiez vos best-sellers en continu.",
+            badges=["Vue globale", "Décision rapide"],
+            metrics=[
+                {"label": "Références", "value": str(int(kpis.get('total_produits', 0)))},
+                {"label": "Valeur HT", "value": f"{_format_human_number(stock_value, 2)} €", "hint": f"{_format_human_number(stock_units, 0)} unités"},
+                {"label": "Alertes", "value": str(alert_count), "hint": f"{exhausted_count} rupture(s)"},
+            ],
+            tone="violet",
+        )
+
+        with workspace_panel(
+            "Indicateurs clés",
+            "Vue synthétique des métriques d'inventaire.",
+            icon="📊",
+            accent="violet",
+        ):
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Valeur stock HT", f"{_format_human_number(stock_value, 2)} €")
+            metric_cols[1].metric("Quantité totale", _format_human_number(stock_units, 0))
+            metric_cols[2].metric("Alertes stock", f"{alert_count}", delta=alert_count, delta_color="inverse")
+            metric_cols[3].metric("Ruptures", f"{exhausted_count}", delta=exhausted_count, delta_color="inverse")
+
+        with workspace_panel(
+            "Focus stock et ventes",
+            "Identifiez les produits à forte valeur et les meilleures ventes.",
+            icon="📦",
+            accent="violet",
+        ):
+            col_chart_1, col_chart_2, col_chart_3 = st.columns(3)
+
+            with col_chart_1:
+                st.caption("Top 5 Stock (valeur HT)")
+                if not df_top_stock_value.empty:
+                    st.bar_chart(df_top_stock_value, x='nom', y='valeur_stock', height=280)
+                else:
+                    st.info("Aucune donnée de stock à afficher.")
+
+            with col_chart_2:
+                st.caption("Top 5 ventes (quantité)")
+                if not df_top_sales.empty:
+                    st.bar_chart(df_top_sales, x='nom', y='quantite_vendue', height=280, color="#f97316")
+                else:
+                    st.info("Aucune donnée de vente à afficher.")
+
+            with col_chart_3:
+                st.caption("Répartition des statuts")
+                if not df_status_count.empty:
+                    st.plotly_chart(
+                        px.pie(df_status_count, values='Nombre', names='statut_stock', title=None),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                    )
+                else:
+                    st.info("Aucune donnée de statut à afficher.")
 
     # ---------------- Scanner ----------------
+
     with scanner_tab:
-        st.header("Scanner de Code-Barres par Webcam")
-        st.info("Lancer le scan et attendre la détection d'un code-barres. Le code s'affichera ici et sera automatiquement utilisé dans l'onglet 'Vente (PoS)'.")
-        
-        col_info, col_scanner = st.columns([1, 2])
-        
-        with col_info:
-            if st.session_state.get("last_barcode"):
-                st.success(f"Code-barres détecté : **{st.session_state['last_barcode']}**")
-                # Afficher le produit correspondant
+        last_barcode = st.session_state.get("last_barcode")
+
+        render_workspace_hero(
+            eyebrow="Scanner",
+            title="Capturez vos codes-barres en direct",
+            description="Utilisez la webcam pour alimenter rapidement le terminal de vente ou enrichir vos fiches produits.",
+            badges=["Webcam", "Détection instantanée"],
+            metrics=[
+                {"label": "Dernier code", "value": last_barcode or "—"},
+                {"label": "Connexion", "value": "Actif" if last_barcode else "En attente"},
+            ],
+            tone="emerald",
+        )
+
+        with workspace_panel(
+            "Informations de lecture",
+            "Historique du dernier code détecté et résultat de la recherche produit.",
+            icon="🔍",
+            accent="emerald",
+        ):
+            if last_barcode:
+                st.success(f"Code-barres détecté : **{last_barcode}**")
                 try:
-                    df_p = query_df(text("""
-                        SELECT p.nom 
+                    df_p = query_df(text(
+                        """
+                        SELECT p.nom
                         FROM produits p
                         JOIN produits_barcodes pb ON p.id = pb.produit_id
                         WHERE pb.code = :code
                         LIMIT 1
-                    """).bindparams(code=st.session_state['last_barcode']))
+                        """
+                    ).bindparams(code=last_barcode))
                     if not df_p.empty:
                         st.caption(f"Produit correspondant : **{df_p['nom'].iloc[0]}**")
-                except:
-                    st.caption("Code-barres non encore associé à un produit.")
+                    else:
+                        st.caption("Aucun produit associé à ce code-barres.")
+                except Exception:
+                    st.caption("Recherche du produit impossible pour le moment.")
             else:
-                st.caption("Lancez la vidéo pour commencer la détection.")
-        
-        with col_scanner:
-            # Configuration WebRTC
+                st.info("Lancez la capture vidéo pour commencer la détection.")
+
+        with workspace_panel(
+            "Capture vidéo",
+            "Activez la caméra pour analyser les codes-barres.",
+            icon="📷",
+            accent="emerald",
+        ):
             webrtc_streamer(
                 key="barcode_scanner_webrtc",
                 mode=WebRtcMode.SENDRECV,
@@ -1867,508 +2111,138 @@ if authentication_status:
                 async_processing=True,
             )
 
-
     # ---------------- Extraction Facture ----------------
+
     with extract_tab:
-        st.header("Extraction automatique de produits depuis une facture")
-        st.caption(
-            "Téléversez une facture Metro (PDF, DOCX ou texte brut) pour extraire automatiquement les lignes produits, "
-            "les corriger si nécessaire, puis importez-les dans le catalogue."
-        )
-
-        uploaded_invoice_files = st.file_uploader(
-            "Déposer une facture Metro",
-            type=["pdf", "docx", "txt"],
-            key="extract_invoice_file_uploader",
-            help="Les formats PDF, DOCX et TXT sont pris en charge.",
-            accept_multiple_files=True,
-        )
-
-        _process_uploaded_invoices(uploaded_invoice_files, "Extraction")
-        _render_invoice_selector("Facture chargée", "extract_invoice_selector")
-
-        extract_invoice_text = st.text_area(
-            "Texte de la facture à analyser",
-            value=st.session_state.get("invoice_text_input", ""),
-            key="extract_invoice_text_input",
-            height=260,
-            placeholder="Collez ici la section produits de la facture si nécessaire...",
-        )
-        if extract_invoice_text != st.session_state.get("invoice_text_input"):
-            st.session_state["invoice_text_input"] = extract_invoice_text
-            st.session_state["import_invoice_text_input"] = extract_invoice_text
-
-        col_extract_btn, col_reset_btn = st.columns(2)
-        with col_extract_btn:
-            if st.button("Analyser le texte", key="extract_invoice_extract_button", type="primary"):
-                text_to_parse = st.session_state.get("invoice_text_input", "")
-                if not text_to_parse.strip():
-                    st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
-                else:
-                    df_extracted = invoice_extractor.extract_products_from_metro_invoice(text_to_parse)
-                    st.session_state["invoice_products_df"] = df_extracted
-                    st.session_state["invoice_import_summary"] = None
-                    if df_extracted.empty:
-                        st.warning("Aucune ligne produit détectée. Ajustez le texte et réessayez.")
-                    else:
-                        st.success(
-                            f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous."
-                        )
-        with col_reset_btn:
-            if st.button("Réinitialiser l'extraction", key="extract_invoice_reset_button"):
-                _reset_invoice_session_state()
-                st.session_state["invoice_reset_notice_origin"] = "extract"
-                st.rerun()
-
-        if st.session_state.get("invoice_reset_notice_origin") == "extract":
-            st.info("Extraction réinitialisée.")
-            st.session_state.pop("invoice_reset_notice_origin", None)
-
-        if st.session_state.get("invoice_raw_text"):
-            st.download_button(
-                "Télécharger le texte brut",
-                data=st.session_state["invoice_raw_text"].encode("utf-8"),
-                file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
-                mime="text/plain",
-                key="extract_invoice_raw_text_download",
-            )
-
         extracted_df = st.session_state.get("invoice_products_df")
-        if isinstance(extracted_df, pd.DataFrame) and not extracted_df.empty:
-            st.subheader("Produits détectés")
-            st.caption(
-                "Vérifiez les informations extraites. Vous pouvez ajuster les noms, les prix, la TVA ou les codes-barres avant "
-                "l'importation."
-            )
-
-            editable_df = st.data_editor(
-                extracted_df,
-                key="extract_invoice_products_editor",
-                hide_index=True,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "nom": st.column_config.TextColumn("Nom du produit"),
-                    "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
-                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
-                    "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
-                    "codes": st.column_config.TextColumn("Codes-barres"),
-                },
-            )
-            editable_df = pd.DataFrame(editable_df)
-            for col in ("nom", "codes"):
-                if col in editable_df.columns:
-                    editable_df[col] = editable_df[col].fillna("")
-            st.session_state["invoice_products_df"] = editable_df
-
-            col_download, col_import = st.columns(2)
-            with col_download:
-                csv_data = editable_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Télécharger le CSV extrait",
-                    data=csv_data,
-                    file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
-                    mime="text/csv",
-                    key="extract_invoice_csv_download",
-                )
-            with col_import:
-                if st.button("Importer ces produits", key="extract_invoice_import_button", type="primary"):
-                    with st.spinner("Import des produits en cours..."):
-                        summary = products_loader.load_products_from_df(editable_df)
-                    st.session_state["invoice_import_summary"] = summary
-                    invalidate_data_caches(
-                        "products_list",
-                        "catalog",
-                        "trending",
-                        "product_options",
-                        "movement_timeseries",
-                        "recent_movements",
-                        "table_counts",
-                        "table_preview",
-                    )
-                    st.success("Importation terminée. Consultez le résumé ci-dessous.")
-
         summary = st.session_state.get("invoice_import_summary")
-        if isinstance(summary, dict):
-            st.divider()
-            st.subheader("Résumé de l'importation")
-            metric_cols = st.columns(4)
-            metric_cols[0].metric("Lignes reçues", summary.get("rows_received", 0))
-            metric_cols[1].metric("Traitées", summary.get("rows_processed", 0))
-            metric_cols[2].metric("Créées", summary.get("created", 0))
-            metric_cols[3].metric("Mises à jour", summary.get("updated", 0))
+        detected_count = int(len(extracted_df)) if isinstance(extracted_df, pd.DataFrame) else 0
 
-            extra_cols = st.columns(3)
-            extra_cols[0].metric("Stocks initiaux", summary.get("stock_initialized", 0))
-            barcode_stats = summary.get("barcode", {})
-            extra_cols[1].metric("Codes ajoutés", barcode_stats.get("added", 0))
-            extra_cols[2].metric("Codes en conflit", barcode_stats.get("conflicts", 0))
-
-            if summary.get("errors"):
-                st.warning(f"{len(summary['errors'])} ligne(s) n'ont pas pu être importées.")
-                errors_df = pd.DataFrame(summary["errors"])
-                st.dataframe(errors_df, hide_index=True, use_container_width=True)
-            else:
-                st.success("Toutes les lignes valides ont été importées avec succès.")
-
-
-    # ---------------- Importation ----------------
-    with import_tab:
-        st.header("Importation de Produits par Fichier CSV")
-
-        uploaded_invoice_files = st.file_uploader(
-            "Déposer une facture Metro",
-            type=["pdf", "docx", "txt"],
-            key="import_invoice_file_uploader",
-            help="Les formats PDF, DOCX et TXT sont pris en charge.",
-            accept_multiple_files=True,
+        render_workspace_hero(
+            eyebrow="Extraction facture",
+            title="Transformez vos factures en produits structurés",
+            description="Téléversez une facture Metro, corrigez les lignes détectées et importez-les directement dans le catalogue.",
+            badges=["PDF / DOCX / TXT", "Analyse automatique"],
+            metrics=[
+                {"label": "Lignes détectées", "value": str(detected_count)},
+                {"label": "Résumé import", "value": "Disponible" if summary else "En attente"},
+            ],
+            tone="amber",
         )
 
-        _process_uploaded_invoices(uploaded_invoice_files, "Import")
-        _render_invoice_selector("Facture chargée", "import_invoice_selector")
-
-        import_invoice_text = st.text_area(
-            "Texte de la facture à analyser",
-            value=st.session_state.get("invoice_text_input", ""),
-            key="import_invoice_text_input",
-            height=260,
-            placeholder="Collez ici la section produits de la facture si nécessaire...",
-        )
-        if import_invoice_text != st.session_state.get("invoice_text_input"):
-            st.session_state["invoice_text_input"] = import_invoice_text
-            st.session_state["extract_invoice_text_input"] = import_invoice_text
-
-        col_extract_btn, col_reset_btn = st.columns(2)
-        with col_extract_btn:
-            if st.button("Analyser le texte", key="import_invoice_extract_button", type="primary"):
-                text_to_parse = st.session_state.get("invoice_text_input", "")
-                if not text_to_parse.strip():
-                    st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
-                else:
-                    df_extracted = invoice_extractor.extract_products_from_metro_invoice(text_to_parse)
-                    st.session_state["invoice_products_df"] = df_extracted
-                    st.session_state["invoice_import_summary"] = None
-                    if df_extracted.empty:
-                        st.warning("Aucune ligne produit détectée. Ajustez le texte et réessayez.")
-                    else:
-                        st.success(
-                            f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous."
-                        )
-        with col_reset_btn:
-            if st.button("Réinitialiser l'extraction", key="import_invoice_reset_button"):
-                _reset_invoice_session_state()
-                st.session_state["invoice_reset_notice_origin"] = "import"
-                st.rerun()
-
-        if st.session_state.get("invoice_reset_notice_origin") == "import":
-            st.info("Extraction réinitialisée.")
-            st.session_state.pop("invoice_reset_notice_origin", None)
-
-        if st.session_state.get("invoice_raw_text"):
-            st.download_button(
-                "Télécharger le texte brut",
-                data=st.session_state["invoice_raw_text"].encode("utf-8"),
-                file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
-                mime="text/plain",
-                key="import_invoice_raw_text_download",
-            )
-
-        extracted_df = st.session_state.get("invoice_products_df")
-        if isinstance(extracted_df, pd.DataFrame) and not extracted_df.empty:
-            st.subheader("Produits détectés")
-            st.caption(
-                "Vérifiez les informations extraites. Vous pouvez ajuster les noms, les prix, la TVA ou les codes-barres avant "
-                "l'importation."
-            )
-
-            editable_df = st.data_editor(
-                extracted_df,
-                key="import_invoice_products_editor",
-                hide_index=True,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "nom": st.column_config.TextColumn("Nom du produit"),
-                    "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
-                    "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
-                    "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
-                    "codes": st.column_config.TextColumn("Codes-barres"),
-                },
-            )
-            editable_df = pd.DataFrame(editable_df)
-            for col in ("nom", "codes"):
-                if col in editable_df.columns:
-                    editable_df[col] = editable_df[col].fillna("")
-            st.session_state["invoice_products_df"] = editable_df
-
-            col_download, col_import = st.columns(2)
-            with col_download:
-                csv_data = editable_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Télécharger le CSV extrait",
-                    data=csv_data,
-                    file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
-                    mime="text/csv",
-                    key="import_invoice_csv_download",
-                )
-            with col_import:
-                if st.button("Importer ces produits", key="import_invoice_import_button", type="primary"):
-                    with st.spinner("Import des produits en cours..."):
-                        summary = products_loader.load_products_from_df(editable_df)
-                    st.session_state["invoice_import_summary"] = summary
-                    invalidate_data_caches(
-                        "products_list",
-                        "catalog",
-                        "trending",
-                        "product_options",
-                        "movement_timeseries",
-                        "recent_movements",
-                        "table_counts",
-                        "table_preview",
-                    )
-                    st.success("Importation terminée. Consultez le résumé ci-dessous.")
-
-        summary = st.session_state.get("invoice_import_summary")
-        if isinstance(summary, dict):
-            st.divider()
-            st.subheader("Résumé de l'importation")
-            metric_cols = st.columns(4)
-            metric_cols[0].metric("Lignes reçues", summary.get("rows_received", 0))
-            metric_cols[1].metric("Traitées", summary.get("rows_processed", 0))
-            metric_cols[2].metric("Créées", summary.get("created", 0))
-            metric_cols[3].metric("Mises à jour", summary.get("updated", 0))
-
-            extra_cols = st.columns(3)
-            extra_cols[0].metric("Stocks initiaux", summary.get("stock_initialized", 0))
-            barcode_stats = summary.get("barcode", {})
-            extra_cols[1].metric("Codes ajoutés", barcode_stats.get("added", 0))
-            extra_cols[2].metric("Codes en conflit", barcode_stats.get("conflicts", 0))
-
-            if summary.get("errors"):
-                st.warning(f"{len(summary['errors'])} ligne(s) n'ont pas pu être importées.")
-                errors_df = pd.DataFrame(summary["errors"])
-                st.dataframe(errors_df, hide_index=True, use_container_width=True)
-            else:
-                st.success("Toutes les lignes valides ont été importées avec succès.")
-
-
-    # ---------------- Importation ----------------
-    with import_tab:
-        st.header("Importation de Produits")
-
-        extraction_tab, csv_tab_inner = st.tabs([
-            "Extraction facture METRO",
-            "Import CSV classique",
-        ])
-
-        with extraction_tab:
-            st.subheader("Extraction automatique depuis une facture fournisseur")
-            st.caption(
-                "Téléversez un PDF/DOCX de facture METRO ou collez le texte brut de la section produits."
-            )
-
-            uploaded_invoice = st.file_uploader(
-                "Télécharger une facture (PDF, DOCX ou TXT)",
+        with workspace_panel(
+            "Téléversement",
+            "Ajoutez une facture et choisissez la capture à analyser.",
+            icon="📂",
+            accent="amber",
+        ):
+            uploaded_invoice_files = st.file_uploader(
+                "Déposer une facture Metro",
                 type=["pdf", "docx", "txt"],
-                key="invoice_uploader",
-            )
-            manual_invoice_text = st.text_area(
-                "Ou collez directement le texte brut de la facture",
-                height=160,
-                key="invoice_text_area",
-                placeholder="Collez ici le texte issu de la facture (copier/coller depuis le PDF).",
+                key="extract_invoice_file_uploader",
+                help="Les formats PDF, DOCX et TXT sont pris en charge.",
+                accept_multiple_files=True,
             )
 
-            extracted_text = ""
-            if uploaded_invoice is not None:
-                with st.spinner("Extraction du texte en cours..."):
-                    extracted_text = invoice_extractor.extract_text_from_file(uploaded_invoice)
-                if not extracted_text:
-                    st.warning("Aucun texte détecté dans le fichier téléversé.")
-                elif extracted_text.lower().startswith("erreur"):
-                    st.error(extracted_text)
-                    extracted_text = ""
+            _process_uploaded_invoices(uploaded_invoice_files, "Extraction")
+            _render_invoice_selector("Facture chargée", "extract_invoice_selector")
 
-            raw_invoice_text = manual_invoice_text.strip() or extracted_text.strip()
+        with workspace_panel(
+            "Texte de la facture",
+            "Collez ou ajustez le contenu avant l'analyse.",
+            icon="📝",
+            accent="amber",
+        ):
+            extract_invoice_text = st.text_area(
+                "Texte à analyser",
+                value=st.session_state.get("invoice_text_input", ""),
+                key="extract_invoice_text_input",
+                height=260,
+                placeholder="Collez ici la section produits de la facture si nécessaire...",
+            )
+            if extract_invoice_text != st.session_state.get("invoice_text_input"):
+                st.session_state["invoice_text_input"] = extract_invoice_text
+                st.session_state["import_invoice_text_input"] = extract_invoice_text
 
-            if raw_invoice_text:
-                with st.expander("Prévisualiser le texte brut extrait", expanded=False):
-                    st.text(raw_invoice_text)
+            col_extract_btn, col_reset_btn = st.columns(2)
+            with col_extract_btn:
+                if st.button("Analyser le texte", key="extract_invoice_extract_button", type="primary"):
+                    text_to_parse = st.session_state.get("invoice_text_input", "")
+                    if not text_to_parse.strip():
+                        st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
+                    else:
+                        df_extracted = invoice_extractor.extract_products_from_metro_invoice(text_to_parse)
+                        st.session_state["invoice_products_df"] = df_extracted
+                        st.session_state["invoice_import_summary"] = None
+                        if df_extracted.empty:
+                            st.warning("Aucune ligne produit détectée. Ajustez le texte et réessayez.")
+                        else:
+                            st.success(f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous.")
+            with col_reset_btn:
+                if st.button("Réinitialiser l'extraction", key="extract_invoice_reset_button"):
+                    _reset_invoice_session_state()
+                    st.session_state["invoice_reset_notice_origin"] = "extract"
+                    st.rerun()
 
-                col_margin, col_tva, col_stock = st.columns([1, 1, 1])
-                with col_margin:
-                    apply_margin = st.checkbox(
-                        "Appliquer une marge", value=True, key="invoice_apply_margin"
-                    )
-                    margin_pct = st.number_input(
-                        "Marge (%)",
-                        min_value=0.0,
-                        max_value=500.0,
-                        value=30.0,
-                        step=1.0,
-                        key="invoice_margin_pct",
-                    )
-                with col_tva:
-                    default_tva = st.number_input(
-                        "TVA par défaut (%)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=20.0,
-                        step=0.5,
-                        key="invoice_default_tva",
-                    )
-                    tva_code_d = st.number_input(
-                        "TVA code D (%)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=20.0,
-                        step=0.5,
-                        key="invoice_tva_d",
-                    )
-                    tva_code_p = st.number_input(
-                        "TVA code P (%)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=5.5,
-                        step=0.5,
-                        key="invoice_tva_p",
-                    )
-                with col_stock:
-                    seuil_alerte = st.number_input(
-                        "Seuil d'alerte (stock)",
-                        min_value=0.0,
-                        max_value=1_000_000.0,
-                        value=0.0,
-                        step=1.0,
-                        key="invoice_stock_threshold",
-                    )
-                    arrondi_qty = st.selectbox(
-                        "Arrondi des quantités",
-                        options=["aucun", "entier"],
-                        index=0,
-                        key="invoice_qty_rounding",
-                    )
+            if st.session_state.get("invoice_reset_notice_origin") == "extract":
+                st.info("Extraction réinitialisée.")
+                st.session_state.pop("invoice_reset_notice_origin", None)
 
-                tva_mapping = {"D": tva_code_d, "P": tva_code_p}
-                base_df = invoice_extractor.extract_products_from_metro_invoice(
-                    raw_invoice_text,
-                    tva_map=tva_mapping,
-                    default_tva=default_tva,
+            if st.session_state.get("invoice_raw_text"):
+                st.download_button(
+                    "Télécharger le texte brut",
+                    data=st.session_state["invoice_raw_text"].encode("utf-8"),
+                    file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
+                    mime="text/plain",
+                    key="extract_invoice_raw_text_download",
                 )
 
-                if base_df.empty:
-                    st.warning("Aucun produit n'a été identifié dans le texte fourni.")
-                else:
-                    df_ready = base_df.copy()
-                    df_ready["nom"] = df_ready["nom"].fillna("").astype(str).str.strip()
-                    df_ready = df_ready[df_ready["nom"] != ""].copy()
+        if isinstance(extracted_df, pd.DataFrame) and not extracted_df.empty:
+            with workspace_panel(
+                "Produits détectés",
+                "Corrigez les informations extraites avant import.",
+                icon="🧾",
+                accent="amber",
+            ):
+                st.caption(
+                    "Vérifiez les informations extraites. Vous pouvez ajuster les noms, les prix, la TVA ou les codes-barres avant l'importation."
+                )
 
-                    df_ready["codes"] = df_ready["codes"].fillna("").astype(str).str.strip()
-                    df_ready["qte_init"] = df_ready["qte_init"].fillna(0).astype(float)
-                    if arrondi_qty == "entier":
-                        df_ready["qte_init"] = df_ready["qte_init"].round().astype(int)
-                    df_ready["prix_achat"] = df_ready["prix_achat"].fillna(0.0).astype(float)
-                    df_ready["tva"] = df_ready["tva"].fillna(default_tva).astype(float)
+                editable_df = st.data_editor(
+                    extracted_df,
+                    key="extract_invoice_products_editor",
+                    hide_index=True,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "nom": st.column_config.TextColumn("Nom du produit"),
+                        "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
+                        "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
+                        "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
+                        "codes": st.column_config.TextColumn("Codes-barres"),
+                    },
+                )
+                editable_df = pd.DataFrame(editable_df)
+                for col in ("nom", "codes"):
+                    if col in editable_df.columns:
+                        editable_df[col] = editable_df[col].fillna("")
+                st.session_state["invoice_products_df"] = editable_df
 
-                    if apply_margin:
-                        df_ready["prix_vente"] = (
-                            df_ready["prix_achat"] * (1 + margin_pct / 100.0)
-                        )
-                    df_ready["prix_vente"] = df_ready["prix_vente"].fillna(
-                        df_ready["prix_achat"]
-                    )
-
-                    df_ready["prix_achat"] = df_ready["prix_achat"].round(2)
-                    df_ready["prix_vente"] = df_ready["prix_vente"].round(2)
-                    df_ready["tva"] = df_ready["tva"].round(2)
-                    df_ready["seuil_alerte_defaut"] = seuil_alerte
-                    df_ready["prix_total_estime"] = (
-                        df_ready["prix_vente"] * df_ready["qte_init"]
-                    ).round(2)
-
-                    total_lignes = len(df_ready)
-                    total_qte = float(df_ready["qte_init"].sum())
-                    total_valeur = float(df_ready["prix_total_estime"].sum())
-
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Produits détectés", total_lignes)
-                    c2.metric("Quantité totale", f"{total_qte:,.0f}".replace(",", " "))
-                    c3.metric("Valeur TTC estimée", f"{total_valeur:,.2f} €")
-
-                    display_cols = [
-                        "nom",
-                        "codes",
-                        "numero_article",
-                        "qte_init",
-                        "prix_achat",
-                        "prix_vente",
-                        "tva",
-                        "tva_code",
-                        "montant_total_facture",
-                        "prix_total_estime",
-                    ]
-                    available_cols = [col for col in display_cols if col in df_ready.columns]
-                    st.dataframe(
-                        df_ready[available_cols],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-                    csv_data = df_ready.to_csv(index=False).encode("utf-8-sig")
+                col_download, col_import = st.columns(2)
+                with col_download:
+                    csv_data = editable_df.to_csv(index=False).encode("utf-8")
                     st.download_button(
-                        "Télécharger les données extraites (CSV)",
+                        "Télécharger le CSV extrait",
                         data=csv_data,
-                        file_name="produits_facture_metro.csv",
+                        file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
                         mime="text/csv",
-                        key="invoice_download_button",
+                        key="extract_invoice_csv_download",
                     )
-
-                    if st.button(
-                        "Importer ces produits dans l'inventaire",
-                        type="primary",
-                        key="invoice_import_button",
-                    ):
-                        with st.spinner("Importation des produits extraits..."):
-                            results = products_loader.load_products_from_df(df_ready)
-
-                        st.success("Importation terminée!")
-                        st.caption(
-                            f"Lignes traitées : {results['rows_processed']} / {results['rows_received']}"
-                        )
-
-                        product_summary = []
-                        if results["created"]:
-                            product_summary.append(f"{results['created']} créé(s)")
-                        if results["updated"]:
-                            product_summary.append(f"{results['updated']} mis à jour")
-                        if product_summary:
-                            st.info("Produits : " + ", ".join(product_summary))
-                        else:
-                            st.info("Produits : aucune modification apportée.")
-
-                        if results["stock_initialized"]:
-                            st.caption(
-                                f"{results['stock_initialized']} mouvement(s) de stock initial enregistrés."
-                            )
-
-                        barcode_stats = results["barcode"]
-                        if any(barcode_stats.values()):
-                            st.caption(
-                                "Codes-barres — "
-                                f"ajouts: {barcode_stats['added']}, "
-                                f"conflits: {barcode_stats['conflicts']}, "
-                                f"ignorés/erreurs: {barcode_stats['skipped']}"
-                            )
-
-                        if results['errors']:
-                            st.warning(
-                                f"{len(results['errors'])} ligne(s) non importée(s) en raison d'erreurs."
-                            )
-                            errors_df = pd.DataFrame(results['errors'])
-                            st.dataframe(errors_df, use_container_width=True, hide_index=True)
-                        else:
-                            st.success("Toutes les lignes valides ont été importées avec succès.")
-
+                with col_import:
+                    if st.button("Importer ces produits", key="extract_invoice_import_button", type="primary"):
+                        with st.spinner("Import des produits en cours..."):
+                            summary_result = products_loader.load_products_from_df(editable_df)
+                        st.session_state["invoice_import_summary"] = summary_result
                         invalidate_data_caches(
                             "products_list",
                             "catalog",
@@ -2379,322 +2253,409 @@ if authentication_status:
                             "table_counts",
                             "table_preview",
                         )
-                        st.rerun()
-            else:
-                st.info("Téléchargez une facture ou collez le texte brut pour lancer l'extraction.")
+                        st.success("Importation terminée. Consultez le résumé ci-dessous.")
+                        summary = summary_result
 
-        with csv_tab_inner:
-            st.subheader("Importation de Produits par Fichier CSV")
+        if isinstance(summary, dict):
+            with workspace_panel(
+                "Résumé de l'import",
+                "Synthèse des lignes traitées et des actions réalisées.",
+                icon="✅",
+                accent="amber",
+            ):
+                metric_cols = st.columns(4)
+                metric_cols[0].metric("Lignes reçues", summary.get("rows_received", 0))
+                metric_cols[1].metric("Traitées", summary.get("rows_processed", 0))
+                metric_cols[2].metric("Créées", summary.get("created", 0))
+                metric_cols[3].metric("Mises à jour", summary.get("updated", 0))
 
-            uploaded_file = st.file_uploader(
-                "Télécharger un fichier CSV de produits (colonnes requises : nom, prix_vente, tva, qte_init, codes (Optionnel))",
-                type=['csv'],
-                key="csv_import_uploader",
+                extra_cols = st.columns(3)
+                extra_cols[0].metric("Stocks initiaux", summary.get("stock_initialized", 0))
+                barcode_stats = summary.get("barcode", {})
+                extra_cols[1].metric("Codes ajoutés", barcode_stats.get("added", 0))
+                extra_cols[2].metric("Codes en conflit", barcode_stats.get("conflicts", 0))
+
+                if summary.get("errors"):
+                    st.warning(f"{len(summary['errors'])} ligne(s) n'ont pas pu être importées.")
+                    errors_df = pd.DataFrame(summary["errors"])
+                    st.dataframe(errors_df, hide_index=True, use_container_width=True)
+                else:
+                    st.success("Toutes les lignes valides ont été importées avec succès.")
+
+    # ---------------- Importation ----------------
+
+    with import_tab:
+        imported_df = st.session_state.get("invoice_products_df")
+        summary = st.session_state.get("invoice_import_summary")
+        pending_count = int(len(imported_df)) if isinstance(imported_df, pd.DataFrame) else 0
+
+        render_workspace_hero(
+            eyebrow="Importation",
+            title="Injectez rapidement des produits depuis vos fichiers",
+            description="Chargez un texte de facture, ajustez les lignes, puis importez-les directement dans l'inventaire.",
+            badges=["CSV prêt", "Vérification manuelle"],
+            metrics=[
+                {"label": "Lignes prêtes", "value": str(pending_count)},
+                {"label": "Dernier import", "value": "OK" if summary else "À planifier"},
+            ],
+            tone="teal",
+        )
+
+        with workspace_panel(
+            "Téléversement",
+            "Ajoutez la facture à importer et sélectionnez la source.",
+            icon="📂",
+            accent="teal",
+        ):
+            uploaded_invoice_files = st.file_uploader(
+                "Déposer une facture Metro",
+                type=["pdf", "docx", "txt"],
+                key="import_invoice_file_uploader",
+                help="Les formats PDF, DOCX et TXT sont pris en charge.",
+                accept_multiple_files=True,
             )
 
-            expected_cols = ["nom", "prix_vente", "tva", "qte_init", "codes"]
-            st.caption(f"Colonnes attendues (minimum): {', '.join(expected_cols)}")
+            _process_uploaded_invoices(uploaded_invoice_files, "Import")
+            _render_invoice_selector("Facture chargée", "import_invoice_selector")
 
-            if uploaded_file:
-                try:
-                    df = pd.read_csv(uploaded_file, sep=",")
+        with workspace_panel(
+            "Texte de la facture",
+            "Collez ou corrigez le contenu avant l'analyse.",
+            icon="📝",
+            accent="teal",
+        ):
+            import_invoice_text = st.text_area(
+                "Texte à analyser",
+                value=st.session_state.get("invoice_text_input", ""),
+                key="import_invoice_text_input",
+                height=260,
+                placeholder="Collez ici la section produits de la facture si nécessaire...",
+            )
+            if import_invoice_text != st.session_state.get("invoice_text_input"):
+                st.session_state["invoice_text_input"] = import_invoice_text
+                st.session_state["extract_invoice_text_input"] = import_invoice_text
 
-                    missing_cols = [col for col in expected_cols if col not in df.columns]
-                    if missing_cols:
-                        st.warning(
-                            f"Attention: Le fichier CSV manque les colonnes : {', '.join(missing_cols)}. Des valeurs par défaut seront utilisées."
-                        )
-
-                    st.write("Aperçu des données à importer:")
-                    st.dataframe(df.head(), use_container_width=True)
-
-                    if 'nom' not in df.columns:
-                        st.error("Le fichier CSV doit contenir au moins la colonne 'nom'. Importation impossible.")
+            col_extract_btn, col_reset_btn = st.columns(2)
+            with col_extract_btn:
+                if st.button("Analyser le texte", key="import_invoice_extract_button", type="primary"):
+                    text_to_parse = st.session_state.get("invoice_text_input", "")
+                    if not text_to_parse.strip():
+                        st.warning("Aucun texte à analyser. Téléversez une facture ou collez du texte.")
                     else:
-                        if st.button("Lancer l'Importation des Produits", type="primary", key="csv_import_button"):
-                            with st.spinner("Importation en cours..."):
-                                cols_to_check = {
-                                    "prix_vente": 0.0,
-                                    "tva": 20.0,
-                                    "qte_init": 0.0,
-                                    "codes": "",
-                                }
-                                for col, default in cols_to_check.items():
-                                    if col not in df.columns:
-                                        df[col] = default
+                        df_extracted = invoice_extractor.extract_products_from_metro_invoice(text_to_parse)
+                        st.session_state["invoice_products_df"] = df_extracted
+                        st.session_state["invoice_import_summary"] = None
+                        if df_extracted.empty:
+                            st.warning("Aucune ligne produit détectée. Ajustez le texte et réessayez.")
+                        else:
+                            st.success(f"{len(df_extracted)} ligne(s) produit détectée(s). Vérifiez et corrigez-les ci-dessous.")
+            with col_reset_btn:
+                if st.button("Réinitialiser l'extraction", key="import_invoice_reset_button"):
+                    _reset_invoice_session_state()
+                    st.session_state["invoice_reset_notice_origin"] = "import"
+                    st.rerun()
 
-                                df['prix_vente'] = df['prix_vente'].apply(to_float, minv=0.0)
-                                df['tva'] = df['tva'].apply(to_float, minv=0.0, maxv=100.0)
-                                df['qte_init'] = df['qte_init'].apply(to_float, minv=0.0)
-                                df['codes'] = df['codes'].fillna('').astype(str)
+            if st.session_state.get("invoice_reset_notice_origin") == "import":
+                st.info("Extraction réinitialisée.")
+                st.session_state.pop("invoice_reset_notice_origin", None)
 
-                                df.dropna(subset=['nom'], inplace=True)
+            if st.session_state.get("invoice_raw_text"):
+                st.download_button(
+                    "Télécharger le texte brut",
+                    data=st.session_state["invoice_raw_text"].encode("utf-8"),
+                    file_name=st.session_state.get("invoice_uploaded_name", "facture.txt"),
+                    mime="text/plain",
+                    key="import_invoice_raw_text_download",
+                )
 
-                                results = products_loader.load_products_from_df(df)
+        if isinstance(imported_df, pd.DataFrame) and not imported_df.empty:
+            with workspace_panel(
+                "Produits détectés",
+                "Finalisez les informations avant import.",
+                icon="🧾",
+                accent="teal",
+            ):
+                st.caption("Vérifiez et complétez les champs avant de valider l'importation.")
 
-                            st.success("Importation terminée!")
-                            st.caption(
-                                f"Lignes traitées : {results['rows_processed']} / {results['rows_received']}"
-                            )
+                editable_df = st.data_editor(
+                    imported_df,
+                    key="import_invoice_products_editor",
+                    hide_index=True,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "nom": st.column_config.TextColumn("Nom du produit"),
+                        "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
+                        "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
+                        "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
+                        "codes": st.column_config.TextColumn("Codes-barres"),
+                    },
+                )
+                editable_df = pd.DataFrame(editable_df)
+                for col in ("nom", "codes"):
+                    if col in editable_df.columns:
+                        editable_df[col] = editable_df[col].fillna("")
+                st.session_state["invoice_products_df"] = editable_df
 
-                            product_summary = []
-                            if results["created"]:
-                                product_summary.append(f"{results['created']} créé(s)")
-                            if results["updated"]:
-                                product_summary.append(f"{results['updated']} mis à jour")
-                            if product_summary:
-                                st.info("Produits : " + ", ".join(product_summary))
-                            else:
-                                st.info("Produits : aucune modification apportée.")
+                col_download, col_import = st.columns(2)
+                with col_download:
+                    csv_data = editable_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Télécharger le CSV extrait",
+                        data=csv_data,
+                        file_name=st.session_state.get("invoice_uploaded_name", "facture.txt").replace(".txt", ".csv"),
+                        mime="text/csv",
+                        key="import_invoice_csv_download",
+                    )
+                with col_import:
+                    if st.button("Importer ces produits", key="import_invoice_import_button", type="primary"):
+                        with st.spinner("Import des produits en cours..."):
+                            summary_result = products_loader.load_products_from_df(editable_df)
+                        st.session_state["invoice_import_summary"] = summary_result
+                        invalidate_data_caches(
+                            "products_list",
+                            "catalog",
+                            "trending",
+                            "product_options",
+                            "movement_timeseries",
+                            "recent_movements",
+                            "table_counts",
+                            "table_preview",
+                        )
+                        st.success("Importation terminée. Consultez le résumé ci-dessous.")
+                        summary = summary_result
 
-                            if results["stock_initialized"]:
-                                st.caption(
-                                    f"{results['stock_initialized']} mouvement(s) de stock initial enregistrés."
-                                )
+        if isinstance(summary, dict):
+            with workspace_panel(
+                "Résumé de l'import",
+                "Synthèse des lignes traitées et des actions réalisées.",
+                icon="✅",
+                accent="teal",
+            ):
+                metric_cols = st.columns(4)
+                metric_cols[0].metric("Lignes reçues", summary.get("rows_received", 0))
+                metric_cols[1].metric("Traitées", summary.get("rows_processed", 0))
+                metric_cols[2].metric("Créées", summary.get("created", 0))
+                metric_cols[3].metric("Mises à jour", summary.get("updated", 0))
 
-                            barcode_stats = results["barcode"]
-                            if any(barcode_stats.values()):
-                                st.caption(
-                                    "Codes-barres — "
-                                    f"ajouts: {barcode_stats['added']}, "
-                                    f"conflits: {barcode_stats['conflicts']}, "
-                                    f"ignorés/erreurs: {barcode_stats['skipped']}"
-                                )
+                extra_cols = st.columns(3)
+                extra_cols[0].metric("Stocks initiaux", summary.get("stock_initialized", 0))
+                barcode_stats = summary.get("barcode", {})
+                extra_cols[1].metric("Codes ajoutés", barcode_stats.get("added", 0))
+                extra_cols[2].metric("Codes en conflit", barcode_stats.get("conflicts", 0))
 
-                            if results['errors']:
-                                st.warning(
-                                    f"{len(results['errors'])} ligne(s) non importée(s) en raison d'erreurs."
-                                )
-                                errors_df = pd.DataFrame(results['errors'])
-                                st.dataframe(errors_df, use_container_width=True, hide_index=True)
-                            else:
-                                st.success("Toutes les lignes valides ont été importées avec succès.")
-
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
-
-                except Exception as e:
-                    st.error(f"Une erreur est survenue lors de la lecture ou du traitement du fichier: {e}")
-                    st.exception(e)
-
+                if summary.get("errors"):
+                    st.warning(f"{len(summary['errors'])} ligne(s) n'ont pas pu être importées.")
+                    errors_df = pd.DataFrame(summary["errors"])
+                    st.dataframe(errors_df, hide_index=True, use_container_width=True)
+                else:
+                    st.success("Toutes les lignes valides ont été importées avec succès.")
 
     # ---------------- Maintenance (Admin) ----------------
+
     with admin_tab:
-        st.header("Maintenance et Outils Administrateur")
-        
-        # Contrôle d'accès par rôle
-        if st.session_state["user_role"] == "admin":
-            
-            st.subheader("Vérification et Réparation BDD")
-
-            if st.button("Tester la connexion BDD"):
-                try:
-                    df = query_df("SELECT NOW() as now")
-                    st.success(f"Connexion OK — serveur répond: {df.loc[0,'now']}")
-                except Exception as e:
-                    st.error("Connexion échouée :")
-                    st.exception(e)
-
-            if st.button("Vider le Cache Streamlit"):
-                st.cache_data.clear()
-                st.toast("Cache vidé. Les données seront rechargées au prochain rafraîchissement.", icon='🧹')
-
-            st.divider()
-            st.subheader("Gestion des sauvegardes de la base de données")
-
+        if st.session_state["user_role"] != "admin":
+            st.error("Accès refusé. Seuls les administrateurs peuvent accéder à l'onglet Maintenance (Admin).")
+        else:
             tool_statuses = check_backup_tools()
             missing_tools = [status for status in tool_statuses if not status.available]
+            backups = list_backups()
+            backup_count = len(backups)
 
-            st.markdown(
-                "ℹ️ **Pré-requis système** : l'utilisateur exécutant Streamlit doit disposer "
-                "du client PostgreSQL (`pg_dump` et `psql`). Sur Debian/Ubuntu, installez-le "
-                "via `apt install postgresql-client` ou fournissez les chemins via les "
-                "variables `PG_DUMP_PATH`/`PSQL_PATH`."
+            render_workspace_hero(
+                eyebrow="Maintenance",
+                title="Administrez la plateforme en toute confiance",
+                description="Supervisez les sauvegardes, vérifiez l'intégrité des données et pilotez les diagnostics avancés.",
+                badges=["Rôle admin", "Contrôle avancé"],
+                metrics=[
+                    {"label": "Sauvegardes", "value": str(backup_count)},
+                    {"label": "Outils PostgreSQL", "value": "OK" if not missing_tools else "À compléter"},
+                ],
+                tone="slate",
             )
 
-            status_lines = []
-            for status in tool_statuses:
-                if status.available:
-                    status_lines.append(
-                        f"- ✅ `{status.name}` disponible : `{status.resolved}` (détecté via {status.source})."
+            with workspace_panel(
+                "Pré-requis système",
+                "Statut des utilitaires nécessaires aux sauvegardes.",
+                icon="🛡️",
+                accent="slate",
+            ):
+                st.markdown(
+                    "ℹ️ **Pré-requis système** : l'utilisateur exécutant Streamlit doit disposer "
+                    "du client PostgreSQL (`pg_dump` et `psql`). Sur Debian/Ubuntu, installez-le "
+                    "via `apt install postgresql-client` ou fournissez les chemins via les "
+                    "variables `PG_DUMP_PATH`/`PSQL_PATH`."
+                )
+
+                status_lines = []
+                for status in tool_statuses:
+                    if status.available:
+                        status_lines.append(
+                            f"- ✅ `{status.name}` disponible : `{status.resolved}` (détecté via {status.source})."
+                        )
+                    else:
+                        status_lines.append(
+                            f"- ❌ `{status.name}` introuvable avec la configuration actuelle (`{status.configured}` depuis {status.source})."
+                        )
+                st.markdown("\n".join(status_lines))
+
+                if missing_tools:
+                    st.error(
+                        "Installez le client PostgreSQL ou ajustez les variables d'environnement pour activer la sauvegarde et la restauration."
                     )
                 else:
-                    status_lines.append(
-                        f"- ❌ `{status.name}` introuvable avec la configuration actuelle "
-                        f"(`{status.configured}` depuis {status.source})."
-                    )
+                    st.success("Les utilitaires PostgreSQL requis sont disponibles.")
 
-            st.markdown("\n".join(status_lines))
-
-            if missing_tools:
-                st.error(
-                    "Installez le client PostgreSQL ou ajustez les variables d'environnement "
-                    "pour activer la sauvegarde et la restauration."
-                )
-            else:
-                st.success("Les utilitaires PostgreSQL requis sont disponibles.")
-
-            def _trigger_rerun():
-                try:
-                    st.rerun()
-                except AttributeError:
-                    st.experimental_rerun()
-
-            backup_directory = get_backup_directory()
-            st.caption(
-                "Les fichiers générés sont conservés dans le dossier suivant : "
-                f"`{backup_directory.resolve()}`"
-            )
-
-            feedback = st.session_state.pop("admin_backup_feedback", None)
-            if feedback:
-                level, message = feedback
-                display = getattr(st, level, st.info)
-                display(message)
-
-            st.text_input(
-                "Étiquette optionnelle pour la prochaine sauvegarde",
-                key="admin_backup_label",
-                placeholder="ex: apres_inventaire",
-                help="L'étiquette est ajoutée au nom du fichier pour faciliter l'identification.",
-            )
-
-            if st.button("Créer une sauvegarde maintenant", key="admin_backup_create"):
-                label = st.session_state.get("admin_backup_label", "").strip()
-                with st.spinner("Création de la sauvegarde en cours..."):
+            with workspace_panel(
+                "Sauvegardes base de données",
+                "Créez, restaurez ou supprimez les instantanés PostgreSQL.",
+                icon="💾",
+                accent="slate",
+            ):
+                def _trigger_rerun():
                     try:
-                        metadata = create_backup(
-                            label=label or None,
-                            database_url=DATABASE_URL,
-                        )
-                    except BackupError as exc:
-                        st.error(f"Échec de la sauvegarde : {exc}")
-                    else:
-                        st.session_state["admin_backup_label"] = ""
-                        st.session_state["admin_backup_feedback"] = (
-                            "success",
-                            f"Sauvegarde créée : {metadata.name} — {metadata.size_mb:.2f} Mo",
-                        )
-                        st.toast("Sauvegarde terminée", icon="💾")
-                        _trigger_rerun()
+                        st.rerun()
+                    except AttributeError:
+                        st.experimental_rerun()
 
-            backups = list_backups()
-            if not backups:
-                st.info("Aucune sauvegarde trouvée pour le moment.")
-            else:
-                st.warning(
-                    "La restauration réinitialise la base avec le contenu du fichier sélectionné.",
-                    icon="⚠️",
+                backup_directory = get_backup_directory()
+                st.caption(
+                    "Les fichiers générés sont conservés dans le dossier suivant : "
+                    f"`{backup_directory.resolve()}`"
                 )
-                for index, backup in enumerate(backups):
-                    row = st.container()
-                    with row:
-                        cols = st.columns([3.2, 1.6, 1.2, 1.5, 1.3, 1.1])
-                        cols[0].write(f"**{backup.name}**")
-                        cols[1].write(backup.created_at.astimezone().strftime("%d/%m/%Y %H:%M"))
-                        cols[2].write(f"{backup.size_mb:.2f} Mo")
-                        mime = "application/gzip" if backup.path.suffix == ".gz" else "application/sql"
-                        cols[3].download_button(
-                            "Télécharger",
-                            data=backup.path.read_bytes(),
-                            file_name=backup.name,
-                            mime=mime,
-                            key=f"backup_download_{index}",
-                            use_container_width=True,
-                        )
-                        if cols[4].button(
-                            "Restaurer",
-                            key=f"backup_restore_{index}",
-                            use_container_width=True,
-                        ):
-                            with st.spinner("Restauration de la base en cours..."):
+
+                feedback = st.session_state.pop("admin_backup_feedback", None)
+                if feedback:
+                    level, message = feedback
+                    display = getattr(st, level, st.info)
+                    display(message)
+
+                st.text_input(
+                    "Étiquette optionnelle pour la prochaine sauvegarde",
+                    key="admin_backup_label",
+                    placeholder="ex: apres_inventaire",
+                    help="L'étiquette est ajoutée au nom du fichier pour faciliter l'identification.",
+                )
+
+                if st.button("Créer une sauvegarde maintenant", key="admin_backup_create", type="primary"):
+                    label = st.session_state.get("admin_backup_label", "").strip()
+                    with st.spinner("Création de la sauvegarde en cours..."):
+                        try:
+                            metadata = create_backup(label=label or None, database_url=DATABASE_URL)
+                        except BackupError as exc:
+                            st.error(f"Échec de la sauvegarde : {exc}")
+                        else:
+                            st.session_state["admin_backup_label"] = ""
+                            st.session_state["admin_backup_feedback"] = (
+                                "success",
+                                f"Sauvegarde créée : {metadata.name} — {metadata.size_mb:.2f} Mo",
+                            )
+                            st.toast("Sauvegarde terminée", icon="💾")
+                            _trigger_rerun()
+
+                if not backups:
+                    st.info("Aucune sauvegarde trouvée pour le moment.")
+                else:
+                    st.warning(
+                        "La restauration réinitialise la base avec le contenu du fichier sélectionné.",
+                        icon="⚠️",
+                    )
+                    for index, backup in enumerate(backups):
+                        with st.container():
+                            cols = st.columns([3.2, 1.6, 1.2, 1.5, 1.3, 1.1])
+                            cols[0].write(f"**{backup.name}**")
+                            cols[1].write(backup.created_at.astimezone().strftime("%d/%m/%Y %H:%M"))
+                            cols[2].write(f"{backup.size_mb:.2f} Mo")
+                            mime = "application/gzip" if backup.path.suffix == ".gz" else "application/sql"
+                            cols[3].download_button(
+                                "Télécharger",
+                                data=backup.path.read_bytes(),
+                                file_name=backup.name,
+                                mime=mime,
+                                key=f"backup_download_{index}",
+                                use_container_width=True,
+                            )
+                            if cols[4].button(
+                                "Restaurer",
+                                key=f"backup_restore_{index}",
+                                use_container_width=True,
+                            ):
+                                with st.spinner("Restauration de la base en cours..."):
+                                    try:
+                                        restore_backup(backup.name, database_url=DATABASE_URL)
+                                    except BackupError as exc:
+                                        st.error(f"Échec de la restauration : {exc}")
+                                    else:
+                                        st.session_state["admin_backup_feedback"] = (
+                                            "success",
+                                            f"Base restaurée depuis {backup.name}.",
+                                        )
+                                        st.toast("Restauration effectuée", icon="✅")
+                                        _trigger_rerun()
+                            if cols[5].button(
+                                "Supprimer",
+                                key=f"backup_delete_{index}",
+                                use_container_width=True,
+                            ):
                                 try:
-                                    restore_backup(
-                                        backup.name,
-                                        database_url=DATABASE_URL,
-                                    )
+                                    delete_backup(backup.name)
                                 except BackupError as exc:
-                                    st.error(f"Échec de la restauration : {exc}")
+                                    st.error(f"Suppression impossible : {exc}")
                                 else:
                                     st.session_state["admin_backup_feedback"] = (
                                         "success",
-                                        f"Base restaurée depuis {backup.name}.",
+                                        f"Sauvegarde supprimée : {backup.name}",
                                     )
-                                    st.toast("Restauration effectuée", icon="✅")
+                                    st.toast("Fichier supprimé", icon="🗑️")
                                     _trigger_rerun()
-                        if cols[5].button(
-                            "Supprimer",
-                            key=f"backup_delete_{index}",
-                            use_container_width=True,
-                        ):
-                            try:
-                                delete_backup(backup.name)
-                            except BackupError as exc:
-                                st.error(f"Suppression impossible : {exc}")
-                            else:
-                                st.session_state["admin_backup_feedback"] = (
-                                    "success",
-                                    f"Sauvegarde supprimée : {backup.name}",
-                                )
-                                st.toast("Fichier supprimé", icon="🗑️")
-                                _trigger_rerun()
 
-            st.divider()
-            st.subheader("Aperçu des Tables Brutes & Diagnostics")
+            with workspace_panel(
+                "Diagnostics et tables",
+                "Consultez les aperçus de tables et vérifiez la cohérence des mouvements.",
+                icon="🧮",
+                accent="slate",
+            ):
+                tables_tab, diagnostics_tab = st.tabs(["Tables principales", "Diagnostic mouvements"])
 
-            tables_tab, diagnostics_tab = st.tabs(["Tables principales", "Diagnostic mouvements"])
-
-            with tables_tab:
-                counts_df = load_table_counts()
-                if counts_df.empty:
-                    st.info("Impossible d'afficher les statistiques de tables pour le moment.")
-                else:
-                    cols = st.columns(len(counts_df))
-                    for col, (_, row) in zip(cols, counts_df.iterrows()):
-                        col.metric(f"{row['table']}", f"{int(row['lignes'])} enregistrements")
-
-                for table_name in ["produits", "produits_barcodes", "mouvements_stock"]:
-                    preview = load_table_preview(table_name)
-                    if preview.empty:
-                        st.warning(f"La table {table_name} ne contient aucune ligne (ou est inaccessible).")
+                with tables_tab:
+                    counts_df = load_table_counts()
+                    if counts_df.empty:
+                        st.info("Impossible d'afficher les statistiques de tables pour le moment.")
                     else:
-                        st.expander(
-                            f"Table '{table_name}' — aperçu des {len(preview)} dernières lignes",
-                            expanded=False,
-                        ).dataframe(preview, use_container_width=True, hide_index=True)
+                        cols = st.columns(len(counts_df))
+                        for col, (_, row) in zip(cols, counts_df.iterrows()):
+                            col.metric(f"{row['table']}", f"{int(row['lignes'])} enregistrements")
 
-            with diagnostics_tab:
-                st.caption("Comparaison entre le stock calculé via les mouvements et le stock_actuel matérialisé.")
-                diag_df = load_stock_diagnostics()
-                if diag_df.empty:
-                    st.success("Aucun écart détecté entre les mouvements et le stock matérialisé.")
-                else:
-                    st.warning("Des écarts nécessitent une vérification manuelle.")
-                    display_df = diag_df.copy()
-                    display_df.columns = ["ID", "Produit", "Stock actuel", "Stock calculé", "Écart"]
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    for table_name in ["produits", "produits_barcodes", "mouvements_stock"]:
+                        preview = load_table_preview(table_name)
+                        if preview.empty:
+                            st.warning(f"La table {table_name} ne contient aucune ligne (ou est inaccessible).")
+                        else:
+                            st.expander(
+                                f"Table '{table_name}' — aperçu des {len(preview)} dernières lignes",
+                                expanded=False,
+                            ).dataframe(preview, use_container_width=True, hide_index=True)
 
-                st.divider()
-                st.caption("20 derniers mouvements toutes sources confondues.")
-                diag_movements = load_recent_movements(limit=20, product_id=None)
-                if diag_movements.empty:
-                    st.info("Aucun mouvement enregistré.")
-                else:
-                    diag_movements = diag_movements.copy()
-                    diag_movements["date_mvt"] = pd.to_datetime(diag_movements["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
-                    st.dataframe(diag_movements, use_container_width=True, hide_index=True)
-        else:
-            st.error("Accès refusé. Seuls les administrateurs peuvent accéder à l'onglet Maintenance (Admin).")
+                with diagnostics_tab:
+                    st.caption("Comparaison entre le stock calculé via les mouvements et le stock_actuel matérialisé.")
+                    diag_df = load_stock_diagnostics()
+                    if diag_df.empty:
+                        st.success("Aucun écart détecté entre les mouvements et le stock matérialisé.")
+                    else:
+                        st.warning("Des écarts nécessitent une vérification manuelle.")
+                        display_df = diag_df.copy()
+                        display_df.columns = ["ID", "Produit", "Stock actuel", "Stock calculé", "Écart"]
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+                    st.divider()
+                    st.caption("20 derniers mouvements toutes sources confondues.")
+                    diag_movements = load_recent_movements(limit=20, product_id=None)
+                    if diag_movements.empty:
+                        st.info("Aucun mouvement enregistré.")
+                    else:
+                        diag_movements = diag_movements.copy()
+                        diag_movements["date_mvt"] = pd.to_datetime(diag_movements["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
+                        st.dataframe(diag_movements, use_container_width=True, hide_index=True)
 
 # ==============================================================================
 # --- FIN DU FLUX PRINCIPAL (Contrôle d'accès) ---
