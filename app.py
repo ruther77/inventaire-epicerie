@@ -18,6 +18,8 @@ from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 from backup_manager import (
     BackupError,
     BinaryStatus,
@@ -1936,9 +1938,7 @@ if authentication_status:
             st.info("Veuillez ajouter des produits au catalogue d'abord.")
             st.stop()
 
-        product_options = cached_product_options()
-        product_names = list(product_options.keys())
-        filter_products = ["Tous les produits"] + product_names
+    # ---------------- Catalogue ----------------
 
         hero_placeholder = st.container()
 
