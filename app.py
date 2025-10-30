@@ -4,6 +4,8 @@ import os
 import io
 import math
 import re
+import json
+from html import escape
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -13,6 +15,8 @@ from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 from backup_manager import (
     BackupError,
     BinaryStatus,
@@ -106,6 +110,206 @@ def _clear_cart() -> None:
 
     st.session_state["cart"] = []
 
+
+
+
+@st.cache_data(ttl=180)
+def load_customer_catalog() -> pd.DataFrame:
+    """Charge un catalogue orienté client avec informations agrégées."""
+
+    sql_query = """
+        SELECT
+            p.id,
+            p.nom,
+            p.categorie,
+            COALESCE(p.prix_vente, 0) AS prix_vente,
+            COALESCE(p.stock_actuel, 0) AS stock_actuel,
+            COALESCE(tv.qte_sorties_30j, 0) AS ventes_30j,
+            barcode.code AS ean
+        FROM produits p
+        LEFT JOIN v_top_ventes_30j tv ON tv.id = p.id
+        LEFT JOIN LATERAL (
+            SELECT pb.code
+            FROM produits_barcodes pb
+            WHERE pb.produit_id = p.id
+            ORDER BY pb.is_principal DESC, pb.created_at ASC, pb.id ASC
+            LIMIT 1
+        ) AS barcode ON TRUE
+        WHERE p.actif = TRUE
+        ORDER BY p.categorie, p.nom;
+    """
+
+    try:
+        df = query_df(sql_query)
+    except Exception as exc:
+        st.error(
+            "Impossible de charger le catalogue client. Vérifiez que les vues SQL sont déployées (v_top_ventes_30j).\n"
+            f"Détail: {exc}"
+        )
+        return pd.DataFrame(columns=["id", "nom", "categorie", "prix_vente", "stock_actuel", "ventes_30j"])
+
+    if df.empty:
+        return df.assign(
+            categorie=[], prix_vente=[], stock_actuel=[], ventes_30j=[]
+        )
+
+    expected_cols = {"categorie", "prix_vente", "stock_actuel", "ventes_30j"}
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    numeric_cols = ["prix_vente", "stock_actuel", "ventes_30j"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    if "id" in df.columns:
+        df["id"] = pd.to_numeric(df["id"], errors="coerce").fillna(0).astype(int)
+
+    if "categorie" in df.columns:
+        df["categorie"] = df["categorie"].fillna("Autre")
+    else:
+        df["categorie"] = "Autre"
+
+    if "ean" in df.columns:
+        df["ean"] = df["ean"].fillna("").astype(str)
+    else:
+        df["ean"] = ""
+
+    return df
+
+
+@st.cache_data(ttl=120)
+def load_trending_products(limit: int = 6) -> pd.DataFrame:
+    """Retourne les produits les plus vendus récemment."""
+
+    try:
+        safe_limit = max(1, int(limit))
+    except (TypeError, ValueError):
+        safe_limit = 6
+
+    catalog_df = load_customer_catalog()
+
+    if catalog_df.empty:
+        return catalog_df
+
+    ranked = catalog_df.sort_values(
+        by=["ventes_30j", "stock_actuel", "prix_vente"],
+        ascending=[False, False, False],
+    ).head(safe_limit)
+
+    return ranked.reset_index(drop=True)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _fetch_product_image_url(ean: str | None) -> str | None:
+    """Retourne une URL d'image OpenFoodFacts pour un code-barres donné."""
+
+    if not ean:
+        return None
+
+    sanitized = re.sub(r"\D", "", str(ean)).strip()
+    if len(sanitized) < 8:
+        return None
+
+    api_url = f"https://world.openfoodfacts.org/api/v0/product/{sanitized}.json"
+    request = Request(api_url, headers={"User-Agent": "InventaireEpicerie/1.0 (+streamlit)"})
+
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.load(response)
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError, ValueError):
+        return None
+
+    if not isinstance(payload, dict) or payload.get("status") != 1:
+        return None
+
+    product = payload.get("product") or {}
+    preferred_keys = (
+        "image_front_small_url",
+        "image_small_url",
+        "image_front_url",
+        "image_url",
+    )
+
+    for key in preferred_keys:
+        url = product.get(key)
+        if url:
+            return str(url)
+
+    return None
+
+
+def _build_product_card(product: dict[str, Any]) -> str:
+    """Construit un bloc HTML pour une carte produit de la vitrine."""
+
+    name = escape(str(product.get("nom", "")))
+    category = escape(str(product.get("categorie", "Autre")))
+    price = float(product.get("prix_vente") or 0.0)
+    stock = float(product.get("stock_actuel") or 0.0)
+    ventes = float(product.get("ventes_30j") or 0.0)
+
+    if stock <= 0:
+        stock_label = "Rupture"
+        stock_class = "is-danger"
+    elif stock < 5:
+        stock_label = "Stock bas"
+        stock_class = "is-warning"
+    else:
+        stock_label = "Disponible"
+        stock_class = "is-success"
+
+    ean = product.get("ean")
+    image_url = _fetch_product_image_url(ean)
+
+    if image_url:
+        media_html = (
+            "<div class=\"catalog-card__media\">"
+            f"<img src=\"{escape(str(image_url), quote=True)}\" alt=\"Visuel produit {name}\" "
+            "loading=\"lazy\" decoding=\"async\"/>"
+            "</div>"
+        )
+    else:
+        placeholder_initial = escape((str(product.get("nom", ""))[:1] or "#").upper())
+        media_html = (
+            "<div class=\"catalog-card__media catalog-card__media--placeholder\" "
+            "aria-label=\"Visuel indisponible\">"
+            f"<span>{placeholder_initial}</span>"
+            "</div>"
+        )
+
+    return f"""
+    <div class="catalog-card">
+        {media_html}
+        <div class="catalog-card__head">
+            <span class="catalog-card__category">{category}</span>
+            <span class="catalog-card__stock {stock_class}">{stock_label}</span>
+        </div>
+        <h4 class="catalog-card__title">{name}</h4>
+        <div class="catalog-card__price">{price:,.2f} €</div>
+        <div class="catalog-card__meta">
+            <span>Stock: {stock:,.0f}</span>
+            <span>Ventes 30j: {ventes:,.0f}</span>
+        </div>
+    </div>
+    """
+
+
+def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
+    """Affiche une grille responsive de cartes produit."""
+
+    if df.empty:
+        st.info("Aucun produit à afficher pour le moment.")
+        return
+
+    records = df.to_dict("records")
+    columns = max(1, int(columns))
+
+    for start in range(0, len(records), columns):
+        cols = st.columns(columns)
+        for col, product in zip(cols, records[start:start + columns]):
+            with col:
+                card_html = _build_product_card(product)
+                st.markdown(card_html, unsafe_allow_html=True)
 
 def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     """Construit un DataFrame propre à partir des éléments du panier."""
@@ -551,6 +755,47 @@ def load_stock_diagnostics() -> pd.DataFrame:
         st.error(f"Impossible de calculer le diagnostic stock/mouvements: {exc}")
         return pd.DataFrame(columns=["id", "nom", "stock_actuel", "stock_calcule", "ecart"])
 
+
+# --- Registre centralisé pour l'invalidation des caches ---
+CACHE_REGISTRY: dict[str, Any] = {}
+
+
+def register_cache(name: str, func) -> None:
+    """Enregistre une fonction cacheable pour l'invalidation orchestrée."""
+
+    CACHE_REGISTRY[name] = func
+
+
+def invalidate_data_caches(*names: str) -> None:
+    """Vide les caches ciblés afin de garder les vues synchronisées après une mise à jour."""
+
+    if not names:
+        names = tuple(CACHE_REGISTRY.keys())
+
+    for cache_name in names:
+        cache_func = CACHE_REGISTRY.get(cache_name)
+        if cache_func is None:
+            continue
+        try:
+            cache_func.clear()
+        except Exception as exc:
+            st.warning(
+                f"Impossible de vider le cache '{cache_name}'. Détail: {exc}",
+                icon="⚠️",
+            )
+
+
+# Inscription des caches existants
+register_cache("catalog", load_customer_catalog)
+register_cache("trending", load_trending_products)
+register_cache("product_options", cached_product_options)
+register_cache("products_list", load_products_list)
+register_cache("movement_timeseries", load_movement_timeseries)
+register_cache("recent_movements", load_recent_movements)
+register_cache("table_preview", load_table_preview)
+register_cache("table_counts", load_table_counts)
+register_cache("stock_diagnostics", load_stock_diagnostics)
+
 # --- Classe Barcode Detector (pour le Scanner) ---
 class BarcodeDetector(VideoTransformerBase):
     """Détecte les codes-barres dans chaque frame vidéo. Déclenche le Rerun Streamlit."""
@@ -598,6 +843,7 @@ if authentication_status:
 
     # Définition des onglets fonctionnels de l'application
     (
+        showcase_tab,
         pos_tab,
         catalog_tab,
         mvt_tab,
@@ -607,6 +853,7 @@ if authentication_status:
         import_tab,
         admin_tab,
     ) = st.tabs([
+        "Vitrine",
         "Vente (PoS)",
         "Catalogue",
         "Stock & Mvt",
@@ -616,9 +863,355 @@ if authentication_status:
         "Importation",
         "Maintenance (Admin)",
     ])
-    
+
     # Chargement des données (en cache)
     df_products = load_products_list()
+
+
+    # ---------------- Vitrine ----------------
+    with showcase_tab:
+        st.header("Vitrine Produits — vue client")
+
+        catalog_df = load_customer_catalog()
+
+        if catalog_df.empty:
+            st.info("Aucun produit actif n'est actuellement disponible.")
+        else:
+            total_products = int(catalog_df["id"].nunique())
+            total_categories = int(catalog_df["categorie"].nunique())
+            total_stock = float(catalog_df["stock_actuel"].sum())
+            total_sales = float(catalog_df["ventes_30j"].sum())
+
+            stock_value = float((catalog_df["stock_actuel"] * catalog_df["prix_vente"]).sum())
+            avg_price = float(catalog_df["prix_vente"].mean()) if total_products else 0.0
+            potential_sales = float((catalog_df["ventes_30j"] * catalog_df["prix_vente"]).sum())
+            default_low_stock_threshold = 5
+            low_stock_count = int((catalog_df["stock_actuel"] <= default_low_stock_threshold).sum())
+
+            def _format_number(value: float, decimals: int = 0, suffix: str = "") -> str:
+                formatted = f"{value:,.{decimals}f}".replace(",", " ")
+                return f"{formatted}{suffix}".strip()
+
+            st.markdown(
+                f"""
+                <section class="catalog-hero catalog-hero--sunset">
+                    <div class="catalog-hero__content">
+                        <p class="catalog-hero__eyebrow">Expérience boutique</p>
+                        <h2>Animez votre vitrine digitale avec des insights temps réel.</h2>
+                        <p>Visualisez la vitalité de vos rayons, identifiez les alertes prioritaires et préparez vos opérations commerciales en toute confiance.</p>
+                        <div class="catalog-hero__actions">
+                            <span class="catalog-hero__chip">Nouveautés</span>
+                            <span class="catalog-hero__chip catalog-hero__chip--outline">{total_products} références suivies</span>
+                        </div>
+                    </div>
+                    <div class="catalog-hero__glance">
+                        <div class="hero-stat">
+                            <span class="hero-stat__label">Valeur stock</span>
+                            <span class="hero-stat__value">{_format_number(stock_value)} €</span>
+                        </div>
+                        <div class="hero-stat">
+                            <span class="hero-stat__label">Potentiel 30&nbsp;j</span>
+                            <span class="hero-stat__value">{_format_number(potential_sales)} €</span>
+                        </div>
+                        <div class="hero-stat">
+                            <span class="hero-stat__label">Alertes actives</span>
+                            <span class="hero-stat__value hero-stat__value--accent">{low_stock_count}</span>
+                        </div>
+                    </div>
+                </section>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            metrics_cols = st.columns(4)
+            metrics_cols[0].metric("Produits actifs", f"{total_products}")
+            metrics_cols[1].metric("Catégories", f"{total_categories}")
+            metrics_cols[2].metric("Stock disponible", _format_number(total_stock))
+            metrics_cols[3].metric("Ventes 30j", _format_number(total_sales))
+
+            insight_tab, category_tab, alerts_tab = st.tabs([
+                "Vue synthèse",
+                "Catégories & tendances",
+                "Alertes & opportunités",
+            ])
+
+            with insight_tab:
+                insight_cols = st.columns(3)
+                insight_cols[0].metric(
+                    "Valeur de stock estimée",
+                    f"{_format_number(stock_value)} €",
+                )
+                insight_cols[1].metric(
+                    "Prix moyen au catalogue",
+                    f"{_format_number(avg_price, decimals=2)} €",
+                )
+                insight_cols[2].metric(
+                    "Produits en alerte",
+                    f"{low_stock_count}",
+                    delta=f"{(low_stock_count / total_products * 100):.0f}% du catalogue" if total_products else None,
+                )
+
+                top_sales_df = (
+                    catalog_df.sort_values(by="ventes_30j", ascending=False)
+                    .head(10)
+                    .assign(ventes_30j=lambda df_: df_["ventes_30j"].round(0))
+                )
+                if not top_sales_df.empty:
+                    top_sales_chart = px.bar(
+                        top_sales_df,
+                        x="nom",
+                        y="ventes_30j",
+                        color="categorie",
+                        title="Top 10 des ventes (30 derniers jours)",
+                        labels={"nom": "Produit", "ventes_30j": "Ventes (u)", "categorie": "Catégorie"},
+                    )
+                    top_sales_chart.update_layout(margin=dict(l=20, r=20, t=60, b=20))
+                    st.plotly_chart(top_sales_chart, use_container_width=True)
+                else:
+                    st.caption("Aucune donnée de vente disponible pour le moment.")
+
+                trending_limit = st.slider(
+                    "Nombre de produits mis en avant",
+                    min_value=3,
+                    max_value=12,
+                    step=3,
+                    value=6,
+                    key="showcase_trending_limit",
+                )
+                columns_count = st.slider(
+                    "Produits par rangée",
+                    min_value=1,
+                    max_value=4,
+                    value=3,
+                    key="showcase_trending_columns",
+                )
+
+                trending_df = load_trending_products(limit=trending_limit)
+                st.subheader("Produits populaires")
+                if trending_df.empty or trending_df["ventes_30j"].sum() <= 0:
+                    st.caption("Les données de vente récentes ne sont pas encore disponibles.")
+                else:
+                    _render_product_cards(trending_df, columns=columns_count)
+
+            with category_tab:
+                category_summary = (
+                    catalog_df.groupby("categorie")
+                    .agg(
+                        produits=("id", "count"),
+                        stock_total=("stock_actuel", "sum"),
+                        ventes_30j=("ventes_30j", "sum"),
+                        panier_moyen=("prix_vente", "mean"),
+                    )
+                    .reset_index()
+                    .sort_values(by=["ventes_30j", "stock_total"], ascending=False)
+                )
+
+                if not category_summary.empty:
+                    category_fig = px.bar(
+                        category_summary,
+                        x="categorie",
+                        y="ventes_30j",
+                        color="stock_total",
+                        color_continuous_scale="Sunset",
+                        title="Dynamiques par catégorie",
+                        labels={
+                            "categorie": "Catégorie",
+                            "ventes_30j": "Ventes (30 j)",
+                            "stock_total": "Stock total",
+                        },
+                    )
+                    category_fig.update_layout(coloraxis_showscale=False, margin=dict(l=20, r=20, t=60, b=20))
+                    st.plotly_chart(category_fig, use_container_width=True)
+
+                st.dataframe(
+                    category_summary,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "categorie": "Catégorie",
+                        "produits": st.column_config.NumberColumn("Produits"),
+                        "stock_total": st.column_config.NumberColumn("Stock total", format="%.0f"),
+                        "ventes_30j": st.column_config.NumberColumn("Ventes 30j", format="%.0f"),
+                        "panier_moyen": st.column_config.NumberColumn("Prix moyen", format="%.2f €"),
+                    },
+                )
+
+            with alerts_tab:
+                alert_cols = st.columns([1, 1, 1.2])
+                threshold = alert_cols[0].slider(
+                    "Seuil d'alerte stock",
+                    min_value=0,
+                    max_value=20,
+                    value=default_low_stock_threshold,
+                    key="showcase_alert_threshold",
+                )
+                recent_focus = alert_cols[1].slider(
+                    "Minimum ventes 30 j",
+                    min_value=0,
+                    max_value=20,
+                    value=1,
+                    key="showcase_alert_sales",
+                )
+                alert_cols[2].metric(
+                    "Produits critiques",
+                    f"{int((catalog_df['stock_actuel'] <= threshold).sum())}",
+                )
+
+                low_stock_df = catalog_df[catalog_df["stock_actuel"] <= threshold].copy()
+                low_stock_df = low_stock_df.sort_values(by=["stock_actuel", "ventes_30j"], ascending=[True, False])
+
+                if low_stock_df.empty:
+                    st.success("Aucune alerte critique sur le seuil sélectionné. 🎉")
+                else:
+                    st.subheader("Stocks à sécuriser")
+                    st.dataframe(
+                        low_stock_df[["nom", "categorie", "stock_actuel", "ventes_30j"]],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "nom": "Produit",
+                            "categorie": "Catégorie",
+                            "stock_actuel": st.column_config.NumberColumn("Stock", format="%.0f"),
+                            "ventes_30j": st.column_config.NumberColumn("Ventes 30j", format="%.0f"),
+                        },
+                    )
+
+                slow_movers = catalog_df[
+                    (catalog_df["stock_actuel"] > threshold)
+                    & (catalog_df["ventes_30j"] <= recent_focus)
+                ].copy()
+                slow_movers = slow_movers.sort_values(by="stock_actuel", ascending=False).head(10)
+                if not slow_movers.empty:
+                    st.subheader("Produits à animer (rotation lente)")
+                    st.dataframe(
+                        slow_movers[["nom", "categorie", "stock_actuel", "ventes_30j", "prix_vente"]],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "nom": "Produit",
+                            "categorie": "Catégorie",
+                            "stock_actuel": st.column_config.NumberColumn("Stock", format="%.0f"),
+                            "ventes_30j": st.column_config.NumberColumn("Ventes 30j", format="%.0f"),
+                            "prix_vente": st.column_config.NumberColumn("Prix", format="%.2f €"),
+                        },
+                    )
+
+            st.subheader("Explorer le catalogue")
+
+            filter_col1, filter_col2, filter_col3 = st.columns([2.4, 2.4, 1.6])
+            categories = ["Toutes"] + sorted(catalog_df["categorie"].unique())
+            selected_category = filter_col1.selectbox("Catégorie", categories)
+            search_term = filter_col2.text_input("Recherche produit", placeholder="Nom, catégorie...")
+            sort_options = {
+                "ventes": "Popularité (ventes 30j)",
+                "stock": "Stock disponible",
+                "prix": "Prix croissant",
+            }
+            sort_key = filter_col3.selectbox(
+                "Ordre d'affichage",
+                options=list(sort_options.keys()),
+                format_func=sort_options.get,
+                index=0,
+            )
+
+            extra_filters = st.columns([2, 1, 1])
+            max_preview = extra_filters[0].slider(
+                "Nombre de résultats affichés",
+                min_value=6,
+                max_value=60,
+                step=6,
+                value=24,
+                key="catalog_preview_limit",
+            )
+            card_columns = extra_filters[1].slider(
+                "Cartes par ligne",
+                min_value=1,
+                max_value=4,
+                value=3,
+                key="catalog_preview_columns",
+            )
+            show_data_table = extra_filters[2].checkbox(
+                "Voir le tableau",
+                value=True,
+                key="catalog_show_table",
+            )
+
+            filtered_df = catalog_df.copy()
+
+            if selected_category != "Toutes":
+                filtered_df = filtered_df[filtered_df["categorie"] == selected_category]
+
+            if search_term:
+                filtered_df = filtered_df[
+                    filtered_df["nom"].str.contains(search_term, case=False, na=False)
+                    | filtered_df["categorie"].str.contains(search_term, case=False, na=False)
+                ]
+
+            if sort_key == "ventes":
+                filtered_df = filtered_df.sort_values(by="ventes_30j", ascending=False)
+            elif sort_key == "stock":
+                filtered_df = filtered_df.sort_values(by="stock_actuel", ascending=False)
+            else:
+                filtered_df = filtered_df.sort_values(by="prix_vente", ascending=True)
+
+            filtered_df = filtered_df.reset_index(drop=True)
+            preview_df = filtered_df.head(max_preview)
+
+            st.caption(
+                f"{len(filtered_df)} produit(s) correspondant(s). Aperçu des {len(preview_df)} premiers résultats."
+            )
+            _render_product_cards(
+                preview_df,
+                columns=card_columns if len(preview_df) >= card_columns else max(len(preview_df), 1),
+            )
+
+            if show_data_table and not filtered_df.empty:
+                st.dataframe(
+                    filtered_df[["nom", "categorie", "prix_vente", "stock_actuel", "ventes_30j", "ean"]],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "nom": "Produit",
+                        "categorie": "Catégorie",
+                        "prix_vente": st.column_config.NumberColumn("Prix", format="%.2f €"),
+                        "stock_actuel": st.column_config.NumberColumn("Stock", format="%.0f"),
+                        "ventes_30j": st.column_config.NumberColumn("Ventes 30j", format="%.0f"),
+                        "ean": st.column_config.TextColumn("EAN"),
+                    },
+                )
+
+            with st.expander("Consulter une fiche produit détaillée"):
+                options = {
+                    f"{row.nom} — {row.categorie}": int(row.id)
+                    for row in catalog_df.itertuples()
+                }
+
+                if not options:
+                    st.info("Aucun produit n'est disponible pour l'instant.")
+                else:
+                    selected_detail = st.selectbox(
+                        "Produit",
+                        options=list(options.keys()),
+                        index=0,
+                    )
+
+                    detail_id = options[selected_detail]
+                    detail_row = catalog_df[catalog_df["id"] == detail_id].iloc[0]
+                    ean_value = str(detail_row.get("ean", "")).strip()
+                    st.markdown(
+                        f"**Nom :** {detail_row['nom']}  \n"
+                        f"**Catégorie :** {detail_row['categorie']}  \n"
+                        f"**Prix de vente :** {detail_row['prix_vente']:.2f} €  \n"
+                        f"**Stock disponible :** {detail_row['stock_actuel']:.0f}  \n"
+                        f"**Ventes (30 jours) :** {detail_row['ventes_30j']:.0f}  \n"
+                        f"**EAN :** {ean_value or '—'}"
+                    )
+                    if ean_value:
+                        detail_image = _fetch_product_image_url(ean_value)
+                        if detail_image:
+                            st.image(detail_image, caption=f"EAN {ean_value}", width=240)
+                        else:
+                            st.caption("Aucun visuel trouvé pour ce code-barres.")
 
 
     # ---------------- Vente (PoS) ----------------
@@ -679,12 +1272,16 @@ if authentication_status:
                     if sale_ok:
                         st.success("Vente finalisée et stock mis à jour ✅")
                         _clear_cart()
-                        load_products_list.clear()
-                        cached_product_options.clear()
-                        load_movement_timeseries.clear()
-                        load_recent_movements.clear()
-                        load_table_counts.clear()
-                        load_table_preview.clear()
+                        invalidate_data_caches(
+                            "products_list",
+                            "catalog",
+                            "trending",
+                            "product_options",
+                            "movement_timeseries",
+                            "recent_movements",
+                            "table_counts",
+                            "table_preview",
+                        )
                         st.rerun()
                     else:
                         error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
@@ -847,12 +1444,16 @@ if authentication_status:
                                     updates_count += 1
 
                             st.success(f"{updates_count} produit(s) mis à jour avec succès!")
-                            load_products_list.clear()
-                            cached_product_options.clear()
-                            load_movement_timeseries.clear()
-                            load_recent_movements.clear()
-                            load_table_counts.clear()
-                            load_table_preview.clear()
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "movement_timeseries",
+                                "recent_movements",
+                                "table_counts",
+                                "table_preview",
+                            )
                             st.rerun()
                         else:
                             st.info("Aucune modification n'a été détectée dans le tableau.")
@@ -872,12 +1473,16 @@ if authentication_status:
                         try:
                             exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
                             st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
-                            load_products_list.clear()
-                            cached_product_options.clear()
-                            load_movement_timeseries.clear()
-                            load_recent_movements.clear()
-                            load_table_counts.clear()
-                            load_table_preview.clear()
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "movement_timeseries",
+                                "recent_movements",
+                                "table_counts",
+                                "table_preview",
+                            )
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
@@ -918,11 +1523,15 @@ if authentication_status:
                                             barcode_outcome["skipped"] += 1
 
                             st.success(f"Produit '{new_nom}' ajouté avec succès!")
-                            load_products_list.clear()
-                            cached_product_options.clear()
-                            load_table_preview.clear()
-                            load_recent_movements.clear()
-                            load_table_counts.clear()
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "table_preview",
+                                "recent_movements",
+                                "table_counts",
+                            )
 
                             if new_codes:
                                 st.caption(
@@ -1106,12 +1715,16 @@ if authentication_status:
                                 st.success(
                                     f"Ajustement réussi. Le stock de {selected_product_name} est maintenant à {target_stock:.2f} unités."
                                 )
-                                load_products_list.clear()
-                                cached_product_options.clear()
-                                load_movement_timeseries.clear()
-                                load_recent_movements.clear()
-                                load_table_counts.clear()
-                                load_table_preview.clear()
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
@@ -1363,12 +1976,16 @@ if authentication_status:
                     with st.spinner("Import des produits en cours..."):
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
-                    load_products_list.clear()
-                    cached_product_options.clear()
-                    load_movement_timeseries.clear()
-                    load_recent_movements.clear()
-                    load_table_counts.clear()
-                    load_table_preview.clear()
+                    invalidate_data_caches(
+                        "products_list",
+                        "catalog",
+                        "trending",
+                        "product_options",
+                        "movement_timeseries",
+                        "recent_movements",
+                        "table_counts",
+                        "table_preview",
+                    )
                     st.success("Importation terminée. Consultez le résumé ci-dessous.")
 
         summary = st.session_state.get("invoice_import_summary")
@@ -1499,12 +2116,16 @@ if authentication_status:
                     with st.spinner("Import des produits en cours..."):
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
-                    load_products_list.clear()
-                    cached_product_options.clear()
-                    load_movement_timeseries.clear()
-                    load_recent_movements.clear()
-                    load_table_counts.clear()
-                    load_table_preview.clear()
+                    invalidate_data_caches(
+                        "products_list",
+                        "catalog",
+                        "trending",
+                        "product_options",
+                        "movement_timeseries",
+                        "recent_movements",
+                        "table_counts",
+                        "table_preview",
+                    )
                     st.success("Importation terminée. Consultez le résumé ci-dessous.")
 
         summary = st.session_state.get("invoice_import_summary")
@@ -1748,12 +2369,16 @@ if authentication_status:
                         else:
                             st.success("Toutes les lignes valides ont été importées avec succès.")
 
-                        load_products_list.clear()
-                        cached_product_options.clear()
-                        load_movement_timeseries.clear()
-                        load_recent_movements.clear()
-                        load_table_counts.clear()
-                        load_table_preview.clear()
+                        invalidate_data_caches(
+                            "products_list",
+                            "catalog",
+                            "trending",
+                            "product_options",
+                            "movement_timeseries",
+                            "recent_movements",
+                            "table_counts",
+                            "table_preview",
+                        )
                         st.rerun()
             else:
                 st.info("Téléchargez une facture ou collez le texte brut pour lancer l'extraction.")
@@ -1845,12 +2470,16 @@ if authentication_status:
                             else:
                                 st.success("Toutes les lignes valides ont été importées avec succès.")
 
-                            load_products_list.clear()
-                            cached_product_options.clear()
-                            load_movement_timeseries.clear()
-                            load_recent_movements.clear()
-                            load_table_counts.clear()
-                            load_table_preview.clear()
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "movement_timeseries",
+                                "recent_movements",
+                                "table_counts",
+                                "table_preview",
+                            )
                             st.rerun()
 
                 except Exception as e:
