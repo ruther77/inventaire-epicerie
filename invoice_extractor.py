@@ -8,7 +8,32 @@ import pandas as pd
 from PyPDF2 import PdfReader
 from docx import Document
 
-DEFAULT_TVA_CODE_MAP: dict[str, float] = {"D": 20.0, "P": 5.5}
+# Mapping par défaut des codes TVA METRO connus.
+#
+# Les codes sont documentés par METRO et couvrent l'ensemble des taux
+# appliqués sur les factures françaises :
+#
+# - 20 % (taux normal)      : A, C, D, F, J, K
+# - 10 % (taux intermédiaire): B, H, N, T
+# - 5,5 % (taux réduit)     : E, I, L, P, Q, R, S, U, V, W, Y
+# - 2,1 % (taux particulier): M
+# - 0 % (exonérations)      : G, O, X, Z
+#
+# Un code inconnu tombera sur ``default_tva`` mais il est toujours possible
+# de surcharger ce mapping via ``tva_map`` lors de l'appel.
+_METRO_TVA_CODE_GROUPS: tuple[tuple[float, tuple[str, ...]], ...] = (
+    (20.0, ("A", "C", "D", "F", "J", "K")),
+    (10.0, ("B", "H", "N", "T")),
+    (5.5, ("E", "I", "L", "P", "Q", "R", "S", "U", "V", "W", "Y")),
+    (2.1, ("M",)),
+    (0.0, ("G", "O", "X", "Z")),
+)
+
+DEFAULT_TVA_CODE_MAP: dict[str, float] = {
+    code: rate
+    for rate, codes in _METRO_TVA_CODE_GROUPS
+    for code in codes
+}
 
 def clean_data(value):
     """Nettoie une valeur numérique (remplace la virgule par le point)."""
