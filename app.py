@@ -4,6 +4,7 @@ import os
 import io
 import math
 import re
+from html import escape
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -106,6 +107,134 @@ def _clear_cart() -> None:
 
     st.session_state["cart"] = []
 
+
+
+
+@st.cache_data(ttl=180)
+def load_customer_catalog() -> pd.DataFrame:
+    """Charge un catalogue orienté client avec informations agrégées."""
+
+    sql_query = """
+        SELECT
+            p.id,
+            p.nom,
+            p.categorie,
+            COALESCE(p.prix_vente, 0) AS prix_vente,
+            COALESCE(p.stock_actuel, 0) AS stock_actuel,
+            COALESCE(tv.qte_sorties_30j, 0) AS ventes_30j
+        FROM produits p
+        LEFT JOIN v_top_ventes_30j tv ON tv.id = p.id
+        WHERE p.actif = TRUE
+        ORDER BY p.categorie, p.nom;
+    """
+
+    try:
+        df = query_df(sql_query)
+    except Exception as exc:
+        st.error(
+            "Impossible de charger le catalogue client. Vérifiez que les vues SQL sont déployées (v_top_ventes_30j).\n"
+            f"Détail: {exc}"
+        )
+        return pd.DataFrame(columns=["id", "nom", "categorie", "prix_vente", "stock_actuel", "ventes_30j"])
+
+    if df.empty:
+        return df.assign(
+            categorie=[], prix_vente=[], stock_actuel=[], ventes_30j=[]
+        )
+
+    expected_cols = {"categorie", "prix_vente", "stock_actuel", "ventes_30j"}
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    numeric_cols = ["prix_vente", "stock_actuel", "ventes_30j"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    if "id" in df.columns:
+        df["id"] = pd.to_numeric(df["id"], errors="coerce").fillna(0).astype(int)
+
+    if "categorie" in df.columns:
+        df["categorie"] = df["categorie"].fillna("Autre")
+    else:
+        df["categorie"] = "Autre"
+
+    return df
+
+
+@st.cache_data(ttl=120)
+def load_trending_products(limit: int = 6) -> pd.DataFrame:
+    """Retourne les produits les plus vendus récemment."""
+
+    try:
+        safe_limit = max(1, int(limit))
+    except (TypeError, ValueError):
+        safe_limit = 6
+
+    catalog_df = load_customer_catalog()
+
+    if catalog_df.empty:
+        return catalog_df
+
+    ranked = catalog_df.sort_values(
+        by=["ventes_30j", "stock_actuel", "prix_vente"],
+        ascending=[False, False, False],
+    ).head(safe_limit)
+
+    return ranked.reset_index(drop=True)
+
+
+def _build_product_card(product: dict[str, Any]) -> str:
+    """Construit un bloc HTML pour une carte produit de la vitrine."""
+
+    name = escape(str(product.get("nom", "")))
+    category = escape(str(product.get("categorie", "Autre")))
+    price = float(product.get("prix_vente") or 0.0)
+    stock = float(product.get("stock_actuel") or 0.0)
+    ventes = float(product.get("ventes_30j") or 0.0)
+
+    if stock <= 0:
+        stock_label = "Rupture"
+        stock_class = "is-danger"
+    elif stock < 5:
+        stock_label = "Stock bas"
+        stock_class = "is-warning"
+    else:
+        stock_label = "Disponible"
+        stock_class = "is-success"
+
+    return f"""
+    <div class="catalog-card">
+        <div class="catalog-card__head">
+            <span class="catalog-card__category">{category}</span>
+            <span class="catalog-card__stock {stock_class}">{stock_label}</span>
+        </div>
+        <h4 class="catalog-card__title">{name}</h4>
+        <div class="catalog-card__price">{price:,.2f} €</div>
+        <div class="catalog-card__meta">
+            <span>Stock: {stock:,.0f}</span>
+            <span>Ventes 30j: {ventes:,.0f}</span>
+        </div>
+    </div>
+    """
+
+
+def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
+    """Affiche une grille responsive de cartes produit."""
+
+    if df.empty:
+        st.info("Aucun produit à afficher pour le moment.")
+        return
+
+    records = df.to_dict("records")
+    columns = max(1, int(columns))
+
+    for start in range(0, len(records), columns):
+        cols = st.columns(columns)
+        for col, product in zip(cols, records[start:start + columns]):
+            with col:
+                card_html = _build_product_card(product)
+                st.markdown(card_html, unsafe_allow_html=True)
 
 def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     """Construit un DataFrame propre à partir des éléments du panier."""
@@ -598,6 +727,7 @@ if authentication_status:
 
     # Définition des onglets fonctionnels de l'application
     (
+        showcase_tab,
         pos_tab,
         catalog_tab,
         mvt_tab,
@@ -607,6 +737,7 @@ if authentication_status:
         import_tab,
         admin_tab,
     ) = st.tabs([
+        "Vitrine",
         "Vente (PoS)",
         "Catalogue",
         "Stock & Mvt",
@@ -616,9 +747,143 @@ if authentication_status:
         "Importation",
         "Maintenance (Admin)",
     ])
-    
+
     # Chargement des données (en cache)
     df_products = load_products_list()
+
+
+    # ---------------- Vitrine ----------------
+    with showcase_tab:
+        st.header("Vitrine Produits — vue client")
+
+        catalog_df = load_customer_catalog()
+
+        if catalog_df.empty:
+            st.info("Aucun produit actif n'est actuellement disponible.")
+        else:
+            total_products = int(catalog_df["id"].nunique())
+            total_categories = int(catalog_df["categorie"].nunique())
+            total_stock = float(catalog_df["stock_actuel"].sum())
+            total_sales = float(catalog_df["ventes_30j"].sum())
+
+            st.markdown(
+                """
+                <section class="catalog-hero">
+                    <div class="catalog-hero__content">
+                        <p class="catalog-hero__eyebrow">Inventaire unifié</p>
+                        <h2>Une vitrine moderne pour suivre vos rayons en un clin d'œil.</h2>
+                        <p>Consultez les rayons les plus dynamiques, repérez les ruptures et inspirez-vous des produits en tête des ventes.</p>
+                    </div>
+                </section>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            metrics_cols = st.columns(4)
+            metrics_cols[0].metric("Produits actifs", f"{total_products}")
+            metrics_cols[1].metric("Catégories", f"{total_categories}")
+            metrics_cols[2].metric("Stock disponible", f"{total_stock:,.0f}")
+            metrics_cols[3].metric("Ventes 30j", f"{total_sales:,.0f}")
+
+            trending_df = load_trending_products(limit=6)
+            st.subheader("Produits populaires")
+            if trending_df.empty or trending_df["ventes_30j"].sum() <= 0:
+                st.caption("Les données de vente récentes ne sont pas encore disponibles.")
+            else:
+                _render_product_cards(trending_df, columns=3)
+
+            st.subheader("Explorer le catalogue")
+
+            filter_col1, filter_col2, filter_col3 = st.columns([2, 2, 1.5])
+
+            categories = ["Toutes"] + sorted(catalog_df["categorie"].unique())
+            selected_category = filter_col1.selectbox("Catégorie", categories)
+            search_term = filter_col2.text_input("Recherche produit", placeholder="Rechercher par nom")
+            sort_options = {
+                "ventes": "Popularité (ventes 30j)",
+                "stock": "Stock disponible",
+                "prix": "Prix croissant",
+            }
+            sort_key = filter_col3.selectbox(
+                "Trier par",
+                options=list(sort_options.keys()),
+                format_func=lambda key: sort_options[key],
+            )
+
+            filtered_df = catalog_df.copy()
+            if selected_category != "Toutes":
+                filtered_df = filtered_df[filtered_df["categorie"] == selected_category]
+
+            if search_term:
+                mask = filtered_df["nom"].str.contains(search_term, case=False, na=False)
+                filtered_df = filtered_df[mask]
+
+            if sort_key == "ventes":
+                filtered_df = filtered_df.sort_values(
+                    by=["ventes_30j", "stock_actuel"], ascending=[False, False]
+                )
+            elif sort_key == "stock":
+                filtered_df = filtered_df.sort_values(by="stock_actuel", ascending=False)
+            else:
+                filtered_df = filtered_df.sort_values(by="prix_vente", ascending=True)
+
+            filtered_df = filtered_df.reset_index(drop=True)
+            max_preview = 24
+            preview_df = filtered_df.head(max_preview)
+
+            st.caption(
+                f"{len(filtered_df)} produit(s) correspondant(s). Aperçu des {len(preview_df)} premiers résultats."
+            )
+            _render_product_cards(preview_df, columns=4 if len(preview_df) > 3 else len(preview_df) or 1)
+
+            st.subheader("Synthèse par catégorie")
+            summary_df = (
+                filtered_df.groupby("categorie")
+                .agg(
+                    produits=("id", "count"),
+                    stock_total=("stock_actuel", "sum"),
+                    ventes_30j=("ventes_30j", "sum"),
+                )
+                .reset_index()
+                .sort_values(by=["ventes_30j", "stock_total"], ascending=False)
+            )
+
+            st.dataframe(
+                summary_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "categorie": "Catégorie",
+                    "produits": st.column_config.NumberColumn("Produits"),
+                    "stock_total": st.column_config.NumberColumn("Stock total", format="%.0f"),
+                    "ventes_30j": st.column_config.NumberColumn("Ventes 30j", format="%.0f"),
+                },
+            )
+
+            with st.expander("Consulter une fiche produit détaillée"):
+                options = {
+                    f"{row.nom} — {row.categorie}": int(row.id)
+                    for row in catalog_df.itertuples()
+                }
+
+                if not options:
+                    st.info("Aucun produit n'est disponible pour l'instant.")
+                else:
+                    selected_detail = st.selectbox(
+                        "Produit",
+                        options=list(options.keys()),
+                        index=0,
+                    )
+
+                    detail_id = options[selected_detail]
+                    detail_row = catalog_df[catalog_df["id"] == detail_id].iloc[0]
+                    st.markdown(
+                        f"**Nom :** {detail_row['nom']}  \n"
+                        f"**Catégorie :** {detail_row['categorie']}  \n"
+                        f"**Prix de vente :** {detail_row['prix_vente']:.2f} €  \n"
+                        f"**Stock disponible :** {detail_row['stock_actuel']:.0f}  \n"
+                        f"**Ventes (30 jours) :** {detail_row['ventes_30j']:.0f}"
+                    )
 
 
     # ---------------- Vente (PoS) ----------------
@@ -680,6 +945,8 @@ if authentication_status:
                         st.success("Vente finalisée et stock mis à jour ✅")
                         _clear_cart()
                         load_products_list.clear()
+                        load_customer_catalog.clear()
+                        load_trending_products.clear()
                         cached_product_options.clear()
                         load_movement_timeseries.clear()
                         load_recent_movements.clear()
@@ -848,6 +1115,8 @@ if authentication_status:
 
                             st.success(f"{updates_count} produit(s) mis à jour avec succès!")
                             load_products_list.clear()
+                            load_customer_catalog.clear()
+                            load_trending_products.clear()
                             cached_product_options.clear()
                             load_movement_timeseries.clear()
                             load_recent_movements.clear()
@@ -873,6 +1142,8 @@ if authentication_status:
                             exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
                             st.toast(f"✅ Produit '{product_to_delete}' et données associées supprimés.", icon='🗑️')
                             load_products_list.clear()
+                            load_customer_catalog.clear()
+                            load_trending_products.clear()
                             cached_product_options.clear()
                             load_movement_timeseries.clear()
                             load_recent_movements.clear()
@@ -919,6 +1190,8 @@ if authentication_status:
 
                             st.success(f"Produit '{new_nom}' ajouté avec succès!")
                             load_products_list.clear()
+                            load_customer_catalog.clear()
+                            load_trending_products.clear()
                             cached_product_options.clear()
                             load_table_preview.clear()
                             load_recent_movements.clear()
@@ -1107,6 +1380,8 @@ if authentication_status:
                                     f"Ajustement réussi. Le stock de {selected_product_name} est maintenant à {target_stock:.2f} unités."
                                 )
                                 load_products_list.clear()
+                                load_customer_catalog.clear()
+                                load_trending_products.clear()
                                 cached_product_options.clear()
                                 load_movement_timeseries.clear()
                                 load_recent_movements.clear()
@@ -1364,6 +1639,8 @@ if authentication_status:
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
                     load_products_list.clear()
+                    load_customer_catalog.clear()
+                    load_trending_products.clear()
                     cached_product_options.clear()
                     load_movement_timeseries.clear()
                     load_recent_movements.clear()
@@ -1500,6 +1777,8 @@ if authentication_status:
                         summary = products_loader.load_products_from_df(editable_df)
                     st.session_state["invoice_import_summary"] = summary
                     load_products_list.clear()
+                    load_customer_catalog.clear()
+                    load_trending_products.clear()
                     cached_product_options.clear()
                     load_movement_timeseries.clear()
                     load_recent_movements.clear()
@@ -1749,6 +2028,8 @@ if authentication_status:
                             st.success("Toutes les lignes valides ont été importées avec succès.")
 
                         load_products_list.clear()
+                        load_customer_catalog.clear()
+                        load_trending_products.clear()
                         cached_product_options.clear()
                         load_movement_timeseries.clear()
                         load_recent_movements.clear()
@@ -1846,6 +2127,8 @@ if authentication_status:
                                 st.success("Toutes les lignes valides ont été importées avec succès.")
 
                             load_products_list.clear()
+                            load_customer_catalog.clear()
+                            load_trending_products.clear()
                             cached_product_options.clear()
                             load_movement_timeseries.clear()
                             load_recent_movements.clear()

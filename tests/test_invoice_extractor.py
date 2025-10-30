@@ -70,19 +70,31 @@ def test_extract_products_from_metro_invoice_builds_dataframe():
     raw_text = """
     1234567890123 123456 Produit Test 1.00 3 3.00 D
     9876543210987 765432 Produit Deux 2.00 1 2.00 P
+    1111111111111 111111 Produit Trois 3.00 2 6.00 B
+    2222222222222 222222 Produit Quatre 4.00 5 20.00 M
     """
 
     df = invoice_extractor.extract_products_from_metro_invoice(raw_text)
 
     assert isinstance(df, pd.DataFrame)
     assert {"nom", "prix_vente", "tva", "qte_init", "codes", "prix_achat", "tva_code"}.issubset(df.columns)
-    assert list(df["nom"]) == ["Produit Test", "Produit Deux"]
-    assert list(df["qte_init"]) == [3, 1]
-    assert list(df["codes"]) == ["1234567890123", "9876543210987"]
-    assert list(df["tva"]) == [20.0, 5.5]
-    assert list(df["prix_vente"]) == [1.0, 2.0]
-    assert list(df["prix_achat"]) == [1.0, 2.0]
-    assert list(df["tva_code"]) == ["D", "P"]
+    assert list(df["nom"]) == [
+        "Produit Test",
+        "Produit Deux",
+        "Produit Trois",
+        "Produit Quatre",
+    ]
+    assert list(df["qte_init"]) == [3, 1, 2, 5]
+    assert list(df["codes"]) == [
+        "1234567890123",
+        "9876543210987",
+        "1111111111111",
+        "2222222222222",
+    ]
+    assert list(df["tva"]) == [20.0, 5.5, 10.0, 2.1]
+    assert list(df["prix_vente"]) == [1.0, 2.0, 3.0, 4.0]
+    assert list(df["prix_achat"]) == [1.0, 2.0, 3.0, 4.0]
+    assert list(df["tva_code"]) == ["D", "P", "B", "M"]
 
 
 def test_extract_products_with_custom_tva_map():
