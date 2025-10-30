@@ -1,5 +1,5 @@
 /*-----------------------------------------
-[Table Of Content]
+Table Of Content
 
     01. Typography CSS
     02. Color CSS
@@ -26,6 +26,7 @@
     22. Blog Details Style Css
     23. Footer Style CSS
 ----------------------------------------*/
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap');
 /*=====================================
    01. Typography CSS
 ===================================== */
@@ -34,13 +35,14 @@
 }
 
 body {
-    color: #303030;
+    color: #1f2933;
     font-size: 15px;
-    font-family: "Oswald","Poppins", sans-serif;
-    font-weight: 700;
-    line-height: 1.6;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-weight: 400;
+    line-height: 1.65;
     margin: 0;
-
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    -webkit-font-smoothing: antialiased;
 }
 
 
@@ -139,10 +141,10 @@ h5,
 .h5,
 h6,
 .h6 {
-    color: #1b1b1c;
-    line-height: 1.2;
-    font-family: "Oswald", sans-serif;
-    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.25;
+    font-family: "Playfair Display", "Inter", serif;
+    font-weight: 600;
 }
 
 h1,

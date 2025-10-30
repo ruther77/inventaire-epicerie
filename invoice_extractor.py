@@ -5,7 +5,18 @@ import re
 from typing import Iterable, Mapping
 
 import pandas as pd
-from PyPDF2 import PdfReader
+
+try:  # pragma: no cover - import de compatibilité
+    from pypdf import PdfReader
+except ImportError:  # pragma: no cover - environnement sans pypdf
+    class PdfReader:  # type: ignore
+        """Substitut minimal rappelant d'installer pypdf."""
+
+        def __init__(self, *_args, **_kwargs):
+            raise ImportError(
+                "La dépendance 'pypdf' est requise pour lire les factures PDF. "
+                "Ajoutez-la via `pip install pypdf`."
+            )
 from docx import Document
 
 # Mapping par défaut des codes TVA METRO connus.

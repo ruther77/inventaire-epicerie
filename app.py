@@ -10,8 +10,10 @@ from html import escape
 from typing import Any, Dict, List
 
 import pandas as pd
+import requests
 import streamlit as st
-from sqlalchemy import create_engine, text
+from requests.adapters import HTTPAdapter, Retry
+from sqlalchemy import text
 from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
@@ -47,7 +49,13 @@ from data_repository import (
 )
 from inventory_service import *
 import products_loader
-import invoice_extractor
+from product_service import (
+    parse_barcode_input,
+    update_catalog_entry,
+    delete_product_by_barcode,
+    ProductNotFoundError,
+    InvalidBarcodeError,
+)
 
 # --- FONCTION POUR CHARGER LE CSS EXTERNE (style.css) ---
 def local_css(file_name):
@@ -98,6 +106,22 @@ INVOICE_FILE_UPLOADER_KEYS = (
     "extract_invoice_file_uploader",
     "import_invoice_file_uploader",
 )
+
+_IMAGE_REQUEST_RETRIES = Retry(
+    total=2,
+    status_forcelist=(429, 500, 502, 503, 504),
+    backoff_factor=0.6,
+    allowed_methods=("GET",),
+)
+_IMAGE_SESSION = requests.Session()
+_IMAGE_SESSION.headers.update(
+    {
+        "User-Agent": "InventaireEpicerie/1.0 (+streamlit)",
+        "Accept": "application/json",
+    }
+)
+_IMAGE_SESSION.mount("https://", HTTPAdapter(max_retries=_IMAGE_REQUEST_RETRIES))
+_IMAGE_SESSION.mount("http://", HTTPAdapter(max_retries=_IMAGE_REQUEST_RETRIES))
 
 
 def _ensure_cart_state() -> List[Dict[str, Any]]:
@@ -176,6 +200,17 @@ def load_customer_catalog() -> pd.DataFrame:
     else:
         df["ean"] = ""
 
+    unique_eans = {
+        ean.strip()
+        for ean in df["ean"].tolist()
+        if isinstance(ean, str) and ean.strip()
+    }
+    image_map: dict[str, str | None] = {}
+    if unique_eans:
+        for ean in unique_eans:
+            image_map[ean] = _fetch_product_image_url(ean)
+    df["image_url"] = df["ean"].map(lambda e: image_map.get(e) if e else None)
+
     return df
 
 
@@ -213,12 +248,18 @@ def _fetch_product_image_url(ean: str | None) -> str | None:
         return None
 
     api_url = f"https://world.openfoodfacts.org/api/v0/product/{sanitized}.json"
-    request = Request(api_url, headers={"User-Agent": "InventaireEpicerie/1.0 (+streamlit)"})
 
     try:
-        with urlopen(request, timeout=5) as response:
-            payload = json.load(response)
-    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError, ValueError):
+        response = _IMAGE_SESSION.get(api_url, timeout=(2, 5))
+    except requests.RequestException:
+        return None
+
+    if not response.ok:
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
         return None
 
     if not isinstance(payload, dict) or payload.get("status") != 1:
@@ -260,7 +301,16 @@ def _build_product_card(product: dict[str, Any]) -> str:
         stock_class = "is-success"
 
     ean = product.get("ean")
-    image_url = _fetch_product_image_url(ean)
+    image_url: str | None = None
+    raw_image = product.get("image_url")
+    if isinstance(raw_image, str) and raw_image.strip():
+        image_url = raw_image.strip()
+    elif raw_image is not None and not pd.isna(raw_image):
+        candidate = str(raw_image).strip()
+        image_url = candidate or None
+
+    if not image_url:
+        image_url = _fetch_product_image_url(ean)
 
     if image_url:
         media_html = (
@@ -1338,12 +1388,21 @@ if authentication_status:
                         f"**Ventes (30 jours) :** {detail_row['ventes_30j']:.0f}  \n"
                         f"**EAN :** {ean_value or '—'}"
                     )
-                    if ean_value:
+                    detail_image: str | None = None
+                    raw_detail = detail_row.get("image_url")
+                    if isinstance(raw_detail, str) and raw_detail.strip():
+                        detail_image = raw_detail.strip()
+                    elif raw_detail is not None and not pd.isna(raw_detail):
+                        candidate = str(raw_detail).strip()
+                        detail_image = candidate or None
+
+                    if not detail_image and ean_value:
                         detail_image = _fetch_product_image_url(ean_value)
-                        if detail_image:
-                            st.image(detail_image, caption=f"EAN {ean_value}", width=240)
-                        else:
-                            st.caption("Aucun visuel trouvé pour ce code-barres.")
+
+                    if detail_image:
+                        st.image(detail_image, caption=f"EAN {ean_value}" if ean_value else None, width=240)
+                    elif ean_value:
+                        st.caption("Aucun visuel trouvé pour ce code-barres.")
 
 
     # ---------------- Vente (PoS) ----------------
@@ -1557,11 +1616,11 @@ if authentication_status:
             tone="lagoon",
         )
 
-        non_editable_columns = ['id', 'quantite_stock', 'statut_stock', "codes_barres"]
+        non_editable_columns = ['id', 'quantite_stock', 'statut_stock']
         if st.session_state.get("user_role") == "admin":
             disabled_cols = non_editable_columns
         else:
-            disabled_cols = ['nom', 'prix_vente', 'tva', 'quantite_stock', 'statut_stock']
+            disabled_cols = ['nom', 'prix_vente', 'tva', 'quantite_stock', 'statut_stock', 'codes_barres']
 
         with workspace_panel(
             "Gestion du catalogue",
@@ -1602,38 +1661,98 @@ if authentication_status:
                             type="primary",
                         ):
                             try:
-                                changes = st.session_state["catalog_editor"].get("edited_rows", {})
+                                editor_state = st.session_state.get("catalog_editor", {})
+                                changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
 
                                 if changes:
-                                    updates_count = 0
+                                    field_updates = 0
+                                    barcode_totals = {"added": 0, "removed": 0, "skipped": 0, "conflicts": 0}
+                                    row_errors: list[str] = []
+
                                     for index, row_changes in changes.items():
-                                        product_id = df_products.loc[index, 'id']
+                                        try:
+                                            base_row = df_products.iloc[index]
+                                        except (IndexError, KeyError):
+                                            row_errors.append(
+                                                f"Ligne {index + 1}: produit introuvable dans le tableau."
+                                            )
+                                            continue
 
-                                        set_clauses = [
-                                            f"{col}=:{col}"
-                                            for col in row_changes.keys()
-                                            if col not in non_editable_columns
-                                        ]
+                                        product_id = int(base_row["id"])
+                                        change_payload = dict(row_changes)
+                                        barcode_field = change_payload.pop("codes_barres", None)
 
-                                        if set_clauses:
-                                            sql = f"UPDATE produits SET {', '.join(set_clauses)} WHERE id = :id"
-                                            params = dict(row_changes)
-                                            params['id'] = product_id
-                                            exec_sql(text(sql).bindparams(**params))
-                                            updates_count += 1
+                                        try:
+                                            result = update_catalog_entry(
+                                                product_id,
+                                                change_payload,
+                                                barcode_field,
+                                            )
+                                        except ProductNotFoundError as exc:
+                                            row_errors.append(str(exc))
+                                            continue
+                                        except ValueError as exc:
+                                            row_errors.append(f"Produit ID {product_id}: {exc}")
+                                            continue
 
-                                    st.success(f"{updates_count} produit(s) mis à jour avec succès!")
-                                    invalidate_data_caches(
-                                        "products_list",
-                                        "catalog",
-                                        "trending",
-                                        "product_options",
-                                        "movement_timeseries",
-                                        "recent_movements",
-                                        "table_counts",
-                                        "table_preview",
+                                        field_updates += int(result.get("fields_updated", 0))
+                                        barcode_result = result.get("barcodes", {})
+                                        for key, value in barcode_result.items():
+                                            if key in barcode_totals:
+                                                barcode_totals[key] += int(value or 0)
+
+                                    for error_msg in row_errors:
+                                        st.error(error_msg)
+
+                                    applied_changes = (
+                                        field_updates > 0
+                                        or barcode_totals["added"] > 0
+                                        or barcode_totals["removed"] > 0
                                     )
-                                    st.rerun()
+
+                                    summary_parts: list[str] = []
+                                    if field_updates:
+                                        summary_parts.append(f"{field_updates} champ(s) mis à jour")
+
+                                    barcode_parts: list[str] = []
+                                    if barcode_totals["added"]:
+                                        barcode_parts.append(f"+{barcode_totals['added']} code(s)")
+                                    if barcode_totals["removed"]:
+                                        barcode_parts.append(f"-{barcode_totals['removed']} code(s)")
+                                    if barcode_totals["skipped"]:
+                                        barcode_parts.append(f"{barcode_totals['skipped']} doublon(s)")
+                                    if barcode_totals["conflicts"]:
+                                        barcode_parts.append(f"{barcode_totals['conflicts']} conflit(s)")
+
+                                    if barcode_parts:
+                                        summary_parts.append("Codes-barres: " + ", ".join(barcode_parts))
+
+                                    if not summary_parts:
+                                        summary_parts.append("Aucun changement appliqué.")
+
+                                    summary_message = " · ".join(summary_parts)
+
+                                    if barcode_totals["conflicts"]:
+                                        st.warning(
+                                            "Certains codes-barres sont déjà utilisés par d'autres produits et n'ont pas été modifiés."
+                                        )
+
+                                    if applied_changes:
+                                        st.toast(summary_message, icon='💾')
+                                        invalidate_data_caches(
+                                            "products_list",
+                                            "catalog",
+                                            "trending",
+                                            "product_options",
+                                            "movement_timeseries",
+                                            "recent_movements",
+                                            "table_counts",
+                                            "table_preview",
+                                        )
+                                        st.rerun()
+                                    else:
+                                        if not row_errors:
+                                            st.info("Aucune modification n'a été détectée dans le tableau.")
                                 else:
                                     st.info("Aucune modification n'a été détectée dans le tableau.")
 
@@ -1641,23 +1760,42 @@ if authentication_status:
                                 st.error(f"Erreur lors de l'enregistrement: {e}")
 
                     with action_cols[1]:
-                        product_to_delete = st.selectbox(
-                            "Produit à supprimer",
-                            df_products['nom'],
-                            index=None,
-                            key="catalog_delete_select",
+                        barcode_to_delete = st.text_input(
+                            "Code-barres à retirer / supprimer",
+                            key="catalog_delete_barcode",
+                            help=(
+                                "Saisissez un code existant pour le détacher du produit. "
+                                "Si c'était le dernier code-barres, le produit sera supprimé."
+                            ),
                         )
-                        if product_to_delete and st.button(
-                            f"Confirmer la suppression",
-                            key="confirm_delete",
+
+                        if st.button(
+                            "Supprimer via le code-barres",
+                            key="confirm_delete_barcode",
                         ):
                             try:
-                                id_to_delete = df_products[df_products['nom'] == product_to_delete]['id'].iloc[0]
-                                exec_sql(text("DELETE FROM produits WHERE id = :pid").bindparams(pid=id_to_delete))
-                                st.toast(
-                                    f"✅ Produit '{product_to_delete}' et données associées supprimés.",
-                                    icon='🗑️',
-                                )
+                                outcome = delete_product_by_barcode(barcode_to_delete)
+                            except InvalidBarcodeError:
+                                st.warning("Veuillez saisir un code-barres valide (minimum 8 caractères).")
+                            except ProductNotFoundError:
+                                st.error("Aucun produit ne correspond à ce code-barres.")
+                            except Exception as exc:
+                                st.error(f"Erreur lors de la suppression: {exc}")
+                            else:
+                                action = outcome.get("action")
+                                product_name = outcome.get("product_name") or "Produit"
+                                removed_code = outcome.get("removed_code")
+                                if action == "barcode_removed":
+                                    remaining = outcome.get("remaining_barcodes", 0)
+                                    st.toast(
+                                        f"🎯 Code {removed_code} dissocié de {product_name} ({remaining} restant).",
+                                        icon='🎯',
+                                    )
+                                else:
+                                    st.toast(
+                                        f"🗑️ Produit '{product_name}' supprimé (code {removed_code}).",
+                                        icon='🗑️',
+                                    )
                                 invalidate_data_caches(
                                     "products_list",
                                     "catalog",
@@ -1669,8 +1807,69 @@ if authentication_status:
                                     "table_preview",
                                 )
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"Erreur lors de la suppression: {e}. Des contraintes de BDD peuvent bloquer.")
+
+                        st.divider()
+                        st.caption("Produits sans code-barres — suppression directe")
+
+                        products_without_codes = df_products[
+                            df_products["codes_barres"].fillna("").str.strip() == ""
+                        ]
+
+                        if products_without_codes.empty:
+                            st.info("Tous les produits possèdent au moins un code-barres.")
+                        else:
+                            product_options = {
+                                f"{row.nom} (ID {row.id})": int(row.id)
+                                for row in products_without_codes.itertuples()
+                            }
+                            selected_product_label = st.selectbox(
+                                "Produit sans code-barres",
+                                list(product_options.keys()),
+                                index=None,
+                                key="catalog_delete_select",
+                            )
+
+                            if selected_product_label and st.button(
+                                "Supprimer ce produit",
+                                key="confirm_delete_product",
+                            ):
+                                product_id = product_options[selected_product_label]
+                                try:
+                                    engine = get_engine()
+                                    with engine.begin() as conn:
+                                        barcode_count = conn.execute(
+                                            text(
+                                                "SELECT COUNT(*) FROM produits_barcodes WHERE produit_id = :pid"
+                                            ),
+                                            {"pid": product_id},
+                                        ).scalar() or 0
+
+                                        if barcode_count > 0:
+                                            st.warning(
+                                                "Ce produit possède maintenant des codes-barres. Utilisez la suppression par code."
+                                            )
+                                        else:
+                                            conn.execute(
+                                                text("DELETE FROM produits WHERE id = :pid"),
+                                                {"pid": product_id},
+                                            )
+                                            st.toast(
+                                                f"🗑️ Produit '{selected_product_label}' supprimé.",
+                                                icon='🗑️',
+                                            )
+                                            invalidate_data_caches(
+                                                "products_list",
+                                                "catalog",
+                                                "trending",
+                                                "product_options",
+                                                "movement_timeseries",
+                                                "recent_movements",
+                                                "table_counts",
+                                                "table_preview",
+                                            )
+                                            st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Erreur lors de la suppression: {exc}")
 
         if st.session_state.get("user_role") == "admin":
             with workspace_panel(
@@ -1695,7 +1894,7 @@ if authentication_status:
                                 product_id = exec_sql_return_id(sql_prod.bindparams(nom=new_nom, prix=new_prix, tva=new_tva))
 
                                 if new_codes:
-                                    codes_list = [c.strip() for c in new_codes.split(';') if c.strip()]
+                                    codes_list = parse_barcode_input(new_codes)
                                     barcode_outcome = {"added": 0, "conflicts": 0, "skipped": 0}
                                     engine = get_engine()
                                     with engine.begin() as conn:
@@ -1739,9 +1938,7 @@ if authentication_status:
             st.info("Veuillez ajouter des produits au catalogue d'abord.")
             st.stop()
 
-        product_options = cached_product_options()
-        product_names = list(product_options.keys())
-        filter_products = ["Tous les produits"] + product_names
+    # ---------------- Catalogue ----------------
 
         hero_placeholder = st.container()
 
