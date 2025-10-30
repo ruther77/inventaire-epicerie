@@ -72,6 +72,9 @@ def test_extract_products_from_metro_invoice_builds_dataframe():
     9876543210987 765432 Produit Deux 2.00 1 2.00 P
     1111111111111 111111 Produit Trois 3.00 2 6.00 B
     2222222222222 222222 Produit Quatre 4.00 5 20.00 M
+    3333333333333 333333 Produit Cinq 5.00 2 10.00 g
+    4444444444444 444444 Produit Six 6.00 1 6.00 X
+    5555555555555 555555 Produit Sept 7.00 4 28.00 e
     """
 
     df = invoice_extractor.extract_products_from_metro_invoice(raw_text)
@@ -83,18 +86,55 @@ def test_extract_products_from_metro_invoice_builds_dataframe():
         "Produit Deux",
         "Produit Trois",
         "Produit Quatre",
+        "Produit Cinq",
+        "Produit Six",
+        "Produit Sept",
     ]
-    assert list(df["qte_init"]) == [3, 1, 2, 5]
+    assert list(df["qte_init"]) == [3, 1, 2, 5, 2, 1, 4]
     assert list(df["codes"]) == [
         "1234567890123",
         "9876543210987",
         "1111111111111",
         "2222222222222",
+        "3333333333333",
+        "4444444444444",
+        "5555555555555",
     ]
-    assert list(df["tva"]) == [20.0, 5.5, 10.0, 2.1]
-    assert list(df["prix_vente"]) == [1.0, 2.0, 3.0, 4.0]
-    assert list(df["prix_achat"]) == [1.0, 2.0, 3.0, 4.0]
-    assert list(df["tva_code"]) == ["D", "P", "B", "M"]
+    assert list(df["tva"]) == [20.0, 5.5, 10.0, 2.1, 0.0, 0.0, 5.5]
+    assert list(df["prix_vente"]) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+    assert list(df["prix_achat"]) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+    assert list(df["tva_code"]) == ["D", "P", "B", "M", "G", "X", "E"]
+
+
+def test_default_tva_code_map_covers_metro_reference():
+    assert invoice_extractor.DEFAULT_TVA_CODE_MAP == {
+        "A": 20.0,
+        "B": 10.0,
+        "C": 20.0,
+        "D": 20.0,
+        "E": 5.5,
+        "F": 20.0,
+        "G": 0.0,
+        "H": 10.0,
+        "I": 5.5,
+        "J": 20.0,
+        "K": 20.0,
+        "L": 5.5,
+        "M": 2.1,
+        "N": 10.0,
+        "O": 0.0,
+        "P": 5.5,
+        "Q": 5.5,
+        "R": 5.5,
+        "S": 5.5,
+        "T": 10.0,
+        "U": 5.5,
+        "V": 5.5,
+        "W": 5.5,
+        "X": 0.0,
+        "Y": 5.5,
+        "Z": 0.0,
+    }
 
 
 def test_extract_products_with_custom_tva_map():
