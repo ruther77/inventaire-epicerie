@@ -27,9 +27,11 @@ désormais l'application historique pour amorcer la migration vers une SPA.
   assignation des écarts avec export CSV, rapprochement factures / réceptions,
   gouvernance des codes-barres et supervision des sauvegardes.
 
-Pour vérifier localement que tout fonctionne, exécutez simplement :
+Pour vérifier localement que tout fonctionne, installez d'abord les
+dépendances de développement puis lancez la suite de tests :
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
 ```
 
@@ -104,12 +106,24 @@ l'affichage local et l'image exécutée en production.
 
 ### En local (hors Docker)
 
-1. Créez et activez un environnement virtuel Python 3.11.
-2. Installez les dépendances :
+1. Créez et activez un environnement virtuel Python 3.11. Sur Debian/Ubuntu
+   récents (PEP 668), évitez l'option `--break-system-packages` et préférez un
+   environnement isolé :
 
    ```bash
-   pip install -r requirements.txt
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install --upgrade pip
    ```
+
+2. Installez les dépendances applicatives et de test :
+
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
+   (Ce fichier inclut `requirements.txt` et ajoute les outils de test comme
+   `pytest`.)
 
 3. Exportez les variables d'environnement nécessaires (voir `env.prod.example`
    pour la liste complète) ou créez un fichier `.streamlit/secrets.toml`.
