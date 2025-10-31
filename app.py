@@ -914,7 +914,7 @@ def load_products_list():
             COALESCE(p.prix_achat, 0) AS prix_achat,
             p.prix_vente,
             p.tva,
-            COALESCE(p.categorie, 'Non renseignée') AS categorie,
+            COALESCE(p.categorie::text, 'Non renseignée') AS categorie,
             COALESCE(p.stock_actuel, 0) AS stock_actuel,
             COALESCE(p.stock_actuel, 0) AS quantite_stock,
             COALESCE(string_agg(pb.code, ', ' ORDER BY pb.code), '') AS codes_barres,
