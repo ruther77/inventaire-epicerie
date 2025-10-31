@@ -2446,20 +2446,312 @@ if authentication_status:
             quality_cols[2].metric("Sans code-barres", str(len(missing_barcode_df)))
             quality_cols[3].metric("Marge négative", str(len(margin_alert_df)))
 
-            st.caption("Les tableaux ci-dessous listent les éléments nécessitant une attention particulière.")
+            st.caption("Les sections ci-dessous permettent désormais de consulter, corriger ou supprimer les éléments problématiques.")
 
-            if not missing_price_df.empty or not missing_purchase_df.empty or not missing_barcode_df.empty:
-                summary_data = []
-                if not missing_price_df.empty:
-                    summary_data.append({"Type": "Prix vente manquant", "Produits": len(missing_price_df)})
-                if not missing_purchase_df.empty:
-                    summary_data.append({"Type": "Prix achat manquant", "Produits": len(missing_purchase_df)})
-                if not missing_barcode_df.empty:
-                    summary_data.append({"Type": "Sans code-barres", "Produits": len(missing_barcode_df)})
-                st.dataframe(pd.DataFrame(summary_data), hide_index=True, use_container_width=True)
+            tabs = st.tabs(
+                [
+                    "Prix vente manquants",
+                    "Prix achat manquants",
+                    "Sans code-barres",
+                    "Marge négative",
+                    "Doublons",
+                ]
+            )
 
-            if not margin_alert_df.empty:
-                st.subheader("Produits vendus sous leur prix d'achat")
+            # --- Prix de vente manquants ---
+            with tabs[0]:
+                st.subheader("Prix de vente à compléter", divider="rainbow")
+                view_df = missing_price_df[[
+                    "id",
+                    "nom",
+                    "categorie",
+                    "prix_achat",
+                    "prix_vente",
+                    "stock_actuel",
+                ]].reset_index(drop=True) if not missing_price_df.empty else pd.DataFrame()
+
+                if view_df.empty:
+                    st.success("Tous les produits possèdent un prix de vente.")
+                elif st.session_state.get("user_role") == "admin":
+                    st.caption("Modifiez les prix directement puis appliquez les changements.")
+                    editor_df = view_df.copy()
+                    st.data_editor(
+                        editor_df,
+                        key="quality_missing_price_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "id": st.column_config.NumberColumn("ID", disabled=True),
+                            "nom": st.column_config.TextColumn("Produit", disabled=True),
+                            "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
+                            "prix_achat": st.column_config.NumberColumn("Prix achat (€)", format="%.2f", disabled=True),
+                            "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f"),
+                            "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
+                        },
+                    )
+
+                    if st.button(
+                        "Mettre à jour les prix de vente manquants",
+                        key="apply_missing_sale_price",
+                        type="primary",
+                    ):
+                        editor_state = st.session_state.get("quality_missing_price_editor", {})
+                        changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                        if not changes:
+                            st.info("Aucune modification détectée dans le tableau.")
+                        else:
+                            applied = 0
+                            for index, row_changes in changes.items():
+                                try:
+                                    base_row = editor_df.iloc[int(index)]
+                                except (IndexError, ValueError):
+                                    continue
+                                payload = {k: v for k, v in row_changes.items() if k == "prix_vente"}
+                                if not payload:
+                                    continue
+                                try:
+                                    update_catalog_entry(int(base_row["id"]), payload, None)
+                                except Exception as exc:
+                                    st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
+                                else:
+                                    applied += len(payload)
+                            if applied:
+                                st.success(f"{applied} champ(s) mis à jour.")
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
+                                st.rerun()
+                            else:
+                                st.info("Aucune correction n'a été appliquée.")
+                else:
+                    st.dataframe(view_df, use_container_width=True, hide_index=True)
+
+            # --- Prix d'achat manquants ---
+            with tabs[1]:
+                st.subheader("Prix d'achat à compléter", divider="rainbow")
+                purchase_df = missing_purchase_df[[
+                    "id",
+                    "nom",
+                    "categorie",
+                    "prix_achat",
+                    "prix_vente",
+                    "stock_actuel",
+                ]].reset_index(drop=True) if not missing_purchase_df.empty else pd.DataFrame()
+
+                if purchase_df.empty:
+                    st.success("Tous les produits possèdent un prix d'achat.")
+                elif st.session_state.get("user_role") == "admin":
+                    st.caption("Renseignez les prix d'achat puis appliquez les changements.")
+                    st.data_editor(
+                        purchase_df,
+                        key="quality_missing_purchase_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "id": st.column_config.NumberColumn("ID", disabled=True),
+                            "nom": st.column_config.TextColumn("Produit", disabled=True),
+                            "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
+                            "prix_achat": st.column_config.NumberColumn("Prix achat (€)", format="%.2f"),
+                            "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f", disabled=True),
+                            "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
+                        },
+                    )
+
+                    if st.button(
+                        "Mettre à jour les prix d'achat manquants",
+                        key="apply_missing_purchase_price",
+                        type="primary",
+                    ):
+                        editor_state = st.session_state.get("quality_missing_purchase_editor", {})
+                        changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                        if not changes:
+                            st.info("Aucune modification détectée dans le tableau.")
+                        else:
+                            applied = 0
+                            for index, row_changes in changes.items():
+                                try:
+                                    base_row = purchase_df.iloc[int(index)]
+                                except (IndexError, ValueError):
+                                    continue
+                                payload = {k: v for k, v in row_changes.items() if k == "prix_achat"}
+                                if not payload:
+                                    continue
+                                try:
+                                    update_catalog_entry(int(base_row["id"]), payload, None)
+                                except Exception as exc:
+                                    st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
+                                else:
+                                    applied += len(payload)
+                            if applied:
+                                st.success(f"{applied} champ(s) mis à jour.")
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
+                                st.rerun()
+                            else:
+                                st.info("Aucune correction n'a été appliquée.")
+                else:
+                    st.dataframe(purchase_df, use_container_width=True, hide_index=True)
+
+            # --- Produits sans code-barres ---
+            with tabs[2]:
+                st.subheader("Produits sans codes-barres", divider="rainbow")
+                barcode_df = missing_barcode_df[[
+                    "id",
+                    "nom",
+                    "categorie",
+                    "prix_vente",
+                    "codes_barres",
+                    "stock_actuel",
+                ]].reset_index(drop=True) if not missing_barcode_df.empty else pd.DataFrame()
+
+                if barcode_df.empty:
+                    st.success("Tous les produits possèdent un code-barres.")
+                else:
+                    if st.session_state.get("user_role") == "admin":
+                        st.caption("Ajoutez des codes-barres ou supprimez les références inutiles.")
+                        st.data_editor(
+                            barcode_df,
+                            key="quality_missing_barcode_editor",
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "id": st.column_config.NumberColumn("ID", disabled=True),
+                                "nom": st.column_config.TextColumn("Produit", disabled=True),
+                                "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
+                                "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f", disabled=True),
+                                "codes_barres": st.column_config.TextColumn(
+                                    "Codes-barres",
+                                    help="Séparez plusieurs codes par une virgule.",
+                                ),
+                                "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
+                            },
+                        )
+
+                        if st.button(
+                            "Enregistrer les codes-barres saisis",
+                            key="apply_missing_barcodes",
+                            type="primary",
+                        ):
+                            editor_state = st.session_state.get("quality_missing_barcode_editor", {})
+                            changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                            if not changes:
+                                st.info("Aucune modification détectée dans le tableau.")
+                            else:
+                                applied_updates = 0
+                                barcode_summary = {"added": 0, "removed": 0, "skipped": 0, "conflicts": 0}
+                                for index, row_changes in changes.items():
+                                    try:
+                                        base_row = barcode_df.iloc[int(index)]
+                                    except (IndexError, ValueError):
+                                        continue
+                                    change_payload = dict(row_changes)
+                                    barcode_field = change_payload.pop("codes_barres", None)
+                                    try:
+                                        result = update_catalog_entry(
+                                            int(base_row["id"]),
+                                            {k: v for k, v in change_payload.items() if k in {"prix_vente"}},
+                                            barcode_field,
+                                        )
+                                    except Exception as exc:
+                                        st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
+                                        continue
+                                    applied_updates += int(result.get("fields_updated", 0))
+                                    for key, value in (result.get("barcodes") or {}).items():
+                                        if key in barcode_summary:
+                                            barcode_summary[key] += int(value or 0)
+
+                                if applied_updates or any(barcode_summary.values()):
+                                    summary_parts: list[str] = []
+                                    if any(barcode_summary.values()):
+                                        barcode_parts = []
+                                        if barcode_summary["added"]:
+                                            barcode_parts.append(f"+{barcode_summary['added']} code(s)")
+                                        if barcode_summary["removed"]:
+                                            barcode_parts.append(f"-{barcode_summary['removed']} code(s)")
+                                        if barcode_summary["skipped"]:
+                                            barcode_parts.append(f"{barcode_summary['skipped']} doublon(s)")
+                                        if barcode_summary["conflicts"]:
+                                            barcode_parts.append(f"{barcode_summary['conflicts']} conflit(s)")
+                                        if barcode_parts:
+                                            summary_parts.append("Codes-barres: " + ", ".join(barcode_parts))
+                                    if applied_updates:
+                                        summary_parts.append(f"{applied_updates} champ(s) mis à jour")
+                                    st.success(" · ".join(summary_parts) or "Mises à jour effectuées.")
+                                    if barcode_summary["conflicts"]:
+                                        st.warning("Certains codes-barres sont déjà utilisés par d'autres produits.")
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "trending",
+                                        "product_options",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                        "table_counts",
+                                        "table_preview",
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.info("Aucune correction n'a été appliquée.")
+
+                        st.divider()
+                        delete_options = {
+                            f"{row.nom} (ID {row.id})": int(row.id)
+                            for row in barcode_df.itertuples()
+                        }
+                        product_to_delete = st.selectbox(
+                            "Supprimer un produit sans code-barres",
+                            list(delete_options.keys()),
+                            key="quality_missing_barcode_delete",
+                        ) if delete_options else None
+
+                        if product_to_delete and st.button(
+                            "Supprimer le produit sélectionné",
+                            key="confirm_delete_missing_barcode",
+                            type="secondary",
+                        ):
+                            product_id = delete_options.get(product_to_delete)
+                            try:
+                                with get_engine().begin() as conn:
+                                    conn.execute(
+                                        text("DELETE FROM produits WHERE id = :pid"),
+                                        {"pid": int(product_id)},
+                                    )
+                            except Exception as exc:
+                                st.error(f"Erreur lors de la suppression du produit: {exc}")
+                            else:
+                                st.toast(f"🗑️ Produit ID {product_id} supprimé.", icon='🗑️')
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
+                                st.rerun()
+                    else:
+                        st.dataframe(barcode_df, use_container_width=True, hide_index=True)
+
+            # --- Marge négative ---
+            with tabs[3]:
+                st.subheader("Produits vendus à marge négative", divider="rainbow")
                 alert_display = margin_alert_df[[
                     "id",
                     "nom",
@@ -2468,82 +2760,82 @@ if authentication_status:
                     "prix_vente",
                     "stock_actuel",
                     "ean",
-                ]].copy()
-                st.dataframe(alert_display, hide_index=True, use_container_width=True)
+                ]].reset_index(drop=True) if not margin_alert_df.empty else pd.DataFrame()
 
-            if not duplicates_df.empty:
-                st.subheader("Doublons de codes-barres détectés")
-                st.dataframe(duplicates_df, hide_index=True, use_container_width=True)
-                st.download_button(
-                    "Exporter les doublons",
-                    data=duplicates_df.to_csv(index=False).encode("utf-8"),
-                    file_name="doublons_codes_barres.csv",
-                    mime="text/csv",
-                )
+                if alert_display.empty:
+                    st.success("Aucun produit n'est vendu sous son prix d'achat.")
+                else:
+                    st.dataframe(alert_display, hide_index=True, use_container_width=True)
 
-            if st.session_state.get("user_role") == "admin" and not margin_alert_df.empty:
-                st.subheader("Campagne de correction rapide")
-                correction_df = margin_alert_df[[
-                    "id",
-                    "nom",
-                    "categorie",
-                    "prix_achat",
-                    "prix_vente",
-                    "stock_actuel",
-                    "ean",
-                ]].reset_index(drop=True)
+                if st.session_state.get("user_role") == "admin" and not alert_display.empty:
+                    st.subheader("Campagne de correction rapide")
+                    correction_df = alert_display.copy()
 
-                correction_editor = st.data_editor(
-                    correction_df,
-                    key="quality_campaign_editor",
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "id": st.column_config.NumberColumn("ID", disabled=True),
-                        "nom": st.column_config.TextColumn("Produit", disabled=True),
-                        "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
-                        "prix_achat": st.column_config.NumberColumn("Prix achat (€)", format="%.2f", disabled=True),
-                        "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f"),
-                        "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
-                        "ean": st.column_config.TextColumn("EAN", disabled=True),
-                    },
-                )
+                    correction_editor = st.data_editor(
+                        correction_df,
+                        key="quality_campaign_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "id": st.column_config.NumberColumn("ID", disabled=True),
+                            "nom": st.column_config.TextColumn("Produit", disabled=True),
+                            "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
+                            "prix_achat": st.column_config.NumberColumn("Prix achat (€)", format="%.2f", disabled=True),
+                            "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f"),
+                            "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
+                            "ean": st.column_config.TextColumn("EAN", disabled=True),
+                        },
+                    )
 
-                if st.button("Appliquer les corrections ciblées", key="apply_quality_campaign", type="primary"):
-                    editor_state = st.session_state.get("quality_campaign_editor", {})
-                    changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
-                    if not changes:
-                        st.info("Aucune modification détectée sur les produits ciblés.")
-                    else:
-                        applied = 0
-                        for index, row_changes in changes.items():
-                            try:
-                                base_row = correction_df.iloc[int(index)]
-                            except (IndexError, ValueError):
-                                continue
-                            payload = {k: v for k, v in row_changes.items() if k in {"prix_vente"}}
-                            if not payload:
-                                continue
-                            try:
-                                update_catalog_entry(int(base_row["id"]), payload, None)
-                                applied += len(payload)
-                            except Exception as exc:
-                                st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
-                        if applied:
-                            st.success(f"{applied} champ(s) mis à jour.")
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
+                    if st.button("Appliquer les corrections ciblées", key="apply_quality_campaign", type="primary"):
+                        editor_state = st.session_state.get("quality_campaign_editor", {})
+                        changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                        if not changes:
+                            st.info("Aucune modification détectée sur les produits ciblés.")
                         else:
-                            st.info("Aucune correction n'a été appliquée.")
+                            applied = 0
+                            for index, row_changes in changes.items():
+                                try:
+                                    base_row = correction_df.iloc[int(index)]
+                                except (IndexError, ValueError):
+                                    continue
+                                payload = {k: v for k, v in row_changes.items() if k in {"prix_vente"}}
+                                if not payload:
+                                    continue
+                                try:
+                                    update_catalog_entry(int(base_row["id"]), payload, None)
+                                    applied += len(payload)
+                                except Exception as exc:
+                                    st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
+                            if applied:
+                                st.success(f"{applied} champ(s) mis à jour.")
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
+                                st.rerun()
+                            else:
+                                st.info("Aucune correction n'a été appliquée.")
+
+            # --- Doublons de codes-barres ---
+            with tabs[4]:
+                st.subheader("Doublons de codes-barres détectés", divider="rainbow")
+                if duplicates_df.empty:
+                    st.success("Aucun doublon de code-barres détecté.")
+                else:
+                    st.dataframe(duplicates_df, hide_index=True, use_container_width=True)
+                    st.download_button(
+                        "Exporter les doublons",
+                        data=duplicates_df.to_csv(index=False).encode("utf-8"),
+                        file_name="doublons_codes_barres.csv",
+                        mime="text/csv",
+                    )
 
         if st.session_state.get("user_role") == "admin":
             with workspace_panel(
