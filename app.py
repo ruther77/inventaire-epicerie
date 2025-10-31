@@ -6,7 +6,7 @@ import math
 import re
 from contextlib import contextmanager
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import requests
@@ -59,13 +59,33 @@ from product_service import (
 def local_css(file_name):
     """Charge un fichier CSS externe et l'injecte dans l'application Streamlit."""
     file_path = os.path.join(os.path.dirname(__file__), file_name)
-    
+
     try:
         with open(file_path) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
         current_dir = os.getcwd()
         st.error(f"Erreur: Le fichier de style '{file_name}' est introuvable. Chemin relatif tenté (CWD): {current_dir}/{file_name}. Le fichier n'est PAS dans le conteneur ou le CWD est incorrect.")
+
+
+_THEME_LABELS = {"Thème clair": "light", "Thème sombre": "dark"}
+
+
+def apply_ui_theme(theme_key: str) -> None:
+    """Applique dynamiquement le thème clair ou sombre via un attribut de body."""
+
+    safe_theme = theme_key if theme_key in {"light", "dark"} else "light"
+    st.markdown(
+        f"""
+        <script>
+        const rootDocument = window.parent.document;
+        if (rootDocument && rootDocument.body) {{
+            rootDocument.body.setAttribute('data-theme', '{safe_theme}');
+        }}
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
         
         
 # --- CONFIGURATION DE LA PAGE ---
@@ -73,6 +93,12 @@ st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="
 
 # --- CHARGEMENT DU STYLE CSS PERSONNALISÉ ---
 local_css("style.css")
+if "ui_theme" not in st.session_state:
+    st.session_state["ui_theme"] = "light"
+if "pos_receipt" not in st.session_state:
+    st.session_state["pos_receipt"] = None
+
+apply_ui_theme(st.session_state.get("ui_theme", "light"))
 
 # --- Initialisation des Variables de Session ---
 if "last_barcode" not in st.session_state:
@@ -81,6 +107,8 @@ if "current_frame_count" not in st.session_state:
     st.session_state["current_frame_count"] = 0
 if "cart" not in st.session_state:
     st.session_state["cart"] = []
+if "pos_processing" not in st.session_state:
+    st.session_state["pos_processing"] = False
 if "invoice_raw_text" not in st.session_state:
     st.session_state["invoice_raw_text"] = ""
 if "invoice_text_input" not in st.session_state:
@@ -132,6 +160,51 @@ def _clear_cart() -> None:
     """Vide complètement le panier et force le rafraîchissement de la session."""
 
     st.session_state["cart"] = []
+    st.session_state["pos_receipt"] = None
+
+
+def _reset_pos_inputs() -> None:
+    """Réinitialise les champs du formulaire PoS après un ajout réussi."""
+
+    st.session_state["pos_qty_input"] = 1
+    st.session_state["pos_product_selectbox"] = "-- Sélectionner un produit --"
+
+
+def _add_product_to_cart(
+    product_id: int,
+    quantity: int,
+    products_df: pd.DataFrame,
+) -> Tuple[bool, str]:
+    """Ajoute un produit au panier en garantissant l'absence de boucles infinies."""
+
+    if quantity <= 0:
+        return False, "La quantité doit être supérieure à zéro."
+
+    try:
+        product_row = products_df[products_df["id"] == product_id].iloc[0]
+    except IndexError:
+        return False, f"Produit ID {product_id} introuvable dans le catalogue."
+
+    cart_items = list(_ensure_cart_state())
+
+    for item in cart_items:
+        if int(item.get("id", -1)) == product_id:
+            item["qty"] = int(item.get("qty", 0)) + int(quantity)
+            break
+    else:
+        cart_items.append(
+            {
+                "id": int(product_row["id"]),
+                "nom": str(product_row["nom"]),
+                "prix_vente": float(product_row["prix_vente"]),
+                "tva": float(product_row["tva"]),
+                "qty": int(quantity),
+            }
+        )
+
+    st.session_state["cart"] = cart_items
+    label = str(product_row["nom"]).strip() or f"Produit {product_id}"
+    return True, f"{quantity} × {label} ajouté(s) au panier"
 
 
 
@@ -967,6 +1040,21 @@ if authentication_status:
 
     st.title("📦 Inventaire — Gestion Complète")
     st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')
+    theme_labels = list(_THEME_LABELS.keys())
+    current_theme_label = {
+        value: label for label, value in _THEME_LABELS.items()
+    }.get(st.session_state.get("ui_theme", "light"), theme_labels[0])
+    selected_label = st.sidebar.selectbox(
+        "Apparence",
+        options=theme_labels,
+        index=theme_labels.index(current_theme_label),
+    )
+    chosen_theme = _THEME_LABELS[selected_label]
+    if chosen_theme != st.session_state.get("ui_theme"):
+        st.session_state["ui_theme"] = chosen_theme
+        apply_ui_theme(chosen_theme)
+    else:
+        apply_ui_theme(chosen_theme)
     authenticator.logout('Déconnexion', 'sidebar')
 
     # Définition des onglets fonctionnels de l'application
@@ -1339,7 +1427,10 @@ if authentication_status:
     # ---------------- Vente (PoS) ----------------
 
     with pos_tab:
-        cart_items = _ensure_cart_state()
+        for legacy_key in ("product_to_add_id", "product_to_add_qty", "add_to_cart_triggered"):
+            st.session_state.pop(legacy_key, None)
+
+        cart_items = list(_ensure_cart_state())
         cart_df = _normalize_cart_dataframe(cart_items)
         cart_df = cart_df.assign(
             prix_total=lambda df_: df_["prix_vente"] * df_["qty"],
@@ -1367,7 +1458,42 @@ if authentication_status:
             tone="citrus",
         )
 
+        diag_df = load_stock_diagnostics()
+        with workspace_panel(
+            "Diagnostic stock", 
+            "Surveille les écarts entre stocks comptés et mouvements enregistrés en temps réel.",
+            icon="🚨",
+            accent="amber",
+        ):
+            if diag_df is None or diag_df.empty:
+                st.success("Aucun écart détecté, les stocks sont alignés ✅")
+            else:
+                diag_display = diag_df.copy()
+                diag_display["ecart_abs"] = diag_display["ecart"].abs()
+                top_rows = diag_display.sort_values("ecart_abs", ascending=False).head(5)
+                st.dataframe(
+                    top_rows.rename(
+                        columns={
+                            "nom": "Produit",
+                            "stock_actuel": "Stock système",
+                            "stock_calcule": "Stock mouvements",
+                            "ecart": "Écart",
+                        }
+                    )[["Produit", "Stock système", "Stock mouvements", "Écart"]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+                worst_row = top_rows.iloc[0]
+                st.warning(
+                    f"Écart maximal sur {worst_row['nom']} : {worst_row['ecart']:+.2f} unité(s)",
+                    icon="⚠️",
+                )
+                st.caption("Liste limitée aux 5 écarts les plus importants. Rafraîchir la page pour recharger les données.")
+
         cart_col, input_col = st.columns([1.35, 1])
+
+        success_message = st.session_state.pop("pos_success_message", None)
 
         with cart_col:
             with workspace_panel(
@@ -1376,6 +1502,18 @@ if authentication_status:
                 icon="🛍️",
                 accent="citrus",
             ):
+                if success_message:
+                    st.success(success_message)
+                    receipt_data = st.session_state.get("pos_receipt")
+                    if receipt_data:
+                        st.download_button(
+                            "Télécharger le ticket (PDF)",
+                            data=receipt_data.get("content", b""),
+                            file_name=receipt_data.get("filename", "ticket.pdf"),
+                            mime="application/pdf",
+                            key="download_pos_receipt",
+                        )
+
                 if cart_df.empty:
                     st.info("Le panier est vide. Ajoutez un produit pour démarrer la vente.")
                 else:
@@ -1404,37 +1542,58 @@ if authentication_status:
                         key="clear_cart_btn",
                     ):
                         _clear_cart()
+                        _reset_pos_inputs()
                         st.rerun()
 
                 with action_cols[1]:
-                    if cart_items and st.button(
+                    processing_sale = bool(st.session_state.get("pos_processing", False))
+                    finalize_clicked = st.button(
                         "Finaliser la vente",
                         key="btn_finalize_sale",
                         type="primary",
-                    ):
-                        with st.spinner("Traitement de la vente en cours..."):
-                            sale_ok, sale_msg = process_sale_transaction(
-                                cart_items,
-                                st.session_state.get("username", "inconnu"),
-                            )
+                        disabled=processing_sale,
+                    )
 
-                        if sale_ok:
-                            st.success("Vente finalisée et stock mis à jour ✅")
-                            _clear_cart()
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
+                    if cart_items and finalize_clicked:
+                        if processing_sale:
+                            st.info("Une vente est déjà en cours de traitement…")
                         else:
-                            error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
-                            st.error(error_msg)
+                            st.session_state["pos_processing"] = True
+                            try:
+                                with st.spinner("Traitement de la vente en cours..."):
+                                    sale_ok, sale_msg, receipt_payload = process_sale_transaction(
+                                        cart_items,
+                                        st.session_state.get("username", "inconnu"),
+                                    )
+
+                                if sale_ok:
+                                    st.session_state["pos_success_message"] = (
+                                        "Vente finalisée et stock mis à jour ✅"
+                                    )
+                                    _clear_cart()
+                                    st.session_state["pos_receipt"] = receipt_payload
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "trending",
+                                        "product_options",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                        "table_counts",
+                                        "table_preview",
+                                        "stock_diagnostics",
+                                    )
+                                    st.session_state["pos_processing"] = False
+                                    st.rerun()
+                                else:
+                                    error_msg = (
+                                        sale_msg
+                                        or "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                                    )
+                                    st.error(error_msg)
+                                    st.session_state["pos_receipt"] = None
+                            finally:
+                                st.session_state["pos_processing"] = False
 
         with input_col:
             with workspace_panel(
@@ -1455,73 +1614,47 @@ if authentication_status:
                     product_names = ["-- Erreur de chargement --"]
                     product_options = {}
 
+                feedback_slot = st.empty()
+
                 with st.form("pos_input_form", clear_on_submit=False):
                     selected_product_name = st.selectbox(
                         "Sélectionner un produit (nom)",
                         options=product_names,
-                        index=0,
                         key="pos_product_selectbox",
                     )
                     qty_to_add = st.number_input(
                         "Quantité",
                         min_value=1,
-                        value=1,
                         step=1,
                         key="pos_qty_input",
                     )
                     add_button = st.form_submit_button("Ajouter au panier")
 
-                if add_button and selected_product_name != "-- Sélectionner un produit --":
-                    selected_product_id = product_options.get(selected_product_name)
-
-                    if selected_product_id:
-                        st.session_state["product_to_add_id"] = selected_product_id
-                        st.session_state["product_to_add_qty"] = qty_to_add
-                        st.session_state["add_to_cart_triggered"] = True
+                if add_button:
+                    if selected_product_name == "-- Sélectionner un produit --":
+                        feedback_slot.warning(
+                            "Veuillez sélectionner un produit pour l'ajouter au panier."
+                        )
                     else:
-                        st.error("Erreur: ID produit non trouvé après sélection.")
-                elif add_button:
-                    st.warning("Veuillez sélectionner un produit pour l'ajouter au panier.")
+                        selected_product_id = product_options.get(selected_product_name)
 
-                if st.session_state.get("add_to_cart_triggered", False):
-                    product_id = st.session_state.get("product_to_add_id")
-                    quantity = st.session_state.get("product_to_add_qty")
+                        if not selected_product_id:
+                            feedback_slot.error(
+                                "Erreur: ID produit non trouvé après sélection."
+                            )
+                        else:
+                            success, message = _add_product_to_cart(
+                                int(selected_product_id),
+                                int(qty_to_add),
+                                df_products,
+                            )
 
-                    if product_id and quantity > 0:
-                        try:
-                            product_row = df_products[df_products['id'] == product_id].iloc[0]
-
-                            quantity = int(quantity)
-                            cart_items = _ensure_cart_state()
-
-                            product_data = {
-                                'id': int(product_row['id']),
-                                'nom': product_row['nom'],
-                                'prix_vente': float(product_row['prix_vente']),
-                                'tva': float(product_row['tva']),
-                                'qty': quantity
-                            }
-
-                            found = False
-                            for item in cart_items:
-                                if item['id'] == product_id:
-                                    item['qty'] += quantity
-                                    found = True
-                                    break
-
-                            if not found:
-                                cart_items.append(product_data)
-
-                            st.toast(f"✅ {quantity} x {product_data['nom']} ajouté(s) au panier !", icon='🛒')
-                            st.rerun()
-
-                        except IndexError:
-                            st.error(f"Erreur : Produit ID {product_id} non trouvé dans le catalogue.")
-                        except Exception as e:
-                            st.error(f"Erreur inattendue lors de l'ajout au panier : {e}")
-
-                    for key in ("product_to_add_id", "product_to_add_qty", "add_to_cart_triggered"):
-                        st.session_state.pop(key, None)
+                            if success:
+                                _reset_pos_inputs()
+                                st.toast(f"✅ {message}", icon="🛒")
+                                st.rerun()
+                            else:
+                                feedback_slot.warning(message)
 
     # ---------------- Catalogue ----------------
 

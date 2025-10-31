@@ -2,10 +2,13 @@
 
 :root {
     --color-background: #f5f7fb;
+    --gradient-start: #f9fbff;
     --color-surface: #ffffff;
     --color-surface-alt: #f0f4ff;
     --color-text: #1f2937;
     --color-muted: #6b7280;
+    --color-heading: #0f172a;
+    --color-border: rgba(148, 163, 184, 0.25);
     --color-primary: #2563eb;
     --color-secondary: #7c3aed;
     --color-success: #16a34a;
@@ -18,8 +21,26 @@
     --shadow-border: 0 0 0 1px rgba(15, 23, 42, 0.05);
 }
 
+body[data-theme='dark'] {
+    --color-background: #0b1220;
+    --gradient-start: #111827;
+    --color-surface: #162132;
+    --color-surface-alt: #1f2937;
+    --color-text: #e5e7eb;
+    --color-muted: #9ca3af;
+    --color-heading: #f9fafb;
+    --color-border: rgba(148, 163, 184, 0.35);
+    --color-primary: #3b82f6;
+    --color-secondary: #a855f7;
+    --color-success: #22c55e;
+    --color-warning: #fb923c;
+    --color-danger: #f87171;
+    --shadow-soft: 0 18px 42px rgba(15, 23, 42, 0.45);
+    --shadow-border: 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+
 body {
-    background: linear-gradient(180deg, #f9fbff 0%, var(--color-background) 100%);
+    background: linear-gradient(180deg, var(--gradient-start) 0%, var(--color-background) 100%);
     color: var(--color-text);
     font-family: "Inter", "Segoe UI", -apple-system, sans-serif;
     font-size: 16px;
@@ -36,7 +57,7 @@ h5,
 h6 {
     font-family: "Poppins", "Inter", sans-serif;
     font-weight: 600;
-    color: #0f172a;
+    color: var(--color-heading);
     letter-spacing: -0.01em;
 }
 
@@ -78,9 +99,9 @@ a:focus {
 }
 
 [data-testid="stSidebar"] {
-    background: rgba(255, 255, 255, 0.85);
+    background: var(--color-surface);
     backdrop-filter: blur(16px);
-    border-right: 1px solid rgba(148, 163, 184, 0.12);
+    border-right: 1px solid var(--color-border);
 }
 
 [data-testid="stSidebar"] > div {
@@ -118,6 +139,63 @@ a:focus {
     outline-offset: 2px;
 }
 
+.stSelectbox > label {
+    font-weight: 600;
+    color: var(--color-muted);
+    margin-bottom: 0.35rem;
+    display: inline-block;
+}
+
+.stSelectbox div[data-baseweb="select"] {
+    min-width: 0;
+}
+
+.stSelectbox div[data-baseweb="select"] > div {
+    color: var(--color-text) !important;
+    font-weight: 500;
+    background: var(--color-surface) !important;
+    border-radius: var(--radius-sm);
+    min-height: 48px;
+}
+
+.stSelectbox div[data-baseweb="select"] svg {
+    color: var(--color-muted);
+}
+
+.stSelectbox [data-baseweb="popover"] {
+    z-index: 999 !important;
+}
+
+.stSelectbox [data-baseweb="list"] {
+    background: var(--color-surface);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-soft);
+    overflow: hidden;
+}
+
+.stSelectbox [data-baseweb="option"] {
+    color: var(--color-text);
+    font-family: "Inter", sans-serif;
+}
+
+.stSelectbox [data-baseweb="option"]:hover {
+    background: var(--color-surface-alt);
+}
+
+.stForm {
+    background: var(--color-surface);
+    padding: 1.25rem;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-border);
+    border: 1px solid var(--color-border);
+}
+
+.stForm label {
+    font-weight: 600;
+    color: var(--color-muted);
+}
+
 input,
 textarea,
 select,
@@ -126,9 +204,9 @@ select,
 .stSelectbox div[data-baseweb="select"] > div,
 .stDateInput input {
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    border: 1px solid var(--color-border) !important;
     box-shadow: none !important;
-    background-color: rgba(255, 255, 255, 0.9) !important;
+    background-color: var(--color-surface) !important;
     padding: 0.6rem 0.75rem !important;
     font-size: 0.95rem;
 }
@@ -136,7 +214,7 @@ select,
 input:focus,
 textarea:focus,
 select:focus {
-    border-color: rgba(37, 99, 235, 0.65) !important;
+    border-color: var(--color-primary) !important;
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
 }
 
