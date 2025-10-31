@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from html import escape
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
@@ -1063,6 +1064,7 @@ if authentication_status:
     # Définition des onglets fonctionnels de l'application
     (
         showcase_tab,
+        supply_tab,
         pos_tab,
         catalog_tab,
         mvt_tab,
@@ -1073,6 +1075,7 @@ if authentication_status:
         admin_tab,
     ) = st.tabs([
         "Vitrine",
+        "Approvisionnement",
         "Vente (PoS)",
         "Catalogue",
         "Stock & Mvt",
@@ -1426,6 +1429,215 @@ if authentication_status:
                     elif ean_value:
                         st.caption("Aucun visuel trouvé pour ce code-barres.")
 
+
+    # ---------------- Approvisionnement dynamique ----------------
+
+    with supply_tab:
+        st.header("Plan d’approvisionnement dynamique")
+
+        catalog_df = load_customer_catalog()
+
+        if catalog_df.empty:
+            st.info("Aucune donnée produit disponible pour établir un plan de réassort.")
+        else:
+            config_cols = st.columns(3)
+            target_coverage = config_cols[0].slider(
+                "Objectif de couverture (jours)",
+                min_value=7,
+                max_value=60,
+                value=21,
+                step=1,
+                key="supply_target_coverage",
+            )
+            raw_alert_threshold = config_cols[1].slider(
+                "Seuil d’alerte (jours de stock restant)",
+                min_value=1,
+                max_value=30,
+                value=7,
+                step=1,
+                key="supply_alert_threshold",
+            )
+            min_daily_sales = config_cols[2].number_input(
+                "Ignorer les articles sous (ventes/jour)",
+                min_value=0.0,
+                max_value=50.0,
+                value=0.0,
+                step=0.1,
+                key="supply_min_daily_sales",
+                help=(
+                    "Fixez un seuil pour concentrer les recommandations sur les produits à rotation suffisante."
+                ),
+            )
+
+            effective_alert = max(1, min(int(raw_alert_threshold), int(target_coverage)))
+            if raw_alert_threshold > target_coverage:
+                st.caption(
+                    f"ℹ️ Le seuil d’alerte est plafonné à {effective_alert} jour(s) pour rester cohérent avec l’objectif de couverture."
+                )
+            min_sales_threshold = float(min_daily_sales)
+
+            daily_sales = (catalog_df["ventes_30j"].fillna(0.0) / 30.0).clip(lower=0.0)
+            stock_levels = catalog_df["stock_actuel"].fillna(0.0).clip(lower=0.0)
+
+            coverage_days = np.where(
+                daily_sales > 0,
+                stock_levels / daily_sales,
+                np.where(stock_levels > 0, np.inf, 0.0),
+            )
+
+            planning_df = catalog_df.assign(
+                ventes_jour=daily_sales,
+                couverture_jours=coverage_days,
+            )
+
+            planning_df["objectif_stock"] = np.maximum(target_coverage * planning_df["ventes_jour"], 0.0)
+            raw_reorder = planning_df["objectif_stock"] - planning_df["stock_actuel"]
+            planning_df["quantite_a_commander"] = np.maximum(np.ceil(raw_reorder), 0).astype(int)
+            planning_df["valeur_commande"] = planning_df["quantite_a_commander"] * planning_df["prix_vente"].fillna(0.0)
+            planning_df["ecart_couverture"] = planning_df["couverture_jours"] - float(target_coverage)
+
+            if min_sales_threshold > 0:
+                planning_df = planning_df[planning_df["ventes_jour"] >= min_sales_threshold]
+
+            if min_sales_threshold <= 0:
+                rotation_mask = planning_df["ventes_jour"] > 0
+            else:
+                rotation_mask = planning_df["ventes_jour"] >= min_sales_threshold
+
+            priority_levels = np.select(
+                [
+                    rotation_mask & (planning_df["couverture_jours"] <= effective_alert),
+                    rotation_mask & (planning_df["quantite_a_commander"] > 0),
+                    planning_df["quantite_a_commander"] > 0,
+                ],
+                ["Critique", "Tendue", "Surveillance"],
+                default="Confort",
+            )
+            planning_df["niveau_priorite"] = priority_levels
+            priority_order = {"Critique": 0, "Tendue": 1, "Surveillance": 2, "Confort": 3}
+            planning_df["ordre_priorite"] = planning_df["niveau_priorite"].map(priority_order)
+
+            categories = sorted(planning_df["categorie"].dropna().unique().tolist())
+            category_selection = st.multiselect(
+                "Catégories à analyser",
+                options=categories,
+                default=categories,
+                key="supply_category_filter",
+            )
+            filtered_df = (
+                planning_df
+                if not category_selection
+                else planning_df[planning_df["categorie"].isin(category_selection)]
+            )
+
+            search_term = st.text_input(
+                "Recherche produit ou EAN",
+                key="supply_search_term",
+                placeholder="Nom, catégorie ou code-barres…",
+            ).strip()
+            if search_term:
+                lowered = search_term.lower()
+                filtered_df = filtered_df[
+                    filtered_df["nom"].str.contains(lowered, case=False, na=False)
+                    | filtered_df["categorie"].str.contains(lowered, case=False, na=False)
+                    | filtered_df["ean"].astype(str).str.contains(lowered, case=False, na=False)
+                ]
+
+            if filtered_df.empty:
+                st.info("Aucun article ne correspond aux filtres appliqués.")
+            else:
+                filtered_df = filtered_df.copy()
+                filtered_df["ventes_jour"] = filtered_df["ventes_jour"].round(2)
+                filtered_df["couverture_jours"] = filtered_df["couverture_jours"].replace(-np.inf, 0.0)
+                filtered_df["valeur_commande"] = filtered_df["valeur_commande"].round(2)
+                filtered_df["ecart_couverture"] = filtered_df["ecart_couverture"].round(1)
+
+                filtered_df = filtered_df.sort_values(
+                    by=["ordre_priorite", "couverture_jours", "ventes_jour"],
+                    ascending=[True, True, False],
+                )
+
+                metrics_cols = st.columns(4)
+                metrics_cols[0].metric(
+                    "Articles analysés",
+                    f"{len(filtered_df):,}".replace(",", " "),
+                )
+                metrics_cols[1].metric(
+                    "Réassorts recommandés",
+                    f"{int((filtered_df['quantite_a_commander'] > 0).sum()):,}".replace(",", " "),
+                )
+                metrics_cols[2].metric(
+                    "Unités à commander",
+                    f"{int(filtered_df['quantite_a_commander'].sum()):,}".replace(",", " "),
+                )
+                metrics_cols[3].metric(
+                    "Valeur estimée",
+                    f"{filtered_df['valeur_commande'].sum():,.2f} €".replace(",", " "),
+                )
+
+                display_columns = [
+                    "nom",
+                    "categorie",
+                    "ventes_jour",
+                    "stock_actuel",
+                    "couverture_jours",
+                    "ecart_couverture",
+                    "niveau_priorite",
+                    "quantite_a_commander",
+                    "valeur_commande",
+                    "ean",
+                ]
+
+                st.dataframe(
+                    filtered_df[display_columns],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "nom": st.column_config.TextColumn("Produit"),
+                        "categorie": st.column_config.TextColumn("Catégorie"),
+                        "ventes_jour": st.column_config.NumberColumn(
+                            "Ventes / jour", format="%.2f"
+                        ),
+                        "stock_actuel": st.column_config.NumberColumn("Stock", format="%.0f"),
+                        "couverture_jours": st.column_config.NumberColumn(
+                            "Couverture (j)", format="%.1f"
+                        ),
+                        "ecart_couverture": st.column_config.NumberColumn(
+                            "Écart vs objectif", format="%.1f"
+                        ),
+                        "niveau_priorite": st.column_config.TextColumn("Priorité"),
+                        "quantite_a_commander": st.column_config.NumberColumn(
+                            "Qté à commander", format="%d"
+                        ),
+                        "valeur_commande": st.column_config.NumberColumn(
+                            "Valeur (€)", format="%.2f €"
+                        ),
+                        "ean": st.column_config.TextColumn("EAN"),
+                    },
+                )
+
+                with st.expander("Exporter la proposition"):
+                    export_df = filtered_df[display_columns].rename(
+                        columns={
+                            "nom": "Produit",
+                            "categorie": "Catégorie",
+                            "ventes_jour": "Ventes_Jour",
+                            "stock_actuel": "Stock",
+                            "couverture_jours": "Couverture_Jours",
+                            "ecart_couverture": "Ecart_Couverture",
+                            "niveau_priorite": "Priorite",
+                            "quantite_a_commander": "Quantite_Commander",
+                            "valeur_commande": "Valeur_Commande",
+                            "ean": "EAN",
+                        }
+                    )
+                    csv_buffer = export_df.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Télécharger le plan (CSV)",
+                        data=csv_buffer,
+                        file_name="plan_approvisionnement.csv",
+                        mime="text/csv",
+                    )
 
     # ---------------- Vente (PoS) ----------------
 
