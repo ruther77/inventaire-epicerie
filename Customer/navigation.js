@@ -3,25 +3,19 @@
     const savedSearchKey = 'inventaire_saved_searches';
 
     const body = document.body;
-    const catalogPanel = document.querySelector('[data-catalog-panel]');
-    const catalogBackdrop = document.querySelector('[data-catalog-backdrop]');
-    const catalogToggles = document.querySelectorAll('[data-catalog-toggle]');
+    const workspacePanel = document.querySelector('[data-workspace-panel]');
+    const workspaceBackdrop = document.querySelector('[data-workspace-backdrop]');
+    const workspaceToggles = document.querySelectorAll('[data-workspace-toggle]');
 
     const globalSearch = document.querySelector('[data-global-search]');
     const searchToggles = document.querySelectorAll('[data-search-toggle]');
-
-    const mobileNav = document.querySelector('[data-mobile-nav]');
-    const mobileToggles = document.querySelectorAll('[data-mobile-toggle]');
-    const mobileBackdrop = document.querySelector('[data-mobile-backdrop]');
 
     const pinnedContainer = document.querySelector('[data-pinned-container]');
     const pinnedList = pinnedContainer ? pinnedContainer.querySelector('[data-pinned-list]') : null;
     const pinnedEmpty = pinnedContainer ? pinnedContainer.querySelector('[data-empty-message]') : null;
     const pinnedClear = pinnedContainer ? pinnedContainer.querySelector('[data-clear-pins]') : null;
     const pinnedButtons = document.querySelectorAll('[data-pin-toggle]');
-    const pinnedSummary = document.querySelector('[data-pinned-summary]');
-    const pinnedMobile = document.querySelector('[data-pinned-mobile]');
-    const pinnedMobileEmpty = document.querySelector('[data-mobile-empty]');
+    const pinnedSummaries = document.querySelectorAll('[data-pinned-summary]');
 
     const savedSearchContainers = document.querySelectorAll('[data-saved-searches]');
     const savedPlaceholder = document.querySelector('[data-no-saved-search]');
@@ -81,39 +75,40 @@
         }
         panel.classList.remove('is-open');
         panel.setAttribute('aria-hidden', 'true');
-        lockBodyScroll(false);
+        lockBodyScroll(anyPanelOpen());
     }
 
     function anyPanelOpen() {
         return (
-            (catalogPanel && catalogPanel.classList.contains('is-open')) ||
-            (globalSearch && globalSearch.classList.contains('is-open')) ||
-            (mobileNav && mobileNav.classList.contains('is-open'))
+            (workspacePanel && workspacePanel.classList.contains('is-open')) ||
+            (globalSearch && globalSearch.classList.contains('is-open'))
         );
     }
 
     function closeAllPanels() {
-        closePanel(catalogPanel);
+        closePanel(workspacePanel);
         closePanel(globalSearch);
-        closePanel(mobileNav);
-        if (catalogBackdrop) {
-            catalogBackdrop.classList.remove('is-visible');
+        if (workspaceBackdrop) {
+            workspaceBackdrop.classList.remove('is-visible');
         }
-        if (mobileBackdrop) {
-            mobileBackdrop.classList.remove('is-visible');
-        }
+        workspaceToggles.forEach((toggle) => {
+            toggle.setAttribute('aria-expanded', 'false');
+        });
     }
 
-    function toggleCatalog() {
-        if (!catalogPanel) {
+    function toggleWorkspace(trigger) {
+        if (!workspacePanel) {
             return;
         }
-        const isOpen = catalogPanel.classList.contains('is-open');
+        const isOpen = workspacePanel.classList.contains('is-open');
         closeAllPanels();
         if (!isOpen) {
-            openPanel(catalogPanel);
-            if (catalogBackdrop) {
-                catalogBackdrop.classList.add('is-visible');
+            openPanel(workspacePanel);
+            if (workspaceBackdrop) {
+                workspaceBackdrop.classList.add('is-visible');
+            }
+            if (trigger) {
+                trigger.setAttribute('aria-expanded', 'true');
             }
         }
     }
@@ -126,20 +121,6 @@
         closeAllPanels();
         if (!isOpen) {
             openPanel(globalSearch);
-        }
-    }
-
-    function toggleMobileNav() {
-        if (!mobileNav) {
-            return;
-        }
-        const isOpen = mobileNav.classList.contains('is-open');
-        closeAllPanels();
-        if (!isOpen) {
-            openPanel(mobileNav);
-            if (mobileBackdrop) {
-                mobileBackdrop.classList.add('is-visible');
-            }
         }
     }
 
@@ -187,36 +168,22 @@
             }
         }
 
-        if (pinnedSummary) {
-            pinnedSummary.innerHTML = '';
+        pinnedSummaries.forEach((summary) => {
+            summary.innerHTML = '';
             if (pinnedItems.length) {
-                pinnedSummary.classList.add('pinned-summary');
+                summary.classList.add('pinned-summary');
                 pinnedItems.forEach((item) => {
                     const chip = document.createElement('a');
                     chip.className = 'pinned-summary__chip';
                     chip.href = item.url;
                     chip.textContent = item.name;
-                    pinnedSummary.append(chip);
+                    summary.append(chip);
                 });
             } else {
-                pinnedSummary.classList.remove('pinned-summary');
-                pinnedSummary.textContent = 'Épinglez des catégories pour les retrouver ici.';
+                summary.classList.remove('pinned-summary');
+                summary.textContent = 'Épinglez des catégories pour les retrouver ici.';
             }
-        }
-
-        if (pinnedMobile) {
-            pinnedMobile.innerHTML = '';
-            pinnedItems.forEach((item) => {
-                const chip = document.createElement('a');
-                chip.className = 'mobile-chip';
-                chip.href = item.url;
-                chip.textContent = item.name;
-                pinnedMobile.append(chip);
-            });
-            if (pinnedMobileEmpty) {
-                pinnedMobileEmpty.classList.toggle('d-none', pinnedItems.length > 0);
-            }
-        }
+        });
 
         pinnedButtons.forEach((button) => {
             const card = button.closest('[data-category-card]');
@@ -349,15 +316,15 @@
         setActive(contextTabs, initial || 'all', 'data-context-tab');
     }
 
-    catalogToggles.forEach((button) => {
+    workspaceToggles.forEach((button) => {
         button.addEventListener('click', (event) => {
             event.preventDefault();
-            toggleCatalog();
+            toggleWorkspace(button);
         });
     });
 
-    if (catalogBackdrop) {
-        catalogBackdrop.addEventListener('click', () => {
+    if (workspaceBackdrop) {
+        workspaceBackdrop.addEventListener('click', () => {
             closeAllPanels();
         });
     }
@@ -371,19 +338,6 @@
             }
         });
     });
-
-    mobileToggles.forEach((button) => {
-        button.addEventListener('click', (event) => {
-            event.preventDefault();
-            toggleMobileNav();
-        });
-    });
-
-    if (mobileBackdrop) {
-        mobileBackdrop.addEventListener('click', () => {
-            closeAllPanels();
-        });
-    }
 
     pinnedButtons.forEach((button) => {
         button.addEventListener('click', () => handlePin(button));
@@ -424,6 +378,16 @@
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && anyPanelOpen()) {
             closeAllPanels();
+            return;
+        }
+
+        const key = event.key.toLowerCase();
+        if ((event.ctrlKey || event.metaKey) && key === 'k') {
+            event.preventDefault();
+            toggleSearch();
+            if (globalSearch && globalSearch.classList.contains('is-open') && searchInput) {
+                setTimeout(() => searchInput.focus(), 120);
+            }
         }
     });
 
