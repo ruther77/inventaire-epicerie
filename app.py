@@ -4,7 +4,6 @@ import os
 import io
 import math
 import re
-import json
 from contextlib import contextmanager
 from html import escape
 from typing import Any, Dict, List
@@ -18,7 +17,6 @@ from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
-from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from backup_manager import (
     BackupError,
@@ -281,70 +279,6 @@ def _fetch_product_image_url(ean: str | None) -> str | None:
     return None
 
 
-def _build_product_card(product: dict[str, Any]) -> str:
-    """Construit un bloc HTML pour une carte produit de la vitrine."""
-
-    name = escape(str(product.get("nom", "")))
-    category = escape(str(product.get("categorie", "Autre")))
-    price = float(product.get("prix_vente") or 0.0)
-    stock = float(product.get("stock_actuel") or 0.0)
-    ventes = float(product.get("ventes_30j") or 0.0)
-
-    if stock <= 0:
-        stock_label = "Rupture"
-        stock_class = "is-danger"
-    elif stock < 5:
-        stock_label = "Stock bas"
-        stock_class = "is-warning"
-    else:
-        stock_label = "Disponible"
-        stock_class = "is-success"
-
-    ean = product.get("ean")
-    image_url: str | None = None
-    raw_image = product.get("image_url")
-    if isinstance(raw_image, str) and raw_image.strip():
-        image_url = raw_image.strip()
-    elif raw_image is not None and not pd.isna(raw_image):
-        candidate = str(raw_image).strip()
-        image_url = candidate or None
-
-    if not image_url:
-        image_url = _fetch_product_image_url(ean)
-
-    if image_url:
-        media_html = (
-            "<div class=\"catalog-card__media\">"
-            f"<img src=\"{escape(str(image_url), quote=True)}\" alt=\"Visuel produit {name}\" "
-            "loading=\"lazy\" decoding=\"async\"/>"
-            "</div>"
-        )
-    else:
-        placeholder_initial = escape((str(product.get("nom", ""))[:1] or "#").upper())
-        media_html = (
-            "<div class=\"catalog-card__media catalog-card__media--placeholder\" "
-            "aria-label=\"Visuel indisponible\">"
-            f"<span>{placeholder_initial}</span>"
-            "</div>"
-        )
-
-    return f"""
-    <div class="catalog-card">
-        {media_html}
-        <div class="catalog-card__head">
-            <span class="catalog-card__category">{category}</span>
-            <span class="catalog-card__stock {stock_class}">{stock_label}</span>
-        </div>
-        <h4 class="catalog-card__title">{name}</h4>
-        <div class="catalog-card__price">{price:,.2f} €</div>
-        <div class="catalog-card__meta">
-            <span>Stock: {stock:,.0f}</span>
-            <span>Ventes 30j: {ventes:,.0f}</span>
-        </div>
-    </div>
-    """
-
-
 def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
     """Affiche une grille responsive de cartes produit."""
 
@@ -359,26 +293,60 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
         cols = st.columns(columns)
         for col, product in zip(cols, records[start:start + columns]):
             with col:
-                card_html = _build_product_card(product)
-                st.markdown(card_html, unsafe_allow_html=True)
+                with st.container():
+                    name = str(product.get("nom", "")).strip() or "Produit"
+                    category = str(product.get("categorie", "Autre")).strip()
+                    price = float(product.get("prix_vente") or 0.0)
+                    stock = float(product.get("stock_actuel") or 0.0)
+                    ventes = float(product.get("ventes_30j") or 0.0)
+
+                    image_url: str | None = None
+                    raw_image = product.get("image_url")
+                    if isinstance(raw_image, str) and raw_image.strip():
+                        image_url = raw_image.strip()
+                    elif raw_image is not None and not pd.isna(raw_image):
+                        candidate = str(raw_image).strip()
+                        image_url = candidate or None
+
+                    if not image_url:
+                        image_url = _fetch_product_image_url(product.get("ean"))
+
+                    if image_url:
+                        st.image(
+                            image_url,
+                            caption=f"Visuel produit {name}",
+                            use_column_width=True,
+                        )
+                    else:
+                        placeholder_initial = (name[:1] or "#").upper()
+                        st.markdown(
+                            f"### {placeholder_initial}",
+                        )
+                        st.caption("Visuel indisponible")
+
+                    st.caption(category)
+                    st.markdown(f"**{name}**")
+                    st.markdown(f"### {_format_human_number(price, 2)} €")
+
+                    stock_label: str
+                    stock_color: str
+                    if stock <= 0:
+                        stock_label, stock_color = "Rupture", "red"
+                    elif stock < 5:
+                        stock_label, stock_color = "Stock bas", "orange"
+                    else:
+                        stock_label, stock_color = "Disponible", "green"
+
+                    st.markdown(f":{stock_color}[{stock_label}]")
+                    st.caption(
+                        f"Stock: {_format_human_number(stock)} · Ventes 30j: {_format_human_number(ventes)}"
+                    )
 
 
 def _format_human_number(value: float | int, decimals: int = 0) -> str:
     """Formate un nombre en utilisant un séparateur fin non cassant."""
 
     return f"{value:,.{decimals}f}".replace(",", " ")
-
-
-def _build_chip_markup(labels: List[str] | None, chip_class: str) -> str:
-    if not labels:
-        return ""
-
-    chips = "".join(
-        f'<span class="{chip_class}">{escape(str(label))}</span>' for label in labels if label
-    )
-    if not chips:
-        return ""
-    return f'<div class="workspace-hero__actions">{chips}</div>'
 
 
 def render_workspace_hero(
@@ -390,58 +358,43 @@ def render_workspace_hero(
     metrics: List[Dict[str, str]] | None = None,
     tone: str = "sunset",
 ) -> None:
-    """Affiche un bandeau héro pour les espaces CMS."""
+    """Affiche un bandeau héro en utilisant des composants Streamlit natifs."""
 
-    badges_html = _build_chip_markup(badges, "workspace-hero__chip")
+    tone_palette = {
+        "sunset": "orange",
+        "citrus": "orange",
+        "lagoon": "blue",
+        "marine": "blue",
+        "violet": "violet",
+        "emerald": "green",
+        "amber": "orange",
+        "teal": "green",
+        "slate": "violet",
+    }
+    accent_color = tone_palette.get(tone, "blue")
 
-    metric_cards: list[str] = []
-    if metrics:
-        for metric in metrics:
-            label = escape(str(metric.get("label", "")))
-            value = escape(str(metric.get("value", "")))
-            hint = metric.get("hint")
-            hint_html = (
-                f'<span class="workspace-hero__metric-hint">{escape(str(hint))}</span>'
-                if hint
-                else ""
-            )
-            metric_cards.append(
-                """
-                <div class="workspace-hero__metric">
-                    <span class="workspace-hero__metric-label">{label}</span>
-                    <span class="workspace-hero__metric-value">{value}</span>
-                    {hint_html}
-                </div>
-                """.format(label=label, value=value, hint_html=hint_html)
-            )
+    container = st.container()
+    with container:
+        st.markdown(
+            f":{accent_color}[{eyebrow}]",
+        )
+        st.markdown(f"## {title}")
+        st.write(description)
 
-    metrics_html = (
-        f'<div class="workspace-hero__metrics">{"".join(metric_cards)}</div>'
-        if metric_cards
-        else ""
-    )
+        if badges:
+            badge_text = " ".join(f":{accent_color}[{badge}]" for badge in badges if badge)
+            if badge_text:
+                st.markdown(badge_text)
 
-    st.markdown(
-        """
-        <section class="workspace-hero workspace-hero--{tone}">
-            <div class="workspace-hero__content">
-                <p class="workspace-hero__eyebrow">{eyebrow}</p>
-                <h2>{title}</h2>
-                <p>{description}</p>
-                {badges_html}
-            </div>
-            {metrics_html}
-        </section>
-        """.format(
-            tone=escape(tone),
-            eyebrow=escape(eyebrow),
-            title=escape(title),
-            description=escape(description),
-            badges_html=badges_html,
-            metrics_html=metrics_html,
-        ),
-        unsafe_allow_html=True,
-    )
+        if metrics:
+            cols = st.columns(len(metrics))
+            for col, metric in zip(cols, metrics):
+                label = str(metric.get("label", "")).strip() or "–"
+                value = str(metric.get("value", "")).strip() or "–"
+                hint = str(metric.get("hint", "")).strip()
+                col.metric(label=label, value=value)
+                if hint:
+                    col.caption(hint)
 
 
 @contextmanager
@@ -452,46 +405,39 @@ def workspace_panel(
     icon: str | None = None,
     accent: str | None = None,
 ):
-    """Crée un conteneur de panneau stylisé pour structurer les onglets."""
+    """Crée un conteneur de panneau stylisé en s'appuyant sur les conteneurs Streamlit."""
 
-    accent_attr = f" workspace-panel--{escape(accent)}" if accent else ""
-    st.markdown(
-        f'<div class="workspace-panel{accent_attr}">',
-        unsafe_allow_html=True,
-    )
+    accent_palette = {
+        "violet": "violet",
+        "blue": "blue",
+        "green": "green",
+        "orange": "orange",
+        "citrus": "orange",
+        "lagoon": "blue",
+        "marine": "blue",
+        "emerald": "green",
+        "amber": "orange",
+        "teal": "green",
+        "slate": "violet",
+    }
+    accent_color = accent_palette.get(accent or "", "blue")
 
-    if title or description:
-        icon_html = (
-            f'<span class="workspace-panel__icon">{escape(icon)}</span>'
-            if icon
-            else ""
-        )
-        desc_html = (
-            f'<p class="workspace-panel__description">{escape(description)}</p>'
-            if description
-            else ""
-        )
-        st.markdown(
-            """
-            <header class="workspace-panel__heading">
-                {icon_html}
-                <div class="workspace-panel__titles">
-                    <h3>{title}</h3>
-                    {desc_html}
-                </div>
-            </header>
-            """.format(
-                icon_html=icon_html,
-                title=escape(title or ""),
-                desc_html=desc_html,
-            ),
-            unsafe_allow_html=True,
-        )
+    container = st.container()
+    with container:
+        if title or description:
+            heading = title or ""
+            heading_display = f":{accent_color}[{heading}]" if heading else ""
+            if icon:
+                heading_display = f"{icon} {heading_display}" if heading_display else icon
+            if heading_display:
+                st.markdown(f"### {heading_display}")
+            if description:
+                st.caption(description)
 
-    try:
-        yield
-    finally:
-        st.markdown("</div>", unsafe_allow_html=True)
+        try:
+            yield
+        finally:
+            pass
 
 def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     """Construit un DataFrame propre à partir des éléments du panier."""
@@ -1074,35 +1020,20 @@ if authentication_status:
                 formatted = f"{value:,.{decimals}f}".replace(",", " ")
                 return f"{formatted}{suffix}".strip()
 
-            st.markdown(
-                f"""
-                <section class="catalog-hero catalog-hero--sunset">
-                    <div class="catalog-hero__content">
-                        <p class="catalog-hero__eyebrow">Expérience boutique</p>
-                        <h2>Animez votre vitrine digitale avec des insights temps réel.</h2>
-                        <p>Visualisez la vitalité de vos rayons, identifiez les alertes prioritaires et préparez vos opérations commerciales en toute confiance.</p>
-                        <div class="catalog-hero__actions">
-                            <span class="catalog-hero__chip">Nouveautés</span>
-                            <span class="catalog-hero__chip catalog-hero__chip--outline">{total_products} références suivies</span>
-                        </div>
-                    </div>
-                    <div class="catalog-hero__glance">
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Valeur stock</span>
-                            <span class="hero-stat__value">{_format_number(stock_value)} €</span>
-                        </div>
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Potentiel 30&nbsp;j</span>
-                            <span class="hero-stat__value">{_format_number(potential_sales)} €</span>
-                        </div>
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Alertes actives</span>
-                            <span class="hero-stat__value hero-stat__value--accent">{low_stock_count}</span>
-                        </div>
-                    </div>
-                </section>
-                """,
-                unsafe_allow_html=True,
+            render_workspace_hero(
+                eyebrow="Expérience boutique",
+                title="Animez votre vitrine digitale avec des insights temps réel.",
+                description=(
+                    "Visualisez la vitalité de vos rayons, identifiez les alertes prioritaires et "
+                    "préparez vos opérations commerciales en toute confiance."
+                ),
+                badges=["Nouveautés", f"{total_products} références suivies"],
+                metrics=[
+                    {"label": "Valeur stock", "value": f"{_format_number(stock_value)} €"},
+                    {"label": "Potentiel 30 j", "value": f"{_format_number(potential_sales)} €"},
+                    {"label": "Alertes actives", "value": f"{low_stock_count}"},
+                ],
+                tone="sunset",
             )
 
             metrics_cols = st.columns(4)
