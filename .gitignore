@@ -34,3 +34,7 @@ db_data/
 .env
 .env.local
 secrets.json
+
+# Front-end build artifacts
+frontend/node_modules/
+frontend/dist/
