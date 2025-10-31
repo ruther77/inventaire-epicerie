@@ -8,7 +8,6 @@ from functools import lru_cache
 from typing import Iterable, List
 import hashlib
 import hmac
-import json
 import os
 import secrets
 
@@ -17,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import re
 
-from pydantic import BaseModel, Field, validator
+import jwt
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
 from data_repository import (
@@ -39,12 +39,21 @@ from product_service import (
 
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
-AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "__inventaire_epicerie_secret__")
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "__inventaire_epicerie_secret_key__")
 ALLOWED_ROLES = {"admin", "standard"}
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_ITERATIONS = int(os.getenv("AUTH_PBKDF2_ITERATIONS", "390000"))
 PASSWORD_ALGORITHM = "sha256"
 PASSWORD_SALT_BYTES = 16
+
+if len(AUTH_SECRET_KEY) < 32:
+    raise RuntimeError("AUTH_SECRET_KEY must be at least 32 characters long for JWT signing security.")
+
+_raw_allowed_origins = os.getenv("API_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+ALLOWED_ORIGINS = [origin.strip() for origin in _raw_allowed_origins.split(",") if origin.strip()]
+if not ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+ALLOW_ALL_ORIGINS = len(ALLOWED_ORIGINS) == 1 and ALLOWED_ORIGINS[0] == "*"
 
 token_bearer = HTTPBearer(auto_error=False)
 
@@ -81,11 +90,12 @@ class POSCartLine(BaseModel):
     prix_vente: float | None = Field(default=None, ge=0)
     tva: float | None = Field(default=None, ge=0)
 
-    @validator("nom")
+    @field_validator("nom", mode="before")
+    @classmethod
     def _strip_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        cleaned = value.strip()
+        cleaned = str(value).strip()
         return cleaned or None
 
 
@@ -111,7 +121,8 @@ class ProductUpdateRequest(BaseModel):
     seuil_alerte: float | None = Field(default=None, ge=0)
     barcodes: List[str] | None = Field(default=None, description="Codes-barres associés")
 
-    @validator("barcodes")
+    @field_validator("barcodes", mode="before")
+    @classmethod
     def _clean_barcodes(cls, value: Iterable[str] | None) -> list[str] | None:
         if value is None:
             return None
@@ -153,18 +164,20 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6, max_length=200)
     is_active: bool = True
 
-    @validator("role")
+    @field_validator("role")
+    @classmethod
     def _validate_role(cls, value: str) -> str:
-        role = value.lower()
+        role = str(value).lower()
         if role not in ALLOWED_ROLES:
             raise ValueError("Rôle utilisateur invalide")
         return role
 
-    @validator("email")
+    @field_validator("email")
+    @classmethod
     def _validate_email(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        email = value.strip()
+        email = str(value).strip()
         if not email:
             return None
         if not EMAIL_REGEX.match(email):
@@ -179,20 +192,22 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=6, max_length=200)
     is_active: bool | None = None
 
-    @validator("role")
+    @field_validator("role")
+    @classmethod
     def _validate_role(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        role = value.lower()
+        role = str(value).lower()
         if role not in ALLOWED_ROLES:
             raise ValueError("Rôle utilisateur invalide")
         return role
 
-    @validator("email")
+    @field_validator("email")
+    @classmethod
     def _validate_email(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        email = value.strip()
+        email = str(value).strip()
         if not email:
             return None
         if not EMAIL_REGEX.match(email):
@@ -244,40 +259,17 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode["exp"] = int(expire.timestamp())
-
-    header = {"alg": "HS256", "typ": "JWT"}
-    header_segment = _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
-    payload_segment = _b64url_encode(json.dumps(to_encode, separators=(",", ":")).encode("utf-8"))
-    signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
-    signature = hmac.new(AUTH_SECRET_KEY.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    signature_segment = _b64url_encode(signature)
-    return f"{header_segment}.{payload_segment}.{signature_segment}"
+    to_encode["exp"] = expire
+    return jwt.encode(to_encode, AUTH_SECRET_KEY, algorithm="HS256")
 
 
 def decode_access_token(token: str) -> dict:
     try:
-        header_segment, payload_segment, signature_segment = token.split(".")
-    except ValueError as exc:
-        raise InvalidTokenError("format de jeton invalide") from exc
-
-    signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
-    expected_signature = hmac.new(AUTH_SECRET_KEY.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    signature = _b64url_decode(signature_segment)
-    if not hmac.compare_digest(expected_signature, signature):
-        raise InvalidTokenError("signature invalide")
-
-    payload_bytes = _b64url_decode(payload_segment)
-    try:
-        payload = json.loads(payload_bytes)
-    except json.JSONDecodeError as exc:
-        raise InvalidTokenError("charge utile illisible") from exc
-
-    exp = payload.get("exp")
-    if exp is not None:
-        now_ts = int(datetime.now(timezone.utc).timestamp())
-        if now_ts >= int(exp):
-            raise InvalidTokenError("jeton expiré")
+        payload = jwt.decode(token, AUTH_SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError as exc:
+        raise InvalidTokenError("jeton expiré") from exc
+    except jwt.InvalidTokenError as exc:
+        raise InvalidTokenError("jeton invalide") from exc
 
     return payload
 
@@ -369,8 +361,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=["*"] if ALLOW_ALL_ORIGINS else ALLOWED_ORIGINS,
+        allow_credentials=not ALLOW_ALL_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -423,7 +415,7 @@ def create_app() -> FastAPI:
         if existing is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
 
-        updates = payload.dict(exclude_unset=True)
+        updates = payload.model_dump(exclude_unset=True)
         if "role" in updates and updates["role"] is not None:
             updates["role"] = updates["role"].lower()
 
@@ -487,7 +479,7 @@ def create_app() -> FastAPI:
     @app.post("/pos/checkout", response_model=CheckoutResponse)
     def checkout(payload: CheckoutRequest) -> CheckoutResponse:
         success, message, receipt = process_sale_transaction(
-            [item.dict() for item in payload.cart],
+            [item.model_dump() for item in payload.cart],
             payload.username or "api_user",
         )
 
@@ -516,7 +508,7 @@ def create_app() -> FastAPI:
                 product_id,
                 {
                     key: value
-                    for key, value in payload.dict(exclude={"barcodes"}).items()
+                    for key, value in payload.model_dump(exclude={"barcodes"}).items()
                     if value is not None
                 },
                 payload.barcodes,
