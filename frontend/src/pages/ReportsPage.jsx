@@ -14,20 +14,34 @@ export default function ReportsPage() {
   }, {});
 
   return (
-    <section className="card">
-      <h2>Rapports express</h2>
-      <p>Cette section propose un aperçu rapide de la répartition des stocks.</p>
-      {isLoading && <p>Calcul des indicateurs…</p>}
-      {!isLoading && (
-        <div className="grid two-columns">
-          {Object.entries(categories).map(([label, value]) => (
-            <div key={label}>
-              <p className="badge">{label}</p>
-              <h3>{value}</h3>
-            </div>
-          ))}
+    <div className="page">
+      <header className="page-header">
+        <div>
+          <p className="page-eyebrow">Explorer</p>
+          <h1>Analyses & rapports</h1>
+          <p className="page-description">
+            Obtenez un aperçu instantané de la répartition des stocks par catégorie.
+          </p>
+          <div className="page-badges">
+            <span className="badge badge-beta">Bêta</span>
+          </div>
         </div>
-      )}
-    </section>
+      </header>
+      <section className="card">
+        <h2>Répartition des stocks</h2>
+        {isLoading ? (
+          <p>Calcul des indicateurs…</p>
+        ) : (
+          <div className="grid two-columns">
+            {Object.entries(categories).map(([label, value]) => (
+              <div key={label} className="report-card">
+                <p className="badge">{label}</p>
+                <h3>{value}</h3>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

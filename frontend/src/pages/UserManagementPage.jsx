@@ -75,10 +75,23 @@ export default function UserManagementPage() {
 
   if (!canManage) {
     return (
-      <section className="card">
-        <h2>Gestion des utilisateurs</h2>
-        <p>Vous devez disposer des droits administrateur pour accéder à cette section.</p>
-      </section>
+      <div className="page">
+        <header className="page-header">
+          <div>
+            <p className="page-eyebrow">Administration</p>
+            <h1>Gestion des utilisateurs</h1>
+            <p className="page-description">
+              Connectez-vous avec un compte administrateur pour accéder aux paramètres avancés.
+            </p>
+          </div>
+          <div className="page-badges">
+            <span className="badge badge-warning">Restreint</span>
+          </div>
+        </header>
+        <section className="card">
+          <p>Vous devez disposer des droits administrateur pour accéder à cette section.</p>
+        </section>
+      </div>
     );
   }
 
@@ -148,130 +161,135 @@ export default function UserManagementPage() {
   const users = usersQuery.data ?? [];
 
   return (
-    <section className="card">
-      <h2>Comptes utilisateurs</h2>
-      <p>Pilotez les accès à la plateforme, créez de nouveaux comptes ou réinitialisez des mots de passe.</p>
-
-      {feedback && (
-        <div className={`alert ${feedback.type === 'error' ? 'alert-error' : 'alert-success'}`}>
-          {feedback.message}
+    <div className="page">
+      <header className="page-header">
+        <div>
+          <p className="page-eyebrow">Administration</p>
+          <h1>Gestion des utilisateurs</h1>
+          <p className="page-description">
+            Pilotez les accès à la plateforme, créez de nouveaux comptes ou réinitialisez des mots de passe.
+          </p>
         </div>
-      )}
-
-      <form className="user-form" onSubmit={handleSubmit}>
-        <div className="grid two-columns">
-          <label>
-            Identifiant
-            <input
-              type="text"
-              value={form.username}
-              onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
-              placeholder="ex: gestionnaire"
-              disabled={Boolean(editingId)}
-            />
-          </label>
-          <label>
-            Adresse e-mail
-            <input
-              type="email"
-              value={form.email}
-              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              placeholder="contact@exemple.fr"
-            />
-          </label>
-          <label>
-            Nom complet
-            <input
-              type="text"
-              value={form.full_name}
-              onChange={(event) => setForm((prev) => ({ ...prev, full_name: event.target.value }))}
-              placeholder="Prénom Nom"
-            />
-          </label>
-          <label>
-            Rôle
-            <select
-              value={form.role}
-              onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
-            >
-              <option value="standard">Utilisateur</option>
-              <option value="admin">Administrateur</option>
-            </select>
-          </label>
-          <label>
-            Mot de passe {editingId ? '(laisser vide pour conserver)' : ''}
-            <input
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-            />
-          </label>
-          <label>
-            Confirmation du mot de passe
-            <input
-              type="password"
-              value={form.confirmPassword}
-              onChange={(event) => setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
-            />
-          </label>
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={form.is_active}
-              onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))}
-            />
-            Compte actif
-          </label>
+        <div className="page-badges">
+          <span className="badge badge-warning">Critique</span>
         </div>
-        <div className="form-actions">
-          <button type="submit" disabled={busy}>
-            {editingId ? 'Mettre à jour' : 'Créer le compte'}
-          </button>
-          {editingId && (
-            <button type="button" className="secondary" onClick={resetForm} disabled={busy}>
-              Annuler la modification
+      </header>
+      <section className="card">
+        {feedback && (
+          <div className={`alert ${feedback.type === 'error' ? 'alert-error' : 'alert-success'}`}>
+            {feedback.message}
+          </div>
+        )}
+
+        <form className="user-form" onSubmit={handleSubmit}>
+          <div className="grid two-columns">
+            <label>
+              Identifiant
+              <input
+                type="text"
+                value={form.username}
+                onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
+                placeholder="ex: gestionnaire"
+                disabled={Boolean(editingId)}
+              />
+            </label>
+            <label>
+              Adresse e-mail
+              <input
+                type="email"
+                value={form.email}
+                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                placeholder="contact@exemple.fr"
+              />
+            </label>
+            <label>
+              Nom complet
+              <input
+                type="text"
+                value={form.full_name}
+                onChange={(event) => setForm((prev) => ({ ...prev, full_name: event.target.value }))}
+                placeholder="Prénom Nom"
+              />
+            </label>
+            <label>
+              Rôle
+              <select
+                value={form.role}
+                onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
+              >
+                <option value="standard">Utilisateur</option>
+                <option value="admin">Administrateur</option>
+              </select>
+            </label>
+            <label>
+              Mot de passe
+              <input
+                type="password"
+                value={form.password}
+                onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+                placeholder={editingId ? 'Laisser vide pour ne pas changer' : 'Définir un mot de passe'}
+              />
+            </label>
+            <label>
+              Confirmation
+              <input
+                type="password"
+                value={form.confirmPassword}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))
+                }
+              />
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+              />
+              <span>Compte actif</span>
+            </label>
+          </div>
+          <div className="form-actions">
+            <button type="submit" disabled={busy}>
+              {editingId ? 'Mettre à jour' : 'Créer le compte'}
             </button>
-          )}
-        </div>
-      </form>
+            {editingId && (
+              <button type="button" className="secondary" onClick={resetForm} disabled={busy}>
+                Annuler la modification
+              </button>
+            )}
+          </div>
+        </form>
 
-      <div className="table-wrapper">
-        {usersQuery.isLoading && <p>Chargement des comptes…</p>}
-        {usersQuery.isError && <p>Impossible de récupérer les utilisateurs.</p>}
-        {!usersQuery.isLoading && !usersQuery.isError && (
-          <table>
-            <thead>
-              <tr>
-                <th>Identifiant</th>
-                <th>Nom complet</th>
-                <th>E-mail</th>
-                <th>Rôle</th>
-                <th>Statut</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.length === 0 ? (
+        <h3>Comptes existants</h3>
+        {usersQuery.isLoading ? (
+          <p>Chargement des comptes…</p>
+        ) : (
+          <div className="table-wrapper">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={6}>Aucun compte pour le moment. Créez votre premier utilisateur.</td>
+                  <th>Identifiant</th>
+                  <th>Email</th>
+                  <th>Nom complet</th>
+                  <th>Rôle</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
                 </tr>
-              ) : (
-                users.map((account) => (
+              </thead>
+              <tbody>
+                {users.map((account) => (
                   <tr key={account.id}>
                     <td>{account.username}</td>
-                    <td>{account.full_name ?? '—'}</td>
                     <td>{account.email ?? '—'}</td>
+                    <td>{account.full_name ?? '—'}</td>
+                    <td>{account.role === 'admin' ? 'Administrateur' : 'Utilisateur'}</td>
                     <td>
-                      <span className={`badge role-${account.role}`}>
-                        {account.role === 'admin' ? 'Administrateur' : 'Utilisateur'}
+                      <span className={`status-pill ${account.is_active ? 'status-active' : 'status-inactive'}`}>
+                        {account.is_active ? 'Actif' : 'Inactif'}
                       </span>
                     </td>
-                    <td>
-                      <span className={`status ${account.is_active ? 'status-active' : 'status-disabled'}`}>
-                        {account.is_active ? 'Actif' : 'Désactivé'}
-                      </span>
-                    </td>
-                    <td className="actions">
+                    <td className="user-actions">
                       <button type="button" onClick={() => startEdit(account)} disabled={busy}>
                         Modifier
                       </button>
@@ -279,18 +297,18 @@ export default function UserManagementPage() {
                         type="button"
                         className="danger"
                         onClick={() => handleDelete(account.id, account.username)}
-                        disabled={busy || account.id === user.id}
+                        disabled={busy}
                       >
                         Supprimer
                       </button>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }
