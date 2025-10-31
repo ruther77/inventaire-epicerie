@@ -1873,6 +1873,17 @@ if authentication_status:
 
         hero_placeholder = st.container()
 
+        try:
+            product_options = cached_product_options()
+        except Exception as exc:
+            st.error(
+                "Impossible de charger la liste des produits pour le filtre des mouvements. "
+                f"Détail: {exc}"
+            )
+            product_options = {}
+
+        filter_products = ["Catalogue complet"] + list(product_options.keys())
+
         with workspace_panel(
             "Paramètres d'analyse",
             "Sélectionnez le périmètre de suivi pour explorer les mouvements.",
