@@ -9,14 +9,16 @@ Streamlit specific behaviour.
 from __future__ import annotations
 
 import gzip
+import json
 import os
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional, Tuple
+from statistics import mean
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy.engine import URL
 from sqlalchemy.engine.url import make_url
@@ -47,6 +49,17 @@ _DEFAULT_BACKUP_LOCATIONS: Tuple[Path, ...] = (
     Path("backups"),
 )
 
+_SETTINGS_FILENAME = "backup_settings.json"
+_DEFAULT_SETTINGS: Dict[str, object] = {
+    "frequency": "daily",  # daily | weekly | manual
+    "time": "02:00",
+    "weekday": 0,  # lundi
+    "retention_days": 30,
+    "max_backups": 20,
+    "notifications": [],
+    "integrity_checks": True,
+}
+
 _PG_DUMP_ENV_VARS: Tuple[str, ...] = ("PG_DUMP_PATH", "PG_DUMP_BIN")
 _PSQL_ENV_VARS: Tuple[str, ...] = ("PSQL_PATH", "PSQL_BIN")
 
@@ -63,6 +76,45 @@ class BinaryStatus:
     @property
     def available(self) -> bool:
         return self.resolved is not None
+
+
+def _settings_path(directory: str | os.PathLike[str] | None = None) -> Path:
+    return get_backup_directory(directory, create=True) / _SETTINGS_FILENAME
+
+
+def load_backup_settings(
+    directory: str | os.PathLike[str] | None = None,
+) -> Dict[str, object]:
+    """Return persisted backup automation settings.
+
+    The configuration is stored as JSON next to the backup files so that
+    Streamlit sessions can recover the last saved preferences.
+    """
+
+    path = _settings_path(directory)
+    if not path.exists():
+        return dict(_DEFAULT_SETTINGS)
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(_DEFAULT_SETTINGS)
+
+    settings: Dict[str, object] = dict(_DEFAULT_SETTINGS)
+    settings.update({k: v for k, v in payload.items() if k in _DEFAULT_SETTINGS})
+    return settings
+
+
+def save_backup_settings(
+    settings: Dict[str, object],
+    directory: str | os.PathLike[str] | None = None,
+) -> None:
+    """Persist backup automation settings to disk."""
+
+    payload = dict(_DEFAULT_SETTINGS)
+    payload.update({k: v for k, v in settings.items() if k in _DEFAULT_SETTINGS})
+    path = _settings_path(directory)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +289,149 @@ def list_backups(
 
     entries.sort(key=lambda meta: meta.created_at, reverse=True)
     return entries
+
+
+def build_backup_timeline(backups: Iterable[BackupMetadata]) -> List[dict]:
+    """Return a serialisable timeline structure for visualisations."""
+
+    return [
+        {
+            "name": backup.name,
+            "created_at": backup.created_at,
+            "size_mb": backup.size_mb,
+        }
+        for backup in backups
+    ]
+
+
+def compute_backup_statistics(backups: Iterable[BackupMetadata]) -> Dict[str, float]:
+    """Compute aggregate statistics (min/max/average/total sizes)."""
+
+    sizes = [backup.size_mb for backup in backups]
+    if not sizes:
+        return {"total_size_mb": 0.0, "average_size_mb": 0.0, "max_size_mb": 0.0, "min_size_mb": 0.0}
+
+    return {
+        "total_size_mb": float(sum(sizes)),
+        "average_size_mb": float(mean(sizes)),
+        "max_size_mb": float(max(sizes)),
+        "min_size_mb": float(min(sizes)),
+    }
+
+
+def suggest_retention_cleanup(
+    backups: Iterable[BackupMetadata],
+    *,
+    retention_days: int | None = None,
+    max_backups: int | None = None,
+) -> List[BackupMetadata]:
+    """Return backups that should be pruned according to retention rules."""
+
+    retention = retention_days if retention_days is not None and retention_days > 0 else None
+    maximum = max_backups if max_backups is not None and max_backups > 0 else None
+
+    backups_list = list(backups)
+    prune: List[BackupMetadata] = []
+
+    if retention is not None:
+        threshold = datetime.now(timezone.utc) - timedelta(days=int(retention))
+        prune.extend([b for b in backups_list if b.created_at < threshold])
+
+    if maximum is not None and len(backups_list) > maximum:
+        # Keep the newest entries first, drop the rest from the end
+        excess = backups_list[maximum:]
+        prune.extend(excess)
+
+    # Deduplicate while preserving order of appearance in ``backups_list``
+    seen: set[str] = set()
+    ordered: List[BackupMetadata] = []
+    for item in backups_list:
+        if item in prune and item.name not in seen:
+            seen.add(item.name)
+            ordered.append(item)
+    return ordered
+
+
+def plan_next_backup(
+    settings: Dict[str, object],
+    *,
+    last_backup: Optional[BackupMetadata] = None,
+    now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """Compute the next scheduled backup datetime in local timezone."""
+
+    frequency = str(settings.get("frequency", "manual"))
+    if frequency == "manual":
+        return None
+
+    reference = (now or datetime.now(timezone.utc)).astimezone()
+    base_date = reference.date()
+
+    time_str = str(settings.get("time", "02:00"))
+    try:
+        hour, minute = [int(part) for part in time_str.split(":", 1)]
+    except (ValueError, TypeError):
+        hour, minute = 2, 0
+
+    candidate = datetime.combine(base_date, datetime.min.time()).astimezone()
+    candidate = candidate.replace(hour=hour, minute=minute)
+
+    if frequency == "daily":
+        if candidate <= reference:
+            candidate = candidate + timedelta(days=1)
+    elif frequency == "weekly":
+        weekday = int(settings.get("weekday", 0)) % 7
+        days_ahead = (weekday - candidate.weekday()) % 7
+        candidate = candidate + timedelta(days=days_ahead)
+        if candidate <= reference:
+            candidate = candidate + timedelta(days=7)
+    else:
+        return None
+
+    if last_backup and last_backup.created_at.astimezone() >= candidate:
+        increment = timedelta(days=1 if frequency == "daily" else 7)
+        candidate = last_backup.created_at.astimezone() + increment
+
+    return candidate
+
+
+def check_backup_integrity(
+    metadata: BackupMetadata,
+) -> Tuple[bool, str]:
+    """Perform lightweight integrity checks on a backup file."""
+
+    path = metadata.path
+    if not path.exists():
+        return False, "Fichier introuvable"
+
+    if path.stat().st_size <= 0:
+        return False, "Archive vide"
+
+    if path.suffix == ".gz":
+        try:
+            with gzip.open(path, "rb") as buffer:
+                buffer.read(1)
+        except OSError as exc:
+            return False, f"Archive corrompue: {exc}"
+
+    return True, "OK"
+
+
+def integrity_report(backups: Iterable[BackupMetadata]) -> List[dict]:
+    """Return integrity status for all provided backups."""
+
+    report: List[dict] = []
+    for backup in backups:
+        ok, message = check_backup_integrity(backup)
+        report.append(
+            {
+                "name": backup.name,
+                "created_at": backup.created_at,
+                "status": "✅" if ok else "⚠️",
+                "details": message,
+            }
+        )
+    return report
 
 
 def _resolve_backup_path(
