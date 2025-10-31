@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../app.php';
+require_once __DIR__ . '/app.php';
 require_once APP_ROOT . '/DAO/DAO.php';
 require_once APP_ROOT . '/Metier/produit.php';
 require_once APP_ROOT . '/Metier/categorie.php';
@@ -199,27 +199,4 @@ include __DIR__ . '/header.php';
         </section>
     </div>
 
-    <footer>
-        <div class="container">
-            <div class="footer clearfix mb-0 text-muted">
-                <div class="float-start">
-                    <p>2021 &copy; Mazer</p>
-                </div>
-                <div class="float-end">
-                    <p>Crafted with <span class="text-danger"><i class="bi bi-heart"></i></span> by <a href="https://saugi.me">Saugi</a></p>
-                </div>
-            </div>
-        </div>
-    </footer>
-</div>
-</div>
-</div>
-
-<script src="<?= asset('assets/js/bootstrap.js') ?>"></script>
-<script src="<?= asset('assets/js/app.js') ?>"></script>
-<script src="<?= asset('assets/js/pages/horizontal-layout.js') ?>"></script>
-<script src="<?= asset('assets/extensions/apexcharts/apexcharts.min.js') ?>"></script>
-<script src="<?= asset('assets/js/pages/dashboard.js') ?>"></script>
-</body>
-
-</html>
+<?php include __DIR__ . '/Customer/footer.php'; ?>

@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../app.php';
+require_once __DIR__ . '/app.php';
 require_once APP_ROOT . '/Metier/produit.php';
 require_once APP_ROOT . '/Metier/categorie.php';
 
@@ -12,8 +12,9 @@ $searchQuery = isset($_GET['q']) ? trim((string) $_GET['q']) : '';
 include __DIR__ . '/header.php';
 ?>
 
-<div class="page-content-wrapper">
-    <section class="shop-context">
+<div class="content-wrapper container">
+    <div class="page-content">
+        <section class="shop-context">
         <div class="container container-wide">
             <nav aria-label="breadcrumb" class="shop-breadcrumb">
                 <ol class="breadcrumb mb-3">
@@ -53,9 +54,9 @@ include __DIR__ . '/header.php';
         </div>
     </section>
 
-    <div class="shop-page-action-bar mb-30">
-        <div class="container container-wide">
-            <div class="action-bar-inner">
+        <div class="shop-page-action-bar mb-30">
+            <div class="container container-wide">
+                <div class="action-bar-inner">
                 <div class="row align-items-center g-3">
                     <div class="col-12 col-lg-7">
                         <div class="shop-filter-pills" data-filter-pills>
@@ -95,9 +96,9 @@ include __DIR__ . '/header.php';
         </div>
     </div>
 
-    <div class="shop-page-product">
-        <div class="container container-wide">
-            <div class="product-wrapper product-layout layout-grid" id="trg">
+        <div class="shop-page-product">
+            <div class="container container-wide">
+                <div class="product-wrapper product-layout layout-grid" id="trg">
                 <div class="row mtn-30" id="products">
                     <?php foreach ($products as $index => $product): ?>
                         <?php
@@ -153,9 +154,9 @@ include __DIR__ . '/header.php';
         </div>
     </div>
 
-    <div class="shop-page-action-bar mt-30">
-        <div class="container container-wide">
-            <div class="action-bar-inner">
+        <div class="shop-page-action-bar mt-30">
+            <div class="container container-wide">
+                <div class="action-bar-inner">
                 <div class="row align-items-center">
                     <div class="col-sm-6">
                         <nav class="pagination-wrap mb-10 mb-sm-0">
@@ -174,29 +175,5 @@ include __DIR__ . '/header.php';
             </div>
         </div>
     </div>
-</div>
 
-<footer>
-    <div class="container">
-        <div class="footer clearfix mb-0 text-muted">
-            <div class="float-start">
-                <p>2021 &copy; Mazer</p>
-            </div>
-            <div class="float-end">
-                <p>Crafted with <span class="text-danger"><i class="bi bi-heart"></i></span> by <a href="https://saugi.me">Saugi</a></p>
-            </div>
-        </div>
-    </div>
-</footer>
-</div>
-</div>
-</div>
-
-<script src="<?= asset('assets/js/bootstrap.js') ?>"></script>
-<script src="<?= asset('assets/js/app.js') ?>"></script>
-<script src="<?= asset('assets/js/pages/horizontal-layout.js') ?>"></script>
-<script src="<?= asset('assets/extensions/apexcharts/apexcharts.min.js') ?>"></script>
-<script src="<?= asset('assets/js/pages/dashboard.js') ?>"></script>
-</body>
-
-</html>
+<?php include __DIR__ . '/Customer/footer.php'; ?>
