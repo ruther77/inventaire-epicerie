@@ -279,37 +279,6 @@ def _fetch_product_image_url(ean: str | None) -> str | None:
     return None
 
 
-def _build_product_card(product: dict[str, Any]) -> str:
-    """Construit un bloc HTML pour une carte produit de la vitrine."""
-
-    name = escape(str(product.get("nom", "")))
-    category = escape(str(product.get("categorie", "Autre")))
-    price = float(product.get("prix_vente") or 0.0)
-    stock = float(product.get("stock_actuel") or 0.0)
-    ventes = float(product.get("ventes_30j") or 0.0)
-
-    if stock <= 0:
-        stock_label = "Rupture"
-        stock_class = "is-danger"
-    elif stock < 5:
-        stock_label = "Stock bas"
-        stock_class = "is-warning"
-    else:
-        stock_label = "Disponible"
-        stock_class = "is-success"
-
-    ean = product.get("ean")
-    image_url: str | None = None
-    raw_image = product.get("image_url")
-    if isinstance(raw_image, str) and raw_image.strip():
-        image_url = raw_image.strip()
-    elif raw_image is not None and not pd.isna(raw_image):
-        candidate = str(raw_image).strip()
-        image_url = candidate or None
-
-    if not image_url:
-        image_url = _fetch_product_image_url(ean)
-
 def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
     """Affiche une grille responsive de cartes produit."""
 
@@ -324,7 +293,7 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
         cols = st.columns(columns)
         for col, product in zip(cols, records[start:start + columns]):
             with col:
-                with st.container(border=True):
+                with st.container():
                     name = str(product.get("nom", "")).strip() or "Produit"
                     category = str(product.get("categorie", "Autre")).strip()
                     price = float(product.get("prix_vente") or 0.0)
@@ -404,7 +373,7 @@ def render_workspace_hero(
     }
     accent_color = tone_palette.get(tone, "blue")
 
-    container = st.container(border=True)
+    container = st.container()
     with container:
         st.markdown(
             f":{accent_color}[{eyebrow}]",
@@ -453,7 +422,7 @@ def workspace_panel(
     }
     accent_color = accent_palette.get(accent or "", "blue")
 
-    container = st.container(border=True)
+    container = st.container()
     with container:
         if title or description:
             heading = title or ""
