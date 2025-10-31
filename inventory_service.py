@@ -2,8 +2,11 @@
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Iterable
 
-from data_repository import get_engine
+import pandas as pd
+
+from data_repository import get_engine, query_df
 from sqlalchemy import text, exc as sa_exc
 
 
@@ -293,5 +296,176 @@ def _render_receipt_pdf(lines: list[str]) -> bytes:
     _append("%%EOF")
 
     return "".join(pdf_parts).encode("utf-8")
+
+# ---------------------------------------------------------------------------
+#  Pipelines de factures → commandes
+# ---------------------------------------------------------------------------
+
+
+def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
+    """Associe les lignes d'une facture aux produits du catalogue via code-barres."""
+
+    if not isinstance(invoice_df, pd.DataFrame) or invoice_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "produit_id",
+                "produit_nom",
+                "categorie",
+                "prix_achat_catalogue",
+                "prix_vente_catalogue",
+            ]
+        )
+
+    if "codes" not in invoice_df.columns:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "produit_id",
+                "produit_nom",
+                "categorie",
+                "prix_achat_catalogue",
+                "prix_vente_catalogue",
+            ]
+        )
+
+    codes: list[str] = []
+    for raw in invoice_df["codes"].tolist():
+        if isinstance(raw, str):
+            normalized = raw.strip()
+            if normalized:
+                codes.append(normalized)
+        elif isinstance(raw, Iterable):
+            for part in raw:
+                part_str = str(part or "").strip()
+                if part_str:
+                    codes.append(part_str)
+
+    unique_codes = sorted({code.lower() for code in codes if code})
+    if not unique_codes:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "produit_id",
+                "produit_nom",
+                "categorie",
+                "prix_achat_catalogue",
+                "prix_vente_catalogue",
+            ]
+        )
+
+    placeholders = ", ".join(f"LOWER(:code{i})" for i in range(len(unique_codes)))
+    params = {f"code{i}": code for i, code in enumerate(unique_codes)}
+
+    sql = f"""
+        SELECT
+            LOWER(pb.code) AS code,
+            p.id AS produit_id,
+            p.nom AS produit_nom,
+            p.categorie,
+            COALESCE(p.prix_achat, 0) AS prix_achat_catalogue,
+            COALESCE(p.prix_vente, 0) AS prix_vente_catalogue
+        FROM produits_barcodes pb
+        JOIN produits p ON p.id = pb.produit_id
+        WHERE LOWER(pb.code) IN ({placeholders})
+    """
+
+    try:
+        df = query_df(sql, params=params)
+    except Exception:
+        return pd.DataFrame(
+            columns=[
+                "code",
+                "produit_id",
+                "produit_nom",
+                "categorie",
+                "prix_achat_catalogue",
+                "prix_vente_catalogue",
+            ]
+        )
+
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.lower()
+    return df
+
+
+def register_invoice_reception(
+    invoice_df: pd.DataFrame,
+    *,
+    username: str,
+    supplier: str | None = None,
+    movement_type: str = "ENTREE",
+    reception_date: datetime | None = None,
+) -> dict[str, object]:
+    """Crée des mouvements d'entrée à partir d'une réception de facture."""
+
+    summary = {
+        "rows_received": int(len(invoice_df)) if isinstance(invoice_df, pd.DataFrame) else 0,
+        "movements_created": 0,
+        "quantity_total": 0.0,
+        "errors": [],
+    }
+
+    if not isinstance(invoice_df, pd.DataFrame) or invoice_df.empty:
+        return summary
+
+    safe_type = (movement_type or "ENTREE").upper()
+    if safe_type not in {"ENTREE", "TRANSFERT"}:
+        safe_type = "ENTREE"
+
+    label_parts = [supplier.strip() for supplier in [supplier] if isinstance(supplier, str) and supplier.strip()]
+    if username:
+        label_parts.append(f"traité par {username}")
+    source_label = " · ".join(label_parts) or "Réception facture"
+
+    payloads: list[dict[str, object]] = []
+
+    for row in invoice_df.itertuples():
+        product_id = getattr(row, "produit_id", None)
+        quantity = getattr(row, "quantite_recue", None)
+        if quantity is None:
+            quantity = getattr(row, "qte_init", None)
+
+        normalised_qty = _normalise_quantity(quantity)
+        if product_id in (None, "") or normalised_qty <= 0:
+            summary["errors"].append(
+                f"Ligne {getattr(row, 'Index', '?') + 1 if hasattr(row, 'Index') else '?'} invalide (produit ou quantité)"
+            )
+            continue
+
+        payloads.append(
+            {
+                "pid": int(product_id),
+                "qty": float(normalised_qty),
+                "source": source_label,
+                "type": safe_type,
+                "date_mvt": reception_date,
+            }
+        )
+
+    if not payloads:
+        return summary
+
+    insert_sql = text(
+        """
+        INSERT INTO mouvements_stock (produit_id, type, quantite, source, date_mvt)
+        VALUES (:pid, :type, :qty, :source, COALESCE(:date_mvt, now()))
+        """
+    )
+
+    eng = get_engine()
+    try:
+        with eng.begin() as conn:
+            conn.execute(insert_sql, payloads)
+    except sa_exc.IntegrityError as exc:
+        summary["errors"].append(f"Erreur d'intégrité lors de l'enregistrement: {exc.orig}")
+        return summary
+    except Exception as exc:  # pragma: no cover - sécurité runtime
+        summary["errors"].append(str(exc))
+        return summary
+
+    summary["movements_created"] = len(payloads)
+    summary["quantity_total"] = float(sum(item["qty"] for item in payloads))
+    return summary
 
 # Ajoutez d'autres fonctions de service ici (ex: adjust_stock, create_product_with_barcode)

@@ -13,6 +13,12 @@ bord interactif.
   douce et chaleureuse à l'ensemble des composants Streamlit, et le fichier
   `.streamlit/config.toml` force l'utilisation du thème clair sur tous les
   environnements d'exécution.
+* **Workflows avancés :** les onglets _Plan d'approvisionnement dynamique_,
+  _Audit & résolution d'écarts_, _Factures → Commandes_, _Qualité catalogue &
+  codes-barres_ et _Sauvegardes & reprise d'activité_ embarquent des vues
+  orientées actions : calculs de couverture et propositions de commandes,
+  assignation des écarts avec export CSV, rapprochement factures / réceptions,
+  gouvernance des codes-barres et supervision des sauvegardes.
 
 Pour vérifier localement que tout fonctionne, exécutez simplement :
 

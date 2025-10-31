@@ -22,12 +22,19 @@ from urllib.error import URLError, HTTPError
 from backup_manager import (
     BackupError,
     BinaryStatus,
+    build_backup_timeline,
     check_backup_tools,
+    compute_backup_statistics,
     create_backup,
     delete_backup,
     get_backup_directory,
+    integrity_report,
     list_backups,
+    load_backup_settings,
+    plan_next_backup,
     restore_backup,
+    save_backup_settings,
+    suggest_retention_cleanup,
 )
 
 # Imports pour le Scanner et la Vidéo
@@ -129,6 +136,9 @@ if "invoice_selection_index" not in st.session_state:
     st.session_state["invoice_selection_index"] = None
 if "invoice_processed_signatures" not in st.session_state:
     st.session_state["invoice_processed_signatures"] = set()
+st.session_state.setdefault("audit_assignments", {})
+st.session_state.setdefault("audit_resolution_log", [])
+st.session_state.setdefault("audit_count_tasks", {})
 
 MAX_INVOICE_UPLOADS = 20
 INVOICE_SELECTOR_KEYS = ("extract_invoice_selector", "import_invoice_selector")
@@ -222,6 +232,7 @@ def load_customer_catalog() -> pd.DataFrame:
             p.id,
             p.nom,
             p.categorie,
+            COALESCE(p.prix_achat, 0) AS prix_achat,
             COALESCE(p.prix_vente, 0) AS prix_vente,
             COALESCE(p.stock_actuel, 0) AS stock_actuel,
             COALESCE(tv.qte_sorties_30j, 0) AS ventes_30j,
@@ -246,19 +257,21 @@ def load_customer_catalog() -> pd.DataFrame:
             "Impossible de charger le catalogue client. Vérifiez que les vues SQL sont déployées (v_top_ventes_30j).\n"
             f"Détail: {exc}"
         )
-        return pd.DataFrame(columns=["id", "nom", "categorie", "prix_vente", "stock_actuel", "ventes_30j"])
+        return pd.DataFrame(
+            columns=["id", "nom", "categorie", "prix_achat", "prix_vente", "stock_actuel", "ventes_30j"]
+        )
 
     if df.empty:
         return df.assign(
             categorie=[], prix_vente=[], stock_actuel=[], ventes_30j=[]
         )
 
-    expected_cols = {"categorie", "prix_vente", "stock_actuel", "ventes_30j"}
+    expected_cols = {"categorie", "prix_achat", "prix_vente", "stock_actuel", "ventes_30j"}
     for col in expected_cols:
         if col not in df.columns:
             df[col] = 0
 
-    numeric_cols = ["prix_vente", "stock_actuel", "ventes_30j"]
+    numeric_cols = ["prix_achat", "prix_vente", "stock_actuel", "ventes_30j"]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
@@ -285,6 +298,57 @@ def load_customer_catalog() -> pd.DataFrame:
         for ean in unique_eans:
             image_map[ean] = _fetch_product_image_url(ean)
     df["image_url"] = df["ean"].map(lambda e: image_map.get(e) if e else None)
+
+    return df
+
+
+@st.cache_data(ttl=300)
+def load_recent_suppliers() -> pd.DataFrame:
+    """Identifie le dernier fournisseur connu par produit via les mouvements d'entrée."""
+
+    sql = """
+        SELECT DISTINCT ON (m.produit_id)
+            m.produit_id,
+            COALESCE(NULLIF(TRIM(m.source), ''), 'Non renseigné') AS fournisseur,
+            m.date_mvt
+        FROM mouvements_stock m
+        WHERE m.type = 'ENTREE'
+        ORDER BY m.produit_id, m.date_mvt DESC
+    """
+
+    try:
+        df = query_df(sql)
+    except Exception as exc:
+        st.warning(f"Impossible de déterminer les fournisseurs récents: {exc}")
+        return pd.DataFrame(columns=["produit_id", "fournisseur", "date_mvt"])
+
+    if not df.empty and "fournisseur" in df.columns:
+        df["fournisseur"] = df["fournisseur"].fillna("Non renseigné")
+
+    return df
+
+
+@st.cache_data(ttl=300)
+def load_duplicate_barcodes() -> pd.DataFrame:
+    """Liste les codes-barres présents sur plusieurs produits."""
+
+    sql = """
+        SELECT
+            LOWER(pb.code) AS code,
+            COUNT(*) AS occurrences,
+            string_agg(p.nom, ', ' ORDER BY p.nom) AS produits
+        FROM produits_barcodes pb
+        JOIN produits p ON p.id = pb.produit_id
+        GROUP BY LOWER(pb.code)
+        HAVING COUNT(*) > 1
+        ORDER BY occurrences DESC, code
+    """
+
+    try:
+        df = query_df(sql)
+    except Exception as exc:
+        st.warning(f"Impossible d'identifier les doublons de codes-barres: {exc}")
+        return pd.DataFrame(columns=["code", "occurrences", "produits"])
 
     return df
 
@@ -356,7 +420,13 @@ def _fetch_product_image_url(ean: str | None) -> str | None:
     return None
 
 
-def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
+def _render_product_cards(
+    df: pd.DataFrame,
+    columns: int = 3,
+    *,
+    coverage_target: float | None = None,
+    alert_threshold: float | None = None,
+) -> None:
     """Affiche une grille responsive de cartes produit."""
 
     if df.empty:
@@ -418,6 +488,47 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
                     st.caption(
                         f"Stock: {_format_human_number(stock)} · Ventes 30j: {_format_human_number(ventes)}"
                     )
+
+                    extra_lines: list[str] = []
+                    coverage_value = product.get("couverture_jours")
+                    if coverage_value is not None and not pd.isna(coverage_value):
+                        if coverage_value in (np.inf, float("inf")):
+                            extra_lines.append("Couverture: illimitée")
+                        else:
+                            try:
+                                coverage_float = float(coverage_value)
+                            except (TypeError, ValueError):
+                                coverage_float = None
+                            if coverage_float is not None:
+                                coverage_text = f"Couverture: {coverage_float:.1f} j"
+                                if coverage_target is not None:
+                                    delta = coverage_float - float(coverage_target)
+                                    coverage_text += f" ({delta:+.1f} j vs obj.)"
+                                extra_lines.append(coverage_text)
+                                if (
+                                    alert_threshold is not None
+                                    and coverage_float <= float(alert_threshold)
+                                ):
+                                    extra_lines.append(":red[⚠️ Couverture critique]")
+
+                    prix_vente = product.get("prix_vente")
+                    prix_achat = product.get("prix_achat")
+                    margin_pct: float | None = None
+                    try:
+                        vente = float(prix_vente)
+                        achat = float(prix_achat)
+                        if vente > 0:
+                            margin_pct = ((vente - achat) / vente) * 100
+                    except (TypeError, ValueError):
+                        margin_pct = None
+
+                    if margin_pct is not None:
+                        extra_lines.append(f"Marge: {margin_pct:.1f}%")
+                        if margin_pct < 0:
+                            extra_lines.append(":red[⚠️ Prix < achat]")
+
+                    if extra_lines:
+                        st.caption(" · ".join(extra_lines))
 
 
 def _format_human_number(value: float | int, decimals: int = 0) -> str:
@@ -800,6 +911,7 @@ def load_products_list():
         SELECT
             p.id,
             p.nom,
+            COALESCE(p.prix_achat, 0) AS prix_achat,
             p.prix_vente,
             p.tva,
             p.stock_actuel AS quantite_stock,
@@ -820,6 +932,8 @@ def load_products_list():
     """
     try:
         df = query_df(sql_query)
+        if "prix_achat" not in df.columns:
+            df["prix_achat"] = 0.0
         df['statut_stock'] = df['quantite_stock'].apply(lambda x: 'Stock OK' if x > 5 else ('Alerte Basse' if x > 0 else 'Épuisé'))
         return df
     except Exception as e:
@@ -1068,6 +1182,7 @@ if authentication_status:
         pos_tab,
         catalog_tab,
         mvt_tab,
+        audit_tab,
         dash_tab,
         scanner_tab,
         extract_tab,
@@ -1079,6 +1194,7 @@ if authentication_status:
         "Vente (PoS)",
         "Catalogue",
         "Stock & Mvt",
+        "Audit & écarts",
         "Dashboard",
         "Scanner",
         "Extraction Facture",
@@ -1490,11 +1606,30 @@ if authentication_status:
                 couverture_jours=coverage_days,
             )
 
+            supplier_info = load_recent_suppliers()
+            if not supplier_info.empty:
+                planning_df = planning_df.merge(
+                    supplier_info.rename(columns={"produit_id": "id"}),
+                    on="id",
+                    how="left",
+                )
+            if "fournisseur" not in planning_df.columns:
+                planning_df["fournisseur"] = "Non renseigné"
+            else:
+                planning_df["fournisseur"] = planning_df["fournisseur"].fillna("Non renseigné")
+
             planning_df["objectif_stock"] = np.maximum(target_coverage * planning_df["ventes_jour"], 0.0)
             raw_reorder = planning_df["objectif_stock"] - planning_df["stock_actuel"]
             planning_df["quantite_a_commander"] = np.maximum(np.ceil(raw_reorder), 0).astype(int)
             planning_df["valeur_commande"] = planning_df["quantite_a_commander"] * planning_df["prix_vente"].fillna(0.0)
             planning_df["ecart_couverture"] = planning_df["couverture_jours"] - float(target_coverage)
+            planning_df["marge_unitaire"] = planning_df["prix_vente"].fillna(0.0) - planning_df["prix_achat"].fillna(0.0)
+            planning_df["marge_pct"] = np.where(
+                planning_df["prix_vente"].fillna(0.0) > 0,
+                (planning_df["marge_unitaire"] / planning_df["prix_vente"].replace(0, np.nan)) * 100,
+                np.nan,
+            )
+            planning_df["marge_commande"] = planning_df["marge_unitaire"] * planning_df["quantite_a_commander"]
 
             if min_sales_threshold > 0:
                 planning_df = planning_df[planning_df["ventes_jour"] >= min_sales_threshold]
@@ -1552,12 +1687,16 @@ if authentication_status:
                 filtered_df["valeur_commande"] = filtered_df["valeur_commande"].round(2)
                 filtered_df["ecart_couverture"] = filtered_df["ecart_couverture"].round(1)
 
+                filtered_df["marge_pct"] = filtered_df["marge_pct"].round(1)
+                filtered_df["marge_commande"] = filtered_df["marge_commande"].round(2)
+                filtered_df["fournisseur"] = filtered_df["fournisseur"].fillna("Non renseigné")
+
                 filtered_df = filtered_df.sort_values(
                     by=["ordre_priorite", "couverture_jours", "ventes_jour"],
                     ascending=[True, True, False],
                 )
 
-                metrics_cols = st.columns(4)
+                metrics_cols = st.columns(5)
                 metrics_cols[0].metric(
                     "Articles analysés",
                     f"{len(filtered_df):,}".replace(",", " "),
@@ -1574,6 +1713,23 @@ if authentication_status:
                     "Valeur estimée",
                     f"{filtered_df['valeur_commande'].sum():,.2f} €".replace(",", " "),
                 )
+                metrics_cols[4].metric(
+                    "Marge potentielle",
+                    f"{filtered_df['marge_commande'].sum():,.2f} €".replace(",", " "),
+                )
+
+                urgent_df = filtered_df[
+                    (filtered_df["niveau_priorite"].isin(["Critique", "Tendue"]))
+                    & (filtered_df["quantite_a_commander"] > 0)
+                ].head(6)
+                if not urgent_df.empty:
+                    st.subheader("Alertes produits prioritaires")
+                    _render_product_cards(
+                        urgent_df,
+                        columns=min(3, len(urgent_df)),
+                        coverage_target=target_coverage,
+                        alert_threshold=effective_alert,
+                    )
 
                 display_columns = [
                     "nom",
@@ -1585,6 +1741,9 @@ if authentication_status:
                     "niveau_priorite",
                     "quantite_a_commander",
                     "valeur_commande",
+                    "marge_pct",
+                    "marge_commande",
+                    "fournisseur",
                     "ean",
                 ]
 
@@ -1612,9 +1771,92 @@ if authentication_status:
                         "valeur_commande": st.column_config.NumberColumn(
                             "Valeur (€)", format="%.2f €"
                         ),
+                        "marge_pct": st.column_config.NumberColumn("Marge %", format="%.1f %%"),
+                        "marge_commande": st.column_config.NumberColumn("Marge (€)", format="%.2f €"),
+                        "fournisseur": st.column_config.TextColumn("Fournisseur"),
                         "ean": st.column_config.TextColumn("EAN"),
                     },
                 )
+
+                order_candidates = filtered_df[filtered_df["quantite_a_commander"] > 0]
+                if not order_candidates.empty:
+                    st.subheader("Préparation des commandes fournisseurs")
+                    supplier_summary = (
+                        order_candidates.groupby("fournisseur", as_index=False)
+                        .agg(
+                            articles=("id", "count"),
+                            quantite=("quantite_a_commander", "sum"),
+                            valeur=("valeur_commande", "sum"),
+                            marge=("marge_commande", "sum"),
+                        )
+                        .sort_values("valeur", ascending=False)
+                    )
+
+                    st.dataframe(
+                        supplier_summary,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "fournisseur": "Fournisseur",
+                            "articles": st.column_config.NumberColumn("Références", format="%d"),
+                            "quantite": st.column_config.NumberColumn("Qté totale", format="%d"),
+                            "valeur": st.column_config.NumberColumn("Valeur (€)", format="%.2f €"),
+                            "marge": st.column_config.NumberColumn("Marge (€)", format="%.2f €"),
+                        },
+                    )
+
+                    selected_supplier = st.selectbox(
+                        "Fournisseur à détailler",
+                        supplier_summary["fournisseur"].tolist(),
+                        index=0,
+                        key="supply_supplier_focus",
+                    )
+
+                    supplier_lines = order_candidates[
+                        order_candidates["fournisseur"] == selected_supplier
+                    ]
+                    detail_columns = [
+                        "nom",
+                        "quantite_a_commander",
+                        "valeur_commande",
+                        "marge_commande",
+                        "ventes_jour",
+                        "couverture_jours",
+                        "niveau_priorite",
+                        "ean",
+                    ]
+                    st.dataframe(
+                        supplier_lines[detail_columns],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+                    export_columns = detail_columns + ["fournisseur"]
+                    supplier_csv = (
+                        supplier_lines[export_columns]
+                        .rename(
+                            columns={
+                                "nom": "Produit",
+                                "quantite_a_commander": "Quantite",
+                                "valeur_commande": "Valeur",
+                                "marge_commande": "Marge",
+                                "ventes_jour": "Ventes_Jour",
+                                "couverture_jours": "Couverture",
+                                "niveau_priorite": "Priorite",
+                                "ean": "EAN",
+                                "fournisseur": "Fournisseur",
+                            }
+                        )
+                        .to_csv(index=False)
+                        .encode("utf-8")
+                    )
+                    st.download_button(
+                        f"Exporter la proposition {selected_supplier}",
+                        data=supplier_csv,
+                        file_name=f"commande_{selected_supplier.replace(' ', '_').lower()}.csv",
+                        mime="text/csv",
+                        key="supplier_order_export",
+                    )
 
                 with st.expander("Exporter la proposition"):
                     export_df = filtered_df[display_columns].rename(
@@ -1628,6 +1870,9 @@ if authentication_status:
                             "niveau_priorite": "Priorite",
                             "quantite_a_commander": "Quantite_Commander",
                             "valeur_commande": "Valeur_Commande",
+                            "marge_pct": "Marge_Pourcent",
+                            "marge_commande": "Marge_Commande",
+                            "fournisseur": "Fournisseur",
                             "ean": "EAN",
                         }
                     )
@@ -2179,6 +2424,127 @@ if authentication_status:
                                 except Exception as exc:
                                     st.error(f"Erreur lors de la suppression: {exc}")
 
+        quality_catalog = load_customer_catalog()
+        duplicates_df = load_duplicate_barcodes()
+        missing_price_df = df_products[df_products["prix_vente"].fillna(0) <= 0]
+        missing_purchase_df = df_products[df_products.get("prix_achat", 0).fillna(0) <= 0]
+        missing_barcode_df = df_products[df_products["codes_barres"].fillna("").str.strip() == ""]
+        margin_alert_df = quality_catalog[
+            (quality_catalog["prix_vente"].fillna(0) > 0)
+            & (quality_catalog["prix_vente"] < quality_catalog["prix_achat"].fillna(0))
+        ]
+
+        with workspace_panel(
+            "Qualité catalogue & codes-barres",
+            "Identifiez les données manquantes, les doublons et les incohérences tarifaires.",
+            icon="🧪",
+            accent="lagoon",
+        ):
+            quality_cols = st.columns(4)
+            quality_cols[0].metric("Prix vente manquants", str(len(missing_price_df)))
+            quality_cols[1].metric("Prix achat manquants", str(len(missing_purchase_df)))
+            quality_cols[2].metric("Sans code-barres", str(len(missing_barcode_df)))
+            quality_cols[3].metric("Marge négative", str(len(margin_alert_df)))
+
+            st.caption("Les tableaux ci-dessous listent les éléments nécessitant une attention particulière.")
+
+            if not missing_price_df.empty or not missing_purchase_df.empty or not missing_barcode_df.empty:
+                summary_data = []
+                if not missing_price_df.empty:
+                    summary_data.append({"Type": "Prix vente manquant", "Produits": len(missing_price_df)})
+                if not missing_purchase_df.empty:
+                    summary_data.append({"Type": "Prix achat manquant", "Produits": len(missing_purchase_df)})
+                if not missing_barcode_df.empty:
+                    summary_data.append({"Type": "Sans code-barres", "Produits": len(missing_barcode_df)})
+                st.dataframe(pd.DataFrame(summary_data), hide_index=True, use_container_width=True)
+
+            if not margin_alert_df.empty:
+                st.subheader("Produits vendus sous leur prix d'achat")
+                alert_display = margin_alert_df[[
+                    "id",
+                    "nom",
+                    "categorie",
+                    "prix_achat",
+                    "prix_vente",
+                    "stock_actuel",
+                    "ean",
+                ]].copy()
+                st.dataframe(alert_display, hide_index=True, use_container_width=True)
+
+            if not duplicates_df.empty:
+                st.subheader("Doublons de codes-barres détectés")
+                st.dataframe(duplicates_df, hide_index=True, use_container_width=True)
+                st.download_button(
+                    "Exporter les doublons",
+                    data=duplicates_df.to_csv(index=False).encode("utf-8"),
+                    file_name="doublons_codes_barres.csv",
+                    mime="text/csv",
+                )
+
+            if st.session_state.get("user_role") == "admin" and not margin_alert_df.empty:
+                st.subheader("Campagne de correction rapide")
+                correction_df = margin_alert_df[[
+                    "id",
+                    "nom",
+                    "categorie",
+                    "prix_achat",
+                    "prix_vente",
+                    "stock_actuel",
+                    "ean",
+                ]].reset_index(drop=True)
+
+                correction_editor = st.data_editor(
+                    correction_df,
+                    key="quality_campaign_editor",
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "id": st.column_config.NumberColumn("ID", disabled=True),
+                        "nom": st.column_config.TextColumn("Produit", disabled=True),
+                        "categorie": st.column_config.TextColumn("Catégorie", disabled=True),
+                        "prix_achat": st.column_config.NumberColumn("Prix achat (€)", format="%.2f", disabled=True),
+                        "prix_vente": st.column_config.NumberColumn("Prix vente (€)", format="%.2f"),
+                        "stock_actuel": st.column_config.NumberColumn("Stock", format="%.2f", disabled=True),
+                        "ean": st.column_config.TextColumn("EAN", disabled=True),
+                    },
+                )
+
+                if st.button("Appliquer les corrections ciblées", key="apply_quality_campaign", type="primary"):
+                    editor_state = st.session_state.get("quality_campaign_editor", {})
+                    changes = editor_state.get("edited_rows", {}) if isinstance(editor_state, dict) else {}
+                    if not changes:
+                        st.info("Aucune modification détectée sur les produits ciblés.")
+                    else:
+                        applied = 0
+                        for index, row_changes in changes.items():
+                            try:
+                                base_row = correction_df.iloc[int(index)]
+                            except (IndexError, ValueError):
+                                continue
+                            payload = {k: v for k, v in row_changes.items() if k in {"prix_vente"}}
+                            if not payload:
+                                continue
+                            try:
+                                update_catalog_entry(int(base_row["id"]), payload, None)
+                                applied += len(payload)
+                            except Exception as exc:
+                                st.error(f"Erreur lors de la mise à jour de {base_row['nom']}: {exc}")
+                        if applied:
+                            st.success(f"{applied} champ(s) mis à jour.")
+                            invalidate_data_caches(
+                                "products_list",
+                                "catalog",
+                                "trending",
+                                "product_options",
+                                "movement_timeseries",
+                                "recent_movements",
+                                "table_counts",
+                                "table_preview",
+                            )
+                            st.rerun()
+                        else:
+                            st.info("Aucune correction n'a été appliquée.")
+
         if st.session_state.get("user_role") == "admin":
             with workspace_panel(
                 "Ajout rapide de produit",
@@ -2456,6 +2822,270 @@ if authentication_status:
                                 except Exception as e:
                                     st.error(f"Erreur lors de l'enregistrement de l'ajustement: {e}")
 
+    # ---------------- Audit & écarts ----------------
+
+    with audit_tab:
+        st.header("Audit & résolution d'écarts")
+
+        diag_df = load_stock_diagnostics()
+        assignments: dict[int, dict[str, Any]] = st.session_state.setdefault("audit_assignments", {})
+        resolution_log: list[dict[str, Any]] = st.session_state.setdefault("audit_resolution_log", [])
+        count_tasks: dict[int, dict[str, Any]] = st.session_state.setdefault("audit_count_tasks", {})
+
+        if diag_df is None or diag_df.empty:
+            st.success("Aucun écart détecté, les stocks théoriques et mouvements sont alignés ✅")
+        else:
+            catalog_snapshot = load_customer_catalog()[["id", "categorie", "prix_achat", "prix_vente"]]
+            audit_df = diag_df.merge(catalog_snapshot, on="id", how="left")
+            audit_df["ecart_abs"] = audit_df["ecart"].abs()
+            severity_levels = np.select(
+                [
+                    audit_df["ecart_abs"] >= 10,
+                    audit_df["ecart_abs"] >= 3,
+                ],
+                ["Critique", "Modéré"],
+                default="Mineur",
+            )
+            audit_df["niveau_ecart"] = severity_levels
+            audit_df["responsable"] = audit_df["id"].map(
+                lambda pid: assignments.get(int(pid), {}).get("responsable")
+            )
+            audit_df["tache_statut"] = audit_df["id"].map(
+                lambda pid: count_tasks.get(int(pid), {}).get("status", "À investiguer")
+            )
+
+            filter_cols = st.columns([1.6, 1.3, 1.5])
+            categories = sorted(audit_df["categorie"].dropna().unique().tolist())
+            selected_categories = filter_cols[0].multiselect(
+                "Catégories concernées",
+                options=categories,
+                default=categories,
+                key="audit_category_filter",
+            )
+            levels = ["Critique", "Modéré", "Mineur"]
+            selected_levels = filter_cols[1].multiselect(
+                "Niveau d'écart",
+                options=levels,
+                default=levels,
+                key="audit_severity_filter",
+            )
+            max_ecart = float(np.ceil(audit_df["ecart_abs"].max())) if not audit_df.empty else 1.0
+            ecart_range = filter_cols[2].slider(
+                "Amplitude d'écart (abs)",
+                min_value=0.0,
+                max_value=max(1.0, max_ecart),
+                value=(0.0, max(1.0, max_ecart)),
+                key="audit_ecart_range",
+            )
+
+            filtered_audit = audit_df.copy()
+            if selected_categories:
+                filtered_audit = filtered_audit[filtered_audit["categorie"].isin(selected_categories)]
+            if selected_levels:
+                filtered_audit = filtered_audit[filtered_audit["niveau_ecart"].isin(selected_levels)]
+            filtered_audit = filtered_audit[
+                (filtered_audit["ecart_abs"] >= ecart_range[0])
+                & (filtered_audit["ecart_abs"] <= ecart_range[1])
+            ]
+
+            metrics = st.columns(4)
+            metrics[0].metric("Anomalies ouvertes", f"{len(filtered_audit):,}".replace(",", " "))
+            metrics[1].metric(
+                "Écart cumulé",
+                f"{filtered_audit['ecart'].sum():+.2f}",
+            )
+            metrics[2].metric(
+                "Assignées",
+                f"{sum(1 for pid in filtered_audit['id'] if pid in assignments):,}".replace(",", " "),
+            )
+            metrics[3].metric(
+                "Tâches à compter",
+                f"{sum(1 for data in count_tasks.values() if data.get('status') != 'Clôturé'):,}".replace(",", " "),
+            )
+
+            if filtered_audit.empty:
+                st.info("Aucune anomalie ne correspond aux filtres sélectionnés.")
+            else:
+                display_cols = [
+                    "nom",
+                    "categorie",
+                    "stock_actuel",
+                    "stock_calcule",
+                    "ecart",
+                    "ecart_abs",
+                    "niveau_ecart",
+                    "responsable",
+                    "tache_statut",
+                ]
+                st.dataframe(
+                    filtered_audit[display_cols],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "nom": "Produit",
+                        "categorie": "Catégorie",
+                        "stock_actuel": st.column_config.NumberColumn("Stock système", format="%.2f"),
+                        "stock_calcule": st.column_config.NumberColumn("Stock calculé", format="%.2f"),
+                        "ecart": st.column_config.NumberColumn("Écart", format="%+.2f"),
+                        "ecart_abs": st.column_config.NumberColumn("Écart abs.", format="%.2f"),
+                        "niveau_ecart": st.column_config.TextColumn("Niveau"),
+                        "responsable": st.column_config.TextColumn("Responsable"),
+                        "tache_statut": st.column_config.TextColumn("Statut tâche"),
+                    },
+                )
+
+            actions_col, resolve_col = st.columns(2)
+
+            with actions_col:
+                st.subheader("Assigner un audit")
+                if audit_df.empty:
+                    st.caption("Aucune ligne disponible")
+                else:
+                    assign_options = {
+                        f"{row.nom} ({row.ecart:+.2f})": int(row.id)
+                        for row in audit_df.itertuples()
+                    }
+                    with st.form("audit_assignment_form"):
+                        selected_label = st.selectbox(
+                            "Produit concerné",
+                            list(assign_options.keys()),
+                            key="audit_assign_product",
+                        )
+                        responsable = st.text_input("Responsable", key="audit_assign_owner")
+                        due_date = st.date_input("Date de comptage prévue", key="audit_assign_date")
+                        note = st.text_area("Notes", key="audit_assign_note")
+                        create_task = st.checkbox(
+                            "Générer une tâche de comptage correctif",
+                            value=True,
+                            key="audit_assign_create_task",
+                        )
+                        submitted = st.form_submit_button("Enregistrer l'assignation", use_container_width=True)
+
+                    if submitted:
+                        product_id = assign_options.get(selected_label)
+                        if not responsable:
+                            st.warning("Veuillez renseigner un responsable pour suivre l'écart.")
+                        elif product_id is None:
+                            st.error("Produit sélectionné invalide.")
+                        else:
+                            assignments[int(product_id)] = {
+                                "responsable": responsable,
+                                "note": note,
+                                "assigned_at": datetime.now(),
+                            }
+                            if create_task:
+                                count_tasks[int(product_id)] = {
+                                    "responsable": responsable,
+                                    "note": note,
+                                    "created_at": datetime.now(),
+                                    "status": "À compter",
+                                    "due_date": datetime.combine(due_date, datetime.min.time()),
+                                }
+                            st.session_state["audit_assignments"] = assignments
+                            st.session_state["audit_count_tasks"] = count_tasks
+                            st.success("Assignation enregistrée.")
+
+            with resolve_col:
+                st.subheader("Clôturer / journaliser")
+                if not assignments:
+                    st.caption("Aucun audit assigné pour l'instant.")
+                else:
+                    task_options = {
+                        f"{audit_df.loc[audit_df['id'] == pid, 'nom'].iloc[0]}": int(pid)
+                        for pid in assignments
+                        if pid in audit_df["id"].values
+                    }
+                    with st.form("audit_resolution_form"):
+                        if not task_options:
+                            st.caption("Aucune ligne correspondante aux données chargées.")
+                            selected_task = None
+                        else:
+                            selected_task_label = st.selectbox(
+                                "Produit", list(task_options.keys()), key="audit_resolve_product"
+                            )
+                            selected_task = task_options.get(selected_task_label)
+                        resolution_status = st.selectbox(
+                            "Statut", ["En cours", "Résolu"], key="audit_resolve_status"
+                        )
+                        resolution_note = st.text_area("Commentaire / actions réalisées", key="audit_resolve_note")
+                        submit_resolution = st.form_submit_button(
+                            "Mettre à jour", use_container_width=True
+                        )
+
+                    if submit_resolution and selected_task is not None:
+                        entry = {
+                            "produit_id": selected_task,
+                            "produit": audit_df.loc[audit_df["id"] == selected_task, "nom"].iloc[0],
+                            "responsable": assignments.get(selected_task, {}).get("responsable"),
+                            "statut": resolution_status,
+                            "note": resolution_note,
+                            "timestamp": datetime.now(),
+                        }
+                        resolution_log.append(entry)
+                        if resolution_status == "Résolu":
+                            count_tasks.setdefault(selected_task, {})["status"] = "Clôturé"
+                        else:
+                            count_tasks.setdefault(selected_task, {})["status"] = "En cours"
+                        st.session_state["audit_resolution_log"] = resolution_log
+                        st.session_state["audit_count_tasks"] = count_tasks
+                        st.success("Journal mis à jour.")
+
+            with st.expander("Tâches de comptage en cours", expanded=False):
+                if not count_tasks:
+                    st.caption("Aucune tâche planifiée.")
+                else:
+                    tasks_df = pd.DataFrame(
+                        [
+                            {
+                                "produit": audit_df.loc[audit_df["id"] == pid, "nom"].iloc[0]
+                                if pid in audit_df["id"].values
+                                else f"Produit {pid}",
+                                "responsable": data.get("responsable"),
+                                "statut": data.get("status"),
+                                "due_date": data.get("due_date"),
+                                "note": data.get("note"),
+                            }
+                            for pid, data in count_tasks.items()
+                        ]
+                    )
+                    st.dataframe(tasks_df, hide_index=True, use_container_width=True)
+
+            with st.expander("Historique des résolutions", expanded=False):
+                if not resolution_log:
+                    st.caption("Le journal est vide pour le moment.")
+                else:
+                    log_df = pd.DataFrame(resolution_log)
+                    log_df["timestamp"] = pd.to_datetime(log_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M")
+                    st.dataframe(log_df, hide_index=True, use_container_width=True)
+
+            with st.expander("Exporter l'audit", expanded=False):
+                if filtered_audit.empty:
+                    st.caption("Aucune donnée à exporter.")
+                else:
+                    export_df = filtered_audit.assign(
+                        Responsable=filtered_audit["responsable"],
+                        Statut=filtered_audit["tache_statut"],
+                    )[
+                        [
+                            "id",
+                            "nom",
+                            "categorie",
+                            "stock_actuel",
+                            "stock_calcule",
+                            "ecart",
+                            "ecart_abs",
+                            "niveau_ecart",
+                            "Responsable",
+                            "Statut",
+                        ]
+                    ]
+                    st.download_button(
+                        "Télécharger le rapport CSV",
+                        data=export_df.to_csv(index=False).encode("utf-8"),
+                        file_name="audit_ecarts.csv",
+                        mime="text/csv",
+                    )
+
     # ---------------- Dashboard ----------------
 
     with dash_tab:
@@ -2724,8 +3354,34 @@ if authentication_status:
                     "Vérifiez les informations extraites. Vous pouvez ajuster les noms, les prix, la TVA ou les codes-barres avant l'importation."
                 )
 
+                working_df = extracted_df.copy()
+                if "quantite_recue" not in working_df.columns and "qte_init" in working_df.columns:
+                    working_df["quantite_recue"] = working_df["qte_init"]
+                if "codes" in working_df.columns:
+                    working_df["_code_lower"] = (
+                        working_df["codes"].fillna("").astype(str).str.lower().str.strip()
+                    )
+                    matches_df = match_invoice_products(working_df)
+                    if not matches_df.empty:
+                        matches_df = matches_df.rename(
+                            columns={
+                                "code": "_code_lower",
+                                "produit_id": "catalogue_id",
+                                "produit_nom": "catalogue_nom",
+                                "categorie": "catalogue_categorie",
+                            }
+                        )
+                        working_df = working_df.merge(matches_df, on="_code_lower", how="left")
+                        if "produit_id" not in working_df.columns:
+                            working_df["produit_id"] = working_df["catalogue_id"]
+                        else:
+                            working_df["produit_id"] = working_df["produit_id"].fillna(
+                                working_df["catalogue_id"]
+                            )
+                    working_df.drop(columns=["_code_lower"], inplace=True, errors="ignore")
+
                 editable_df = st.data_editor(
-                    extracted_df,
+                    working_df,
                     key="extract_invoice_products_editor",
                     hide_index=True,
                     num_rows="dynamic",
@@ -2735,7 +3391,28 @@ if authentication_status:
                         "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
                         "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
                         "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
+                        "quantite_recue": st.column_config.NumberColumn(
+                            "Quantité reçue", step=1, format="%.0f"
+                        ),
                         "codes": st.column_config.TextColumn("Codes-barres"),
+                        "produit_id": st.column_config.NumberColumn(
+                            "Produit ID", help="Identifiant catalogue cible si déjà existant"
+                        ),
+                        "catalogue_id": st.column_config.NumberColumn(
+                            "ID catalogue suggéré", disabled=True
+                        ),
+                        "catalogue_nom": st.column_config.TextColumn(
+                            "Produit catalogue", disabled=True
+                        ),
+                        "catalogue_categorie": st.column_config.TextColumn(
+                            "Catégorie catalogue", disabled=True
+                        ),
+                        "prix_achat_catalogue": st.column_config.NumberColumn(
+                            "Prix achat catalogue (€)", format="%.2f", disabled=True
+                        ),
+                        "prix_vente_catalogue": st.column_config.NumberColumn(
+                            "Prix vente catalogue (€)", format="%.2f", disabled=True
+                        ),
                     },
                 )
                 editable_df = pd.DataFrame(editable_df)
@@ -2771,6 +3448,147 @@ if authentication_status:
                         )
                         st.success("Importation terminée. Consultez le résumé ci-dessous.")
                         summary = summary_result
+
+            with workspace_panel(
+                "Rapprochement facture → commande",
+                "Préparez les bons de réception et les mouvements de stock à partir de la facture importée.",
+                icon="🔄",
+                accent="teal",
+            ):
+                reconciliation_df = st.session_state.get("invoice_products_df")
+                if not isinstance(reconciliation_df, pd.DataFrame) or reconciliation_df.empty:
+                    st.info("Chargez une facture et identifiez les produits pour accéder au rapprochement.")
+                else:
+                    working_df = reconciliation_df.copy()
+                    working_df["quantite_recue"] = pd.to_numeric(
+                        working_df.get("quantite_recue", working_df.get("qte_init", 0)), errors="coerce"
+                    ).fillna(0)
+                    working_df["prix_achat_facture"] = pd.to_numeric(
+                        working_df.get("prix_achat", working_df.get("prix_vente", 0)), errors="coerce"
+                    ).fillna(0)
+                    working_df["prix_achat_catalogue"] = pd.to_numeric(
+                        working_df.get("prix_achat_catalogue", 0), errors="coerce"
+                    ).fillna(0)
+                    working_df["valeur_facturee"] = working_df["quantite_recue"] * working_df["prix_achat_facture"]
+                    working_df["valeur_catalogue"] = working_df["quantite_recue"] * working_df["prix_achat_catalogue"]
+                    working_df["ecart_prix_unitaire"] = (
+                        working_df["prix_achat_facture"] - working_df["prix_achat_catalogue"]
+                    )
+
+                    metrics_cols = st.columns(3)
+                    metrics_cols[0].metric("Lignes rapprochées", f"{len(working_df):,}".replace(",", " "))
+                    metrics_cols[1].metric(
+                        "Produits identifiés",
+                        f"{int(working_df['produit_id'].notna().sum()):,}".replace(",", " "),
+                    )
+                    delta_total = working_df["valeur_facturee"].sum() - working_df["valeur_catalogue"].sum()
+                    metrics_cols[2].metric(
+                        "Écart vs catalogue",
+                        f"{delta_total:,.2f} €".replace(",", " "),
+                        delta=f"{delta_total:,.2f} €".replace(",", " "),
+                        delta_color="inverse" if delta_total > 0 else "normal",
+                    )
+
+                    display_cols = [
+                        "nom",
+                        "produit_id",
+                        "quantite_recue",
+                        "prix_achat_facture",
+                        "prix_achat_catalogue",
+                        "ecart_prix_unitaire",
+                        "valeur_facturee",
+                        "valeur_catalogue",
+                        "catalogue_nom",
+                        "catalogue_categorie",
+                        "codes",
+                    ]
+                    available_cols = [col for col in display_cols if col in working_df.columns]
+                    st.dataframe(
+                        working_df[available_cols],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "nom": "Désignation facture",
+                            "produit_id": st.column_config.NumberColumn("Produit ID", format="%d"),
+                            "quantite_recue": st.column_config.NumberColumn("Quantité reçue", format="%.0f"),
+                            "prix_achat_facture": st.column_config.NumberColumn("Prix facture (€)", format="%.2f €"),
+                            "prix_achat_catalogue": st.column_config.NumberColumn(
+                                "Prix catalogue (€)", format="%.2f €"
+                            ),
+                            "ecart_prix_unitaire": st.column_config.NumberColumn(
+                                "Écart unitaire (€)", format="%+.2f €"
+                            ),
+                            "valeur_facturee": st.column_config.NumberColumn("Montant facture (€)", format="%.2f €"),
+                            "valeur_catalogue": st.column_config.NumberColumn(
+                                "Montant catalogue (€)", format="%.2f €"
+                            ),
+                            "catalogue_nom": st.column_config.TextColumn("Produit catalogue"),
+                            "catalogue_categorie": st.column_config.TextColumn("Catégorie"),
+                            "codes": st.column_config.TextColumn("Codes-barres"),
+                        },
+                    )
+
+                    form_cols = st.columns([1.6, 1, 1])
+                    supplier_name = form_cols[0].text_input(
+                        "Fournisseur / source", value=st.session_state.get("invoice_supplier_hint", "")
+                    )
+                    action_mode = form_cols[1].selectbox(
+                        "Mode", ["Créer mouvements d'entrée", "Préparer bon de commande"],
+                        key="invoice_pipeline_mode",
+                    )
+                    reception_date = form_cols[2].date_input(
+                        "Date de réception",
+                        value=st.session_state.get("invoice_pipeline_date")
+                        or datetime.now().date(),
+                        key="invoice_pipeline_date",
+                    )
+
+                    movements_df = working_df[working_df["produit_id"].notna()].copy()
+                    movements_df["quantite_recue"] = pd.to_numeric(
+                        movements_df["quantite_recue"], errors="coerce"
+                    ).fillna(0)
+                    movements_df = movements_df[movements_df["quantite_recue"] > 0]
+
+                    action_cols = st.columns(2)
+                    with action_cols[0]:
+                        if st.button(
+                            "Créer les mouvements", type="primary", key="invoice_pipeline_movements"
+                        ):
+                            if action_mode != "Créer mouvements d'entrée":
+                                st.info("Basculer en mode 'Créer mouvements d'entrée' pour enregistrer les mouvements.")
+                            elif movements_df.empty:
+                                st.warning("Aucun produit identifié avec quantité reçue positive.")
+                            else:
+                                reception_dt = datetime.combine(reception_date, datetime.min.time())
+                                result = register_invoice_reception(
+                                    movements_df,
+                                    username=st.session_state.get("username", ""),
+                                    supplier=supplier_name,
+                                    movement_type="ENTREE",
+                                    reception_date=reception_dt,
+                                )
+                                if result.get("movements_created"):
+                                    st.success(
+                                        f"{result['movements_created']} mouvement(s) créé(s) pour {result['quantity_total']:.2f} unité(s)."
+                                    )
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                    )
+                                else:
+                                    st.warning("Aucun mouvement n'a été généré. Vérifiez les données sélectionnées.")
+
+                    with action_cols[1]:
+                        order_export = working_df[available_cols].to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            "Télécharger le bon de commande",
+                            data=order_export,
+                            file_name="commande_reappro.csv",
+                            mime="text/csv",
+                            disabled=working_df.empty,
+                        )
 
         if isinstance(summary, dict):
             with workspace_panel(
@@ -2893,8 +3711,34 @@ if authentication_status:
             ):
                 st.caption("Vérifiez et complétez les champs avant de valider l'importation.")
 
+                working_df = imported_df.copy()
+                if "quantite_recue" not in working_df.columns and "qte_init" in working_df.columns:
+                    working_df["quantite_recue"] = working_df["qte_init"]
+                if "codes" in working_df.columns:
+                    working_df["_code_lower"] = (
+                        working_df["codes"].fillna("").astype(str).str.lower().str.strip()
+                    )
+                    matches_df = match_invoice_products(working_df)
+                    if not matches_df.empty:
+                        matches_df = matches_df.rename(
+                            columns={
+                                "code": "_code_lower",
+                                "produit_id": "catalogue_id",
+                                "produit_nom": "catalogue_nom",
+                                "categorie": "catalogue_categorie",
+                            }
+                        )
+                        working_df = working_df.merge(matches_df, on="_code_lower", how="left")
+                        if "produit_id" not in working_df.columns:
+                            working_df["produit_id"] = working_df["catalogue_id"]
+                        else:
+                            working_df["produit_id"] = working_df["produit_id"].fillna(
+                                working_df["catalogue_id"]
+                            )
+                    working_df.drop(columns=["_code_lower"], inplace=True, errors="ignore")
+
                 editable_df = st.data_editor(
-                    imported_df,
+                    working_df,
                     key="import_invoice_products_editor",
                     hide_index=True,
                     num_rows="dynamic",
@@ -2904,7 +3748,28 @@ if authentication_status:
                         "prix_vente": st.column_config.NumberColumn("Prix de vente (€)", format="%.2f"),
                         "tva": st.column_config.NumberColumn("TVA (%)", format="%.2f"),
                         "qte_init": st.column_config.NumberColumn("Quantité", step=1, format="%.0f"),
+                        "quantite_recue": st.column_config.NumberColumn(
+                            "Quantité reçue", step=1, format="%.0f"
+                        ),
                         "codes": st.column_config.TextColumn("Codes-barres"),
+                        "produit_id": st.column_config.NumberColumn(
+                            "Produit ID", help="Identifiant catalogue cible si le produit existe"
+                        ),
+                        "catalogue_id": st.column_config.NumberColumn(
+                            "ID catalogue suggéré", disabled=True
+                        ),
+                        "catalogue_nom": st.column_config.TextColumn(
+                            "Produit catalogue", disabled=True
+                        ),
+                        "catalogue_categorie": st.column_config.TextColumn(
+                            "Catégorie catalogue", disabled=True
+                        ),
+                        "prix_achat_catalogue": st.column_config.NumberColumn(
+                            "Prix achat catalogue (€)", format="%.2f", disabled=True
+                        ),
+                        "prix_vente_catalogue": st.column_config.NumberColumn(
+                            "Prix vente catalogue (€)", format="%.2f", disabled=True
+                        ),
                     },
                 )
                 editable_df = pd.DataFrame(editable_df)
@@ -2940,6 +3805,147 @@ if authentication_status:
                         )
                         st.success("Importation terminée. Consultez le résumé ci-dessous.")
                         summary = summary_result
+
+        with workspace_panel(
+            "Rapprochement facture → commande",
+            "Préparez les bons de réception et les mouvements de stock à partir de la facture importée.",
+            icon="🔄",
+            accent="teal",
+        ):
+            reconciliation_df = st.session_state.get("invoice_products_df")
+            if not isinstance(reconciliation_df, pd.DataFrame) or reconciliation_df.empty:
+                st.info("Chargez une facture et identifiez les produits pour accéder au rapprochement.")
+            else:
+                working_df = reconciliation_df.copy()
+                working_df["quantite_recue"] = pd.to_numeric(
+                    working_df.get("quantite_recue", working_df.get("qte_init", 0)), errors="coerce"
+                ).fillna(0)
+                working_df["prix_achat_facture"] = pd.to_numeric(
+                    working_df.get("prix_achat", working_df.get("prix_vente", 0)), errors="coerce"
+                ).fillna(0)
+                working_df["prix_achat_catalogue"] = pd.to_numeric(
+                    working_df.get("prix_achat_catalogue", 0), errors="coerce"
+                ).fillna(0)
+                working_df["valeur_facturee"] = working_df["quantite_recue"] * working_df["prix_achat_facture"]
+                working_df["valeur_catalogue"] = working_df["quantite_recue"] * working_df["prix_achat_catalogue"]
+                working_df["ecart_prix_unitaire"] = (
+                    working_df["prix_achat_facture"] - working_df["prix_achat_catalogue"]
+                )
+
+                metrics_cols = st.columns(3)
+                metrics_cols[0].metric("Lignes rapprochées", f"{len(working_df):,}".replace(",", " "))
+                metrics_cols[1].metric(
+                    "Produits identifiés",
+                    f"{int(working_df['produit_id'].notna().sum()):,}".replace(",", " "),
+                )
+                delta_total = working_df["valeur_facturee"].sum() - working_df["valeur_catalogue"].sum()
+                metrics_cols[2].metric(
+                    "Écart vs catalogue",
+                    f"{delta_total:,.2f} €".replace(",", " "),
+                    delta=f"{delta_total:,.2f} €".replace(",", " "),
+                    delta_color="inverse" if delta_total > 0 else "normal",
+                )
+
+                display_cols = [
+                    "nom",
+                    "produit_id",
+                    "quantite_recue",
+                    "prix_achat_facture",
+                    "prix_achat_catalogue",
+                    "ecart_prix_unitaire",
+                    "valeur_facturee",
+                    "valeur_catalogue",
+                    "catalogue_nom",
+                    "catalogue_categorie",
+                    "codes",
+                ]
+                available_cols = [col for col in display_cols if col in working_df.columns]
+                st.dataframe(
+                    working_df[available_cols],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "nom": "Désignation facture",
+                        "produit_id": st.column_config.NumberColumn("Produit ID", format="%d"),
+                        "quantite_recue": st.column_config.NumberColumn("Quantité reçue", format="%.0f"),
+                        "prix_achat_facture": st.column_config.NumberColumn("Prix facture (€)", format="%.2f €"),
+                        "prix_achat_catalogue": st.column_config.NumberColumn(
+                            "Prix catalogue (€)", format="%.2f €"
+                        ),
+                        "ecart_prix_unitaire": st.column_config.NumberColumn(
+                            "Écart unitaire (€)", format="%+.2f €"
+                        ),
+                        "valeur_facturee": st.column_config.NumberColumn("Montant facture (€)", format="%.2f €"),
+                        "valeur_catalogue": st.column_config.NumberColumn(
+                            "Montant catalogue (€)", format="%.2f €"
+                        ),
+                        "catalogue_nom": st.column_config.TextColumn("Produit catalogue"),
+                        "catalogue_categorie": st.column_config.TextColumn("Catégorie"),
+                        "codes": st.column_config.TextColumn("Codes-barres"),
+                    },
+                )
+
+                form_cols = st.columns([1.6, 1, 1])
+                supplier_name = form_cols[0].text_input(
+                    "Fournisseur / source", value=st.session_state.get("invoice_supplier_hint", "")
+                )
+                action_mode = form_cols[1].selectbox(
+                    "Mode", ["Créer mouvements d'entrée", "Préparer bon de commande"],
+                    key="invoice_pipeline_mode",
+                )
+                reception_date = form_cols[2].date_input(
+                    "Date de réception",
+                    value=st.session_state.get("invoice_pipeline_date")
+                    or datetime.now().date(),
+                    key="invoice_pipeline_date",
+                )
+
+                movements_df = working_df[working_df["produit_id"].notna()].copy()
+                movements_df["quantite_recue"] = pd.to_numeric(
+                    movements_df["quantite_recue"], errors="coerce"
+                ).fillna(0)
+                movements_df = movements_df[movements_df["quantite_recue"] > 0]
+
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if st.button(
+                        "Créer les mouvements", type="primary", key="invoice_pipeline_movements"
+                    ):
+                        if action_mode != "Créer mouvements d'entrée":
+                            st.info("Basculer en mode 'Créer mouvements d'entrée' pour enregistrer les mouvements.")
+                        elif movements_df.empty:
+                            st.warning("Aucun produit identifié avec quantité reçue positive.")
+                        else:
+                            reception_dt = datetime.combine(reception_date, datetime.min.time())
+                            result = register_invoice_reception(
+                                movements_df,
+                                username=st.session_state.get("username", ""),
+                                supplier=supplier_name,
+                                movement_type="ENTREE",
+                                reception_date=reception_dt,
+                            )
+                            if result.get("movements_created"):
+                                st.success(
+                                    f"{result['movements_created']} mouvement(s) créé(s) pour {result['quantity_total']:.2f} unité(s)."
+                                )
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                )
+                            else:
+                                st.warning("Aucun mouvement n'a été généré. Vérifiez les données sélectionnées.")
+
+                with action_cols[1]:
+                    order_export = working_df[available_cols].to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "Télécharger le bon de commande",
+                        data=order_export,
+                        file_name="commande_reappro.csv",
+                        mime="text/csv",
+                        disabled=working_df.empty,
+                    )
 
         if isinstance(summary, dict):
             with workspace_panel(
@@ -3024,7 +4030,7 @@ if authentication_status:
 
             with workspace_panel(
                 "Sauvegardes base de données",
-                "Créez, restaurez ou supprimez les instantanés PostgreSQL.",
+                "Créez, planifiez et contrôlez vos sauvegardes PostgreSQL.",
                 icon="💾",
                 accent="slate",
             ):
@@ -3035,16 +4041,143 @@ if authentication_status:
                         st.experimental_rerun()
 
                 backup_directory = get_backup_directory()
+                backup_settings = load_backup_settings()
                 st.caption(
                     "Les fichiers générés sont conservés dans le dossier suivant : "
                     f"`{backup_directory.resolve()}`"
                 )
+
+                next_run = plan_next_backup(backup_settings, last_backup=backups[0] if backups else None)
+                if next_run:
+                    st.info(
+                        f"Prochaine sauvegarde planifiée le {next_run.strftime('%d/%m/%Y %H:%M')} (heure locale)."
+                    )
 
                 feedback = st.session_state.pop("admin_backup_feedback", None)
                 if feedback:
                     level, message = feedback
                     display = getattr(st, level, st.info)
                     display(message)
+
+                schedule_cols = st.columns(3)
+                frequency = schedule_cols[0].selectbox(
+                    "Fréquence",
+                    options=["manual", "daily", "weekly"],
+                    format_func=lambda value: {
+                        "manual": "Manuel",
+                        "daily": "Quotidienne",
+                        "weekly": "Hebdomadaire",
+                    }[value],
+                    index=["manual", "daily", "weekly"].index(str(backup_settings.get("frequency", "manual"))),
+                    key="backup_frequency",
+                )
+
+                try:
+                    default_time = datetime.strptime(str(backup_settings.get("time", "02:00")), "%H:%M").time()
+                except ValueError:
+                    default_time = datetime.strptime("02:00", "%H:%M").time()
+                scheduled_time = schedule_cols[1].time_input(
+                    "Heure d'exécution",
+                    value=default_time,
+                    key="backup_schedule_time",
+                )
+
+                weekday_selection = backup_settings.get("weekday", 0)
+                if frequency == "weekly":
+                    weekday = schedule_cols[2].selectbox(
+                        "Jour",
+                        options=list(range(7)),
+                        format_func=lambda idx: [
+                            "Lundi",
+                            "Mardi",
+                            "Mercredi",
+                            "Jeudi",
+                            "Vendredi",
+                            "Samedi",
+                            "Dimanche",
+                        ][idx],
+                        index=int(weekday_selection) % 7,
+                        key="backup_schedule_weekday",
+                    )
+                else:
+                    schedule_cols[2].markdown("<small>Le jour est utilisé uniquement en mode hebdomadaire.</small>", unsafe_allow_html=True)
+                    weekday = weekday_selection
+
+                retention_cols = st.columns(2)
+                retention_days = int(
+                    retention_cols[0].number_input(
+                        "Rétention (jours)",
+                        min_value=1,
+                        max_value=365,
+                        value=int(backup_settings.get("retention_days", 30)),
+                        key="backup_retention_days",
+                    )
+                )
+                max_backups = int(
+                    retention_cols[1].number_input(
+                        "Nombre maximum de sauvegardes",
+                        min_value=1,
+                        max_value=200,
+                        value=int(backup_settings.get("max_backups", 20)),
+                        key="backup_retention_count",
+                    )
+                )
+
+                notification_choices = ["Email", "Slack", "Webhook"]
+                notifications = st.multiselect(
+                    "Notifications",
+                    options=notification_choices,
+                    default=[n for n in backup_settings.get("notifications", []) if n in notification_choices],
+                    help="Choisissez les canaux à informer lors des sauvegardes.",
+                    key="backup_notifications",
+                )
+                integrity_toggle = st.checkbox(
+                    "Vérifier automatiquement l'intégrité après chaque sauvegarde",
+                    value=bool(backup_settings.get("integrity_checks", True)),
+                    key="backup_integrity_toggle",
+                )
+
+                if st.button("Enregistrer la planification", key="backup_schedule_save"):
+                    save_backup_settings(
+                        {
+                            "frequency": frequency,
+                            "time": scheduled_time.strftime("%H:%M"),
+                            "weekday": int(weekday),
+                            "retention_days": retention_days,
+                            "max_backups": max_backups,
+                            "notifications": notifications,
+                            "integrity_checks": integrity_toggle,
+                        }
+                    )
+                    st.session_state["admin_backup_feedback"] = (
+                        "success",
+                        "Planification mise à jour.",
+                    )
+                    _trigger_rerun()
+
+                stats = compute_backup_statistics(backups)
+                stats_cols = st.columns(3)
+                stats_cols[0].metric("Sauvegardes", str(len(backups)))
+                stats_cols[1].metric("Volume cumulé", f"{stats['total_size_mb']:.2f} Mo")
+                stats_cols[2].metric("Taille moyenne", f"{stats['average_size_mb']:.2f} Mo")
+
+                timeline_data = build_backup_timeline(backups)
+                if timeline_data:
+                    timeline_df = pd.DataFrame(timeline_data)
+                    timeline_df["created_at"] = pd.to_datetime(timeline_df["created_at"]).dt.tz_localize(None)
+                    st.area_chart(timeline_df.set_index("created_at")["size_mb"], height=180)
+
+                prune_candidates = suggest_retention_cleanup(
+                    backups,
+                    retention_days=retention_days,
+                    max_backups=max_backups,
+                )
+                if prune_candidates:
+                    names = ", ".join(meta.name for meta in prune_candidates)
+                    st.warning(
+                        f"{len(prune_candidates)} sauvegarde(s) dépassent la politique de rétention : {names}.",
+                        icon="🗑️",
+                    )
 
                 st.text_input(
                     "Étiquette optionnelle pour la prochaine sauvegarde",
@@ -3068,6 +4201,30 @@ if authentication_status:
                             )
                             st.toast("Sauvegarde terminée", icon="💾")
                             _trigger_rerun()
+
+                if backups and st.button("Restaurer la dernière sauvegarde", key="backup_restore_latest"):
+                    latest = backups[0]
+                    with st.spinner("Restauration de la dernière sauvegarde..."):
+                        try:
+                            restore_backup(latest.name, database_url=DATABASE_URL)
+                        except BackupError as exc:
+                            st.error(f"Échec de la restauration : {exc}")
+                        else:
+                            st.session_state["admin_backup_feedback"] = (
+                                "success",
+                                f"Base restaurée depuis {latest.name}.",
+                            )
+                            st.toast("Restauration effectuée", icon="✅")
+                            _trigger_rerun()
+
+                if st.button("Vérifier l'intégrité des sauvegardes", key="backup_integrity_check"):
+                    report = integrity_report(backups)
+                    if not report:
+                        st.info("Aucune sauvegarde à analyser pour le moment.")
+                    else:
+                        report_df = pd.DataFrame(report)
+                        report_df["created_at"] = pd.to_datetime(report_df["created_at"]).dt.strftime("%d/%m/%Y %H:%M")
+                        st.dataframe(report_df, hide_index=True, use_container_width=True)
 
                 if not backups:
                     st.info("Aucune sauvegarde trouvée pour le moment.")
