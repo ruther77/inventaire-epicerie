@@ -172,3 +172,152 @@ def get_product_details(identifier: str | int) -> dict | None:
         return row._asdict()
     else:
         return None
+
+
+# --- Gestion des utilisateurs -------------------------------------------------
+
+_USER_PUBLIC_FIELDS = (
+    "id",
+    "username",
+    "email",
+    "full_name",
+    "role",
+    "is_active",
+    "created_at",
+    "updated_at",
+)
+
+
+def _row_to_dict(row) -> dict | None:
+    if row is None:
+        return None
+    if hasattr(row, "_mapping"):
+        return dict(row._mapping)
+    if hasattr(row, "_asdict"):
+        return row._asdict()
+    return dict(row)
+
+
+def fetch_user_by_username(username: str) -> dict | None:
+    sql = text(
+        """
+        SELECT id, username, email, full_name, role, hashed_password, is_active, created_at, updated_at
+        FROM users
+        WHERE LOWER(username) = LOWER(:username)
+        LIMIT 1
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql, {"username": username})
+        return _row_to_dict(result.fetchone())
+
+
+def fetch_user_by_id(user_id: int) -> dict | None:
+    sql = text(
+        """
+        SELECT id, username, email, full_name, role, hashed_password, is_active, created_at, updated_at
+        FROM users
+        WHERE id = :user_id
+        LIMIT 1
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql, {"user_id": user_id})
+        return _row_to_dict(result.fetchone())
+
+
+def list_users() -> list[dict]:
+    sql = text(
+        """
+        SELECT id, username, email, full_name, role, is_active, created_at, updated_at
+        FROM users
+        ORDER BY username ASC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def create_user_record(data: dict) -> dict:
+    sql = text(
+        """
+        INSERT INTO users (username, email, full_name, role, hashed_password, is_active)
+        VALUES (:username, :email, :full_name, :role, :hashed_password, :is_active)
+        RETURNING id, username, email, full_name, role, is_active, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, data)
+        row = result.fetchone()
+    return _row_to_dict(row) or {}
+
+
+def update_user_record(user_id: int, updates: dict) -> dict | None:
+    if not updates:
+        existing = fetch_user_by_id(user_id)
+        if existing is None:
+            return None
+        return {key: existing[key] for key in _USER_PUBLIC_FIELDS}
+
+    allowed = {"username", "email", "full_name", "role", "hashed_password", "is_active"}
+    filtered = {key: value for key, value in updates.items() if key in allowed}
+    if not filtered:
+        existing = fetch_user_by_id(user_id)
+        if existing is None:
+            return None
+        return {key: existing[key] for key in _USER_PUBLIC_FIELDS}
+
+    assignments: list[str] = []
+    params = {"user_id": user_id}
+    for index, (field, value) in enumerate(filtered.items()):
+        param_name = f"value_{index}"
+        assignments.append(f"{field} = :{param_name}")
+        params[param_name] = value
+
+    assignments.append("updated_at = now()")
+
+    sql = text(
+        f"""
+        UPDATE users
+        SET {', '.join(assignments)}
+        WHERE id = :user_id
+        RETURNING id, username, email, full_name, role, is_active, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, params)
+        row = result.fetchone()
+    return _row_to_dict(row)
+
+
+def delete_user_record(user_id: int) -> bool:
+    sql = text("DELETE FROM users WHERE id = :user_id")
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, {"user_id": user_id})
+        return result.rowcount > 0
+
+
+def count_active_admins(exclude_user_id: int | None = None) -> int:
+    base_sql = "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE"
+    params: dict[str, int] = {}
+    if exclude_user_id is not None:
+        base_sql += " AND id <> :exclude_id"
+        params["exclude_id"] = exclude_user_id
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(text(base_sql), params)
+        scalar = result.scalar()  # type: ignore[assignment]
+    return int(scalar or 0)
