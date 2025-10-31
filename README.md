@@ -2,7 +2,8 @@
 
 Application Streamlit pour la gestion d'inventaire d'une épicerie, avec
 chargement des produits depuis des fichiers CSV, suivi des ventes et tableau de
-bord interactif.
+bord interactif. Une API FastAPI et une interface React monopage complètent
+désormais l'application historique pour amorcer la migration vers une SPA.
 
 ## État du projet
 
@@ -13,6 +14,12 @@ bord interactif.
   douce et chaleureuse à l'ensemble des composants Streamlit, et le fichier
   `.streamlit/config.toml` force l'utilisation du thème clair sur tous les
   environnements d'exécution.
+* **SPA React :** le dossier `frontend/` contient une application Vite + React
+  avec un router, un PoS minimal et une page dédiée aux outils Streamlit
+  conservés temporairement via une iframe.
+* **API REST :** `backend/main.py` expose un service FastAPI (`/health`,
+  `/products`, `/inventory/summary`, `/pos/checkout`, `/products/{id}`) qui
+  encapsule la logique métier existante.
 * **Workflows avancés :** les onglets _Plan d'approvisionnement dynamique_,
   _Audit & résolution d'écarts_, _Factures → Commandes_, _Qualité catalogue &
   codes-barres_ et _Sauvegardes & reprise d'activité_ embarquent des vues
@@ -68,6 +75,9 @@ shell ouvert via `make shell`.
 3. Dès que les conteneurs sont démarrés, ouvrez un navigateur sur
    <http://localhost:8501> pour accéder à l'application Streamlit. La base
    PostgreSQL est exposée sur le port 5432 (définis dans `docker-compose.yml`).
+   L'API FastAPI écoute par défaut sur `http://localhost:8000` (commande
+   `uvicorn backend.main:app --reload`), et le front-end React sur
+   `http://localhost:5173` (`npm install && npm run dev` depuis `frontend/`).
 4. Pour arrêter et nettoyer les conteneurs :
 
    ```bash
@@ -109,6 +119,17 @@ l'affichage local et l'image exécutée en production.
    ```bash
    streamlit run app.py
    ```
+
+5. Dans un autre terminal, démarrez l'API puis la SPA :
+
+   ```bash
+   uvicorn backend.main:app --reload --port 8000
+   cd frontend && npm install && npm run dev
+   ```
+
+   La SPA est disponible sur <http://localhost:5173> et communique avec
+   l'ancienne application via l'iframe « Outils Streamlit » tant que certaines
+   fonctionnalités n'ont pas été portées.
 
 ### Importer des produits
 
