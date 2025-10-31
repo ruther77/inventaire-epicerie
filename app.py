@@ -4,10 +4,9 @@ import os
 import io
 import math
 import re
-import json
 from contextlib import contextmanager
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import requests
@@ -18,7 +17,6 @@ from functools import lru_cache
 import streamlit_authenticator as stauth
 import plotly.express as px
 import invoice_extractor
-from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from backup_manager import (
     BackupError,
@@ -61,13 +59,33 @@ from product_service import (
 def local_css(file_name):
     """Charge un fichier CSS externe et l'injecte dans l'application Streamlit."""
     file_path = os.path.join(os.path.dirname(__file__), file_name)
-    
+
     try:
         with open(file_path) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
         current_dir = os.getcwd()
         st.error(f"Erreur: Le fichier de style '{file_name}' est introuvable. Chemin relatif tenté (CWD): {current_dir}/{file_name}. Le fichier n'est PAS dans le conteneur ou le CWD est incorrect.")
+
+
+_THEME_LABELS = {"Thème clair": "light", "Thème sombre": "dark"}
+
+
+def apply_ui_theme(theme_key: str) -> None:
+    """Applique dynamiquement le thème clair ou sombre via un attribut de body."""
+
+    safe_theme = theme_key if theme_key in {"light", "dark"} else "light"
+    st.markdown(
+        f"""
+        <script>
+        const rootDocument = window.parent.document;
+        if (rootDocument && rootDocument.body) {{
+            rootDocument.body.setAttribute('data-theme', '{safe_theme}');
+        }}
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
         
         
 # --- CONFIGURATION DE LA PAGE ---
@@ -75,6 +93,15 @@ st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="
 
 # --- CHARGEMENT DU STYLE CSS PERSONNALISÉ ---
 local_css("style.css")
+if "ui_theme" not in st.session_state:
+    st.session_state["ui_theme"] = "light"
+if "pos_receipt" not in st.session_state:
+    st.session_state["pos_receipt"] = None
+st.session_state.setdefault("pos_product_selectbox", "-- Sélectionner un produit --")
+st.session_state.setdefault("pos_qty_input", 1)
+st.session_state.setdefault("_pos_processing_notice", False)
+
+apply_ui_theme(st.session_state.get("ui_theme", "light"))
 
 # --- Initialisation des Variables de Session ---
 if "last_barcode" not in st.session_state:
@@ -83,6 +110,8 @@ if "current_frame_count" not in st.session_state:
     st.session_state["current_frame_count"] = 0
 if "cart" not in st.session_state:
     st.session_state["cart"] = []
+if "pos_processing" not in st.session_state:
+    st.session_state["pos_processing"] = False
 if "invoice_raw_text" not in st.session_state:
     st.session_state["invoice_raw_text"] = ""
 if "invoice_text_input" not in st.session_state:
@@ -134,6 +163,51 @@ def _clear_cart() -> None:
     """Vide complètement le panier et force le rafraîchissement de la session."""
 
     st.session_state["cart"] = []
+    st.session_state["pos_receipt"] = None
+
+
+def _reset_pos_inputs() -> None:
+    """Réinitialise les champs du formulaire PoS après un ajout réussi."""
+
+    st.session_state.pop("pos_qty_input", None)
+    st.session_state.pop("pos_product_selectbox", None)
+
+
+def _add_product_to_cart(
+    product_id: int,
+    quantity: int,
+    products_df: pd.DataFrame,
+) -> Tuple[bool, str]:
+    """Ajoute un produit au panier en garantissant l'absence de boucles infinies."""
+
+    if quantity <= 0:
+        return False, "La quantité doit être supérieure à zéro."
+
+    try:
+        product_row = products_df[products_df["id"] == product_id].iloc[0]
+    except IndexError:
+        return False, f"Produit ID {product_id} introuvable dans le catalogue."
+
+    cart_items = list(_ensure_cart_state())
+
+    for item in cart_items:
+        if int(item.get("id", -1)) == product_id:
+            item["qty"] = int(item.get("qty", 0)) + int(quantity)
+            break
+    else:
+        cart_items.append(
+            {
+                "id": int(product_row["id"]),
+                "nom": str(product_row["nom"]),
+                "prix_vente": float(product_row["prix_vente"]),
+                "tva": float(product_row["tva"]),
+                "qty": int(quantity),
+            }
+        )
+
+    st.session_state["cart"] = cart_items
+    label = str(product_row["nom"]).strip() or f"Produit {product_id}"
+    return True, f"{quantity} × {label} ajouté(s) au panier"
 
 
 
@@ -281,70 +355,6 @@ def _fetch_product_image_url(ean: str | None) -> str | None:
     return None
 
 
-def _build_product_card(product: dict[str, Any]) -> str:
-    """Construit un bloc HTML pour une carte produit de la vitrine."""
-
-    name = escape(str(product.get("nom", "")))
-    category = escape(str(product.get("categorie", "Autre")))
-    price = float(product.get("prix_vente") or 0.0)
-    stock = float(product.get("stock_actuel") or 0.0)
-    ventes = float(product.get("ventes_30j") or 0.0)
-
-    if stock <= 0:
-        stock_label = "Rupture"
-        stock_class = "is-danger"
-    elif stock < 5:
-        stock_label = "Stock bas"
-        stock_class = "is-warning"
-    else:
-        stock_label = "Disponible"
-        stock_class = "is-success"
-
-    ean = product.get("ean")
-    image_url: str | None = None
-    raw_image = product.get("image_url")
-    if isinstance(raw_image, str) and raw_image.strip():
-        image_url = raw_image.strip()
-    elif raw_image is not None and not pd.isna(raw_image):
-        candidate = str(raw_image).strip()
-        image_url = candidate or None
-
-    if not image_url:
-        image_url = _fetch_product_image_url(ean)
-
-    if image_url:
-        media_html = (
-            "<div class=\"catalog-card__media\">"
-            f"<img src=\"{escape(str(image_url), quote=True)}\" alt=\"Visuel produit {name}\" "
-            "loading=\"lazy\" decoding=\"async\"/>"
-            "</div>"
-        )
-    else:
-        placeholder_initial = escape((str(product.get("nom", ""))[:1] or "#").upper())
-        media_html = (
-            "<div class=\"catalog-card__media catalog-card__media--placeholder\" "
-            "aria-label=\"Visuel indisponible\">"
-            f"<span>{placeholder_initial}</span>"
-            "</div>"
-        )
-
-    return f"""
-    <div class="catalog-card">
-        {media_html}
-        <div class="catalog-card__head">
-            <span class="catalog-card__category">{category}</span>
-            <span class="catalog-card__stock {stock_class}">{stock_label}</span>
-        </div>
-        <h4 class="catalog-card__title">{name}</h4>
-        <div class="catalog-card__price">{price:,.2f} €</div>
-        <div class="catalog-card__meta">
-            <span>Stock: {stock:,.0f}</span>
-            <span>Ventes 30j: {ventes:,.0f}</span>
-        </div>
-    </div>
-    """
-
-
 def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
     """Affiche une grille responsive de cartes produit."""
 
@@ -359,26 +369,60 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
         cols = st.columns(columns)
         for col, product in zip(cols, records[start:start + columns]):
             with col:
-                card_html = _build_product_card(product)
-                st.markdown(card_html, unsafe_allow_html=True)
+                with st.container():
+                    name = str(product.get("nom", "")).strip() or "Produit"
+                    category = str(product.get("categorie", "Autre")).strip()
+                    price = float(product.get("prix_vente") or 0.0)
+                    stock = float(product.get("stock_actuel") or 0.0)
+                    ventes = float(product.get("ventes_30j") or 0.0)
+
+                    image_url: str | None = None
+                    raw_image = product.get("image_url")
+                    if isinstance(raw_image, str) and raw_image.strip():
+                        image_url = raw_image.strip()
+                    elif raw_image is not None and not pd.isna(raw_image):
+                        candidate = str(raw_image).strip()
+                        image_url = candidate or None
+
+                    if not image_url:
+                        image_url = _fetch_product_image_url(product.get("ean"))
+
+                    if image_url:
+                        st.image(
+                            image_url,
+                            caption=f"Visuel produit {name}",
+                            use_container_width=True,
+                        )
+                    else:
+                        placeholder_initial = (name[:1] or "#").upper()
+                        st.markdown(
+                            f"### {placeholder_initial}",
+                        )
+                        st.caption("Visuel indisponible")
+
+                    st.caption(category)
+                    st.markdown(f"**{name}**")
+                    st.markdown(f"### {_format_human_number(price, 2)} €")
+
+                    stock_label: str
+                    stock_color: str
+                    if stock <= 0:
+                        stock_label, stock_color = "Rupture", "red"
+                    elif stock < 5:
+                        stock_label, stock_color = "Stock bas", "orange"
+                    else:
+                        stock_label, stock_color = "Disponible", "green"
+
+                    st.markdown(f":{stock_color}[{stock_label}]")
+                    st.caption(
+                        f"Stock: {_format_human_number(stock)} · Ventes 30j: {_format_human_number(ventes)}"
+                    )
 
 
 def _format_human_number(value: float | int, decimals: int = 0) -> str:
     """Formate un nombre en utilisant un séparateur fin non cassant."""
 
     return f"{value:,.{decimals}f}".replace(",", " ")
-
-
-def _build_chip_markup(labels: List[str] | None, chip_class: str) -> str:
-    if not labels:
-        return ""
-
-    chips = "".join(
-        f'<span class="{chip_class}">{escape(str(label))}</span>' for label in labels if label
-    )
-    if not chips:
-        return ""
-    return f'<div class="workspace-hero__actions">{chips}</div>'
 
 
 def render_workspace_hero(
@@ -390,58 +434,43 @@ def render_workspace_hero(
     metrics: List[Dict[str, str]] | None = None,
     tone: str = "sunset",
 ) -> None:
-    """Affiche un bandeau héro pour les espaces CMS."""
+    """Affiche un bandeau héro en utilisant des composants Streamlit natifs."""
 
-    badges_html = _build_chip_markup(badges, "workspace-hero__chip")
+    tone_palette = {
+        "sunset": "orange",
+        "citrus": "orange",
+        "lagoon": "blue",
+        "marine": "blue",
+        "violet": "violet",
+        "emerald": "green",
+        "amber": "orange",
+        "teal": "green",
+        "slate": "violet",
+    }
+    accent_color = tone_palette.get(tone, "blue")
 
-    metric_cards: list[str] = []
-    if metrics:
-        for metric in metrics:
-            label = escape(str(metric.get("label", "")))
-            value = escape(str(metric.get("value", "")))
-            hint = metric.get("hint")
-            hint_html = (
-                f'<span class="workspace-hero__metric-hint">{escape(str(hint))}</span>'
-                if hint
-                else ""
-            )
-            metric_cards.append(
-                """
-                <div class="workspace-hero__metric">
-                    <span class="workspace-hero__metric-label">{label}</span>
-                    <span class="workspace-hero__metric-value">{value}</span>
-                    {hint_html}
-                </div>
-                """.format(label=label, value=value, hint_html=hint_html)
-            )
+    container = st.container()
+    with container:
+        st.markdown(
+            f":{accent_color}[{eyebrow}]",
+        )
+        st.markdown(f"## {title}")
+        st.write(description)
 
-    metrics_html = (
-        f'<div class="workspace-hero__metrics">{"".join(metric_cards)}</div>'
-        if metric_cards
-        else ""
-    )
+        if badges:
+            badge_text = " ".join(f":{accent_color}[{badge}]" for badge in badges if badge)
+            if badge_text:
+                st.markdown(badge_text)
 
-    st.markdown(
-        """
-        <section class="workspace-hero workspace-hero--{tone}">
-            <div class="workspace-hero__content">
-                <p class="workspace-hero__eyebrow">{eyebrow}</p>
-                <h2>{title}</h2>
-                <p>{description}</p>
-                {badges_html}
-            </div>
-            {metrics_html}
-        </section>
-        """.format(
-            tone=escape(tone),
-            eyebrow=escape(eyebrow),
-            title=escape(title),
-            description=escape(description),
-            badges_html=badges_html,
-            metrics_html=metrics_html,
-        ),
-        unsafe_allow_html=True,
-    )
+        if metrics:
+            cols = st.columns(len(metrics))
+            for col, metric in zip(cols, metrics):
+                label = str(metric.get("label", "")).strip() or "–"
+                value = str(metric.get("value", "")).strip() or "–"
+                hint = str(metric.get("hint", "")).strip()
+                col.metric(label=label, value=value)
+                if hint:
+                    col.caption(hint)
 
 
 @contextmanager
@@ -452,46 +481,39 @@ def workspace_panel(
     icon: str | None = None,
     accent: str | None = None,
 ):
-    """Crée un conteneur de panneau stylisé pour structurer les onglets."""
+    """Crée un conteneur de panneau stylisé en s'appuyant sur les conteneurs Streamlit."""
 
-    accent_attr = f" workspace-panel--{escape(accent)}" if accent else ""
-    st.markdown(
-        f'<div class="workspace-panel{accent_attr}">',
-        unsafe_allow_html=True,
-    )
+    accent_palette = {
+        "violet": "violet",
+        "blue": "blue",
+        "green": "green",
+        "orange": "orange",
+        "citrus": "orange",
+        "lagoon": "blue",
+        "marine": "blue",
+        "emerald": "green",
+        "amber": "orange",
+        "teal": "green",
+        "slate": "violet",
+    }
+    accent_color = accent_palette.get(accent or "", "blue")
 
-    if title or description:
-        icon_html = (
-            f'<span class="workspace-panel__icon">{escape(icon)}</span>'
-            if icon
-            else ""
-        )
-        desc_html = (
-            f'<p class="workspace-panel__description">{escape(description)}</p>'
-            if description
-            else ""
-        )
-        st.markdown(
-            """
-            <header class="workspace-panel__heading">
-                {icon_html}
-                <div class="workspace-panel__titles">
-                    <h3>{title}</h3>
-                    {desc_html}
-                </div>
-            </header>
-            """.format(
-                icon_html=icon_html,
-                title=escape(title or ""),
-                desc_html=desc_html,
-            ),
-            unsafe_allow_html=True,
-        )
+    container = st.container()
+    with container:
+        if title or description:
+            heading = title or ""
+            heading_display = f":{accent_color}[{heading}]" if heading else ""
+            if icon:
+                heading_display = f"{icon} {heading_display}" if heading_display else icon
+            if heading_display:
+                st.markdown(f"### {heading_display}")
+            if description:
+                st.caption(description)
 
-    try:
-        yield
-    finally:
-        st.markdown("</div>", unsafe_allow_html=True)
+        try:
+            yield
+        finally:
+            pass
 
 def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     """Construit un DataFrame propre à partir des éléments du panier."""
@@ -1021,6 +1043,21 @@ if authentication_status:
 
     st.title("📦 Inventaire — Gestion Complète")
     st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')
+    theme_labels = list(_THEME_LABELS.keys())
+    current_theme_label = {
+        value: label for label, value in _THEME_LABELS.items()
+    }.get(st.session_state.get("ui_theme", "light"), theme_labels[0])
+    selected_label = st.sidebar.selectbox(
+        "Apparence",
+        options=theme_labels,
+        index=theme_labels.index(current_theme_label),
+    )
+    chosen_theme = _THEME_LABELS[selected_label]
+    if chosen_theme != st.session_state.get("ui_theme"):
+        st.session_state["ui_theme"] = chosen_theme
+        apply_ui_theme(chosen_theme)
+    else:
+        apply_ui_theme(chosen_theme)
     authenticator.logout('Déconnexion', 'sidebar')
 
     # Définition des onglets fonctionnels de l'application
@@ -1074,35 +1111,20 @@ if authentication_status:
                 formatted = f"{value:,.{decimals}f}".replace(",", " ")
                 return f"{formatted}{suffix}".strip()
 
-            st.markdown(
-                f"""
-                <section class="catalog-hero catalog-hero--sunset">
-                    <div class="catalog-hero__content">
-                        <p class="catalog-hero__eyebrow">Expérience boutique</p>
-                        <h2>Animez votre vitrine digitale avec des insights temps réel.</h2>
-                        <p>Visualisez la vitalité de vos rayons, identifiez les alertes prioritaires et préparez vos opérations commerciales en toute confiance.</p>
-                        <div class="catalog-hero__actions">
-                            <span class="catalog-hero__chip">Nouveautés</span>
-                            <span class="catalog-hero__chip catalog-hero__chip--outline">{total_products} références suivies</span>
-                        </div>
-                    </div>
-                    <div class="catalog-hero__glance">
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Valeur stock</span>
-                            <span class="hero-stat__value">{_format_number(stock_value)} €</span>
-                        </div>
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Potentiel 30&nbsp;j</span>
-                            <span class="hero-stat__value">{_format_number(potential_sales)} €</span>
-                        </div>
-                        <div class="hero-stat">
-                            <span class="hero-stat__label">Alertes actives</span>
-                            <span class="hero-stat__value hero-stat__value--accent">{low_stock_count}</span>
-                        </div>
-                    </div>
-                </section>
-                """,
-                unsafe_allow_html=True,
+            render_workspace_hero(
+                eyebrow="Expérience boutique",
+                title="Animez votre vitrine digitale avec des insights temps réel.",
+                description=(
+                    "Visualisez la vitalité de vos rayons, identifiez les alertes prioritaires et "
+                    "préparez vos opérations commerciales en toute confiance."
+                ),
+                badges=["Nouveautés", f"{total_products} références suivies"],
+                metrics=[
+                    {"label": "Valeur stock", "value": f"{_format_number(stock_value)} €"},
+                    {"label": "Potentiel 30 j", "value": f"{_format_number(potential_sales)} €"},
+                    {"label": "Alertes actives", "value": f"{low_stock_count}"},
+                ],
+                tone="sunset",
             )
 
             metrics_cols = st.columns(4)
@@ -1408,7 +1430,10 @@ if authentication_status:
     # ---------------- Vente (PoS) ----------------
 
     with pos_tab:
-        cart_items = _ensure_cart_state()
+        for legacy_key in ("product_to_add_id", "product_to_add_qty", "add_to_cart_triggered"):
+            st.session_state.pop(legacy_key, None)
+
+        cart_items = list(_ensure_cart_state())
         cart_df = _normalize_cart_dataframe(cart_items)
         cart_df = cart_df.assign(
             prix_total=lambda df_: df_["prix_vente"] * df_["qty"],
@@ -1436,7 +1461,42 @@ if authentication_status:
             tone="citrus",
         )
 
+        diag_df = load_stock_diagnostics()
+        with workspace_panel(
+            "Diagnostic stock", 
+            "Surveille les écarts entre stocks comptés et mouvements enregistrés en temps réel.",
+            icon="🚨",
+            accent="amber",
+        ):
+            if diag_df is None or diag_df.empty:
+                st.success("Aucun écart détecté, les stocks sont alignés ✅")
+            else:
+                diag_display = diag_df.copy()
+                diag_display["ecart_abs"] = diag_display["ecart"].abs()
+                top_rows = diag_display.sort_values("ecart_abs", ascending=False).head(5)
+                st.dataframe(
+                    top_rows.rename(
+                        columns={
+                            "nom": "Produit",
+                            "stock_actuel": "Stock système",
+                            "stock_calcule": "Stock mouvements",
+                            "ecart": "Écart",
+                        }
+                    )[["Produit", "Stock système", "Stock mouvements", "Écart"]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+                worst_row = top_rows.iloc[0]
+                st.warning(
+                    f"Écart maximal sur {worst_row['nom']} : {worst_row['ecart']:+.2f} unité(s)",
+                    icon="⚠️",
+                )
+                st.caption("Liste limitée aux 5 écarts les plus importants. Rafraîchir la page pour recharger les données.")
+
         cart_col, input_col = st.columns([1.35, 1])
+
+        success_message = st.session_state.pop("pos_success_message", None)
 
         with cart_col:
             with workspace_panel(
@@ -1445,6 +1505,18 @@ if authentication_status:
                 icon="🛍️",
                 accent="citrus",
             ):
+                if success_message:
+                    st.success(success_message)
+                    receipt_data = st.session_state.get("pos_receipt")
+                    if receipt_data:
+                        st.download_button(
+                            "Télécharger le ticket (PDF)",
+                            data=receipt_data.get("content", b""),
+                            file_name=receipt_data.get("filename", "ticket.pdf"),
+                            mime="application/pdf",
+                            key="download_pos_receipt",
+                        )
+
                 if cart_df.empty:
                     st.info("Le panier est vide. Ajoutez un produit pour démarrer la vente.")
                 else:
@@ -1473,37 +1545,87 @@ if authentication_status:
                         key="clear_cart_btn",
                     ):
                         _clear_cart()
+                        _reset_pos_inputs()
                         st.rerun()
 
                 with action_cols[1]:
-                    if cart_items and st.button(
+                    processing_sale = bool(st.session_state.get("pos_processing", False))
+                    processing_status_slot = st.empty()
+                    if processing_sale and not st.session_state.get("_pos_processing_notice"):
+                        processing_status_slot.info("Traitement d'une vente en cours…")
+                    st.session_state["_pos_processing_notice"] = processing_sale
+                    finalize_clicked = st.button(
                         "Finaliser la vente",
                         key="btn_finalize_sale",
                         type="primary",
-                    ):
-                        with st.spinner("Traitement de la vente en cours..."):
-                            sale_ok, sale_msg = process_sale_transaction(
-                                cart_items,
-                                st.session_state.get("username", "inconnu"),
-                            )
+                        disabled=processing_sale,
+                    )
 
-                        if sale_ok:
-                            st.success("Vente finalisée et stock mis à jour ✅")
-                            _clear_cart()
-                            invalidate_data_caches(
-                                "products_list",
-                                "catalog",
-                                "trending",
-                                "product_options",
-                                "movement_timeseries",
-                                "recent_movements",
-                                "table_counts",
-                                "table_preview",
-                            )
-                            st.rerun()
+                    if cart_items and finalize_clicked:
+                        if processing_sale:
+                            st.info("Une vente est déjà en cours de traitement…")
                         else:
-                            error_msg = sale_msg or "Échec de la vente. Vérifiez le stock disponible et réessayez."
-                            st.error(error_msg)
+                            st.session_state["pos_processing"] = True
+                            processing_status_slot.info("Traitement de la vente en cours…")
+                            try:
+                                with st.spinner("Traitement de la vente en cours..."):
+                                    sale_result = process_sale_transaction(
+                                        cart_items,
+                                        st.session_state.get("username", "inconnu"),
+                                    )
+
+                                sale_ok: bool
+                                sale_msg: str | None
+                                receipt_payload: dict[str, bytes] | None
+
+                                if isinstance(sale_result, tuple):
+                                    if len(sale_result) == 3:
+                                        sale_ok, sale_msg, receipt_payload = sale_result
+                                    elif len(sale_result) == 2:
+                                        sale_ok, sale_msg = sale_result
+                                        receipt_payload = None
+                                    else:
+                                        padded = list(sale_result) + [None, None]
+                                        sale_ok = bool(padded[0])
+                                        sale_msg = padded[1]
+                                        receipt_payload = padded[2]
+                                else:
+                                    sale_ok = bool(sale_result)
+                                    sale_msg = None
+                                    receipt_payload = None
+
+                                if sale_ok:
+                                    st.session_state["pos_success_message"] = (
+                                        "Vente finalisée et stock mis à jour ✅"
+                                    )
+                                    _clear_cart()
+                                    st.session_state["pos_receipt"] = receipt_payload
+                                    invalidate_data_caches(
+                                        "products_list",
+                                        "catalog",
+                                        "trending",
+                                        "product_options",
+                                        "movement_timeseries",
+                                        "recent_movements",
+                                        "table_counts",
+                                        "table_preview",
+                                        "stock_diagnostics",
+                                    )
+                                    st.session_state["_pos_processing_notice"] = False
+                                    st.session_state["pos_processing"] = False
+                                    st.rerun()
+                                else:
+                                    error_msg = (
+                                        sale_msg
+                                        or "Échec de la vente. Vérifiez le stock disponible et réessayez."
+                                    )
+                                    st.error(error_msg)
+                                    st.session_state["pos_receipt"] = None
+                                    st.session_state["_pos_processing_notice"] = False
+                            finally:
+                                st.session_state["_pos_processing_notice"] = False
+                                st.session_state["pos_processing"] = False
+                                processing_status_slot.empty()
 
         with input_col:
             with workspace_panel(
@@ -1524,73 +1646,47 @@ if authentication_status:
                     product_names = ["-- Erreur de chargement --"]
                     product_options = {}
 
+                feedback_slot = st.empty()
+
                 with st.form("pos_input_form", clear_on_submit=False):
                     selected_product_name = st.selectbox(
                         "Sélectionner un produit (nom)",
                         options=product_names,
-                        index=0,
                         key="pos_product_selectbox",
                     )
                     qty_to_add = st.number_input(
                         "Quantité",
                         min_value=1,
-                        value=1,
                         step=1,
                         key="pos_qty_input",
                     )
                     add_button = st.form_submit_button("Ajouter au panier")
 
-                if add_button and selected_product_name != "-- Sélectionner un produit --":
-                    selected_product_id = product_options.get(selected_product_name)
-
-                    if selected_product_id:
-                        st.session_state["product_to_add_id"] = selected_product_id
-                        st.session_state["product_to_add_qty"] = qty_to_add
-                        st.session_state["add_to_cart_triggered"] = True
+                if add_button:
+                    if selected_product_name == "-- Sélectionner un produit --":
+                        feedback_slot.warning(
+                            "Veuillez sélectionner un produit pour l'ajouter au panier."
+                        )
                     else:
-                        st.error("Erreur: ID produit non trouvé après sélection.")
-                elif add_button:
-                    st.warning("Veuillez sélectionner un produit pour l'ajouter au panier.")
+                        selected_product_id = product_options.get(selected_product_name)
 
-                if st.session_state.get("add_to_cart_triggered", False):
-                    product_id = st.session_state.get("product_to_add_id")
-                    quantity = st.session_state.get("product_to_add_qty")
+                        if not selected_product_id:
+                            feedback_slot.error(
+                                "Erreur: ID produit non trouvé après sélection."
+                            )
+                        else:
+                            success, message = _add_product_to_cart(
+                                int(selected_product_id),
+                                int(qty_to_add),
+                                df_products,
+                            )
 
-                    if product_id and quantity > 0:
-                        try:
-                            product_row = df_products[df_products['id'] == product_id].iloc[0]
-
-                            quantity = int(quantity)
-                            cart_items = _ensure_cart_state()
-
-                            product_data = {
-                                'id': int(product_row['id']),
-                                'nom': product_row['nom'],
-                                'prix_vente': float(product_row['prix_vente']),
-                                'tva': float(product_row['tva']),
-                                'qty': quantity
-                            }
-
-                            found = False
-                            for item in cart_items:
-                                if item['id'] == product_id:
-                                    item['qty'] += quantity
-                                    found = True
-                                    break
-
-                            if not found:
-                                cart_items.append(product_data)
-
-                            st.toast(f"✅ {quantity} x {product_data['nom']} ajouté(s) au panier !", icon='🛒')
-                            st.rerun()
-
-                        except IndexError:
-                            st.error(f"Erreur : Produit ID {product_id} non trouvé dans le catalogue.")
-                        except Exception as e:
-                            st.error(f"Erreur inattendue lors de l'ajout au panier : {e}")
-
-                    for key in ("product_to_add_id", "product_to_add_qty", "add_to_cart_triggered"):
-                        st.session_state.pop(key, None)
+                            if success:
+                                _reset_pos_inputs()
+                                st.toast(f"✅ {message}", icon="🛒")
+                                st.rerun()
+                            else:
+                                feedback_slot.warning(message)
 
     # ---------------- Catalogue ----------------
 
@@ -1941,6 +2037,17 @@ if authentication_status:
     # ---------------- Catalogue ----------------
 
         hero_placeholder = st.container()
+
+        try:
+            product_options = cached_product_options()
+        except Exception as exc:
+            st.error(
+                "Impossible de charger la liste des produits pour le filtre des mouvements. "
+                f"Détail: {exc}"
+            )
+            product_options = {}
+
+        filter_products = ["Catalogue complet"] + list(product_options.keys())
 
         with workspace_panel(
             "Paramètres d'analyse",
