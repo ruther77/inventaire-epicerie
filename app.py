@@ -914,11 +914,13 @@ def load_products_list():
             COALESCE(p.prix_achat, 0) AS prix_achat,
             p.prix_vente,
             p.tva,
-            p.stock_actuel AS quantite_stock,
+            COALESCE(p.categorie, 'Non renseignée') AS categorie,
+            COALESCE(p.stock_actuel, 0) AS stock_actuel,
+            COALESCE(p.stock_actuel, 0) AS quantite_stock,
             COALESCE(string_agg(pb.code, ', ' ORDER BY pb.code), '') AS codes_barres,
             CASE
-                WHEN p.stock_actuel <= 0 THEN '❌ Rupture'
-                WHEN p.stock_actuel < 5 THEN '⚠️ Faible'
+                WHEN COALESCE(p.stock_actuel, 0) <= 0 THEN '❌ Rupture'
+                WHEN COALESCE(p.stock_actuel, 0) < 5 THEN '⚠️ Faible'
                 ELSE '✅ OK'
             END AS statut_stock
         FROM
@@ -926,7 +928,7 @@ def load_products_list():
         LEFT JOIN
             produits_barcodes pb ON p.id = pb.produit_id
         GROUP BY
-            p.id, p.nom, p.prix_vente, p.tva, p.stock_actuel
+            p.id, p.nom, p.prix_vente, p.tva, p.stock_actuel, p.categorie
         ORDER BY
             p.nom;
     """
@@ -934,6 +936,12 @@ def load_products_list():
         df = query_df(sql_query)
         if "prix_achat" not in df.columns:
             df["prix_achat"] = 0.0
+        if "categorie" not in df.columns:
+            df["categorie"] = "Non renseignée"
+        if "stock_actuel" not in df.columns:
+            df["stock_actuel"] = df.get("quantite_stock", 0)
+        if "quantite_stock" not in df.columns:
+            df["quantite_stock"] = df.get("stock_actuel", 0)
         df['statut_stock'] = df['quantite_stock'].apply(lambda x: 'Stock OK' if x > 5 else ('Alerte Basse' if x > 0 else 'Épuisé'))
         return df
     except Exception as e:
