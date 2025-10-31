@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../../app.php';
+require_once __DIR__ . '/app.php';
 require_once APP_ROOT . '/DAO/DAO.php';
 require_once APP_ROOT . '/Metier/categorie.php';
 

@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../app.php';
+require_once __DIR__ . '/app.php';
 require_once APP_ROOT . '/Metier/produit.php';
 
 $reference = isset($_GET['ref']) ? (string) $_GET['ref'] : '';
@@ -17,32 +17,8 @@ if ($product === null) {
                 Le produit demandé est introuvable.
             </div>
         </div>
-    </div>
-    <footer>
-        <div class="container">
-            <div class="footer clearfix mb-0 text-muted">
-                <div class="float-start">
-                    <p>2021 &copy; Mazer</p>
-                </div>
-                <div class="float-end">
-                    <p>Crafted with <span class="text-danger"><i class="bi bi-heart"></i></span> by <a href="https://saugi.me">Saugi</a></p>
-                </div>
-            </div>
-        </div>
-    </footer>
 
-    <script src="<?= asset('assets/js/bootstrap.js') ?>"></script>
-    <script src="<?= asset('assets/js/app.js') ?>"></script>
-    <script src="<?= asset('assets/js/pages/horizontal-layout.js') ?>"></script>
-    <script src="<?= asset('assets/extensions/apexcharts/apexcharts.min.js') ?>"></script>
-    <script src="<?= asset('assets/js/pages/dashboard.js') ?>"></script>
-
-    </div>
-    </div>
-    </div>
-
-    </body>
-    </html>
+    <?php include __DIR__ . '/Customer/footer.php'; ?>
     <?php
     exit;
 }
@@ -189,29 +165,4 @@ $relatedProducts = array_filter(
         </div>
     </div>
 
-    <footer>
-        <div class="container">
-            <div class="footer clearfix mb-0 text-muted">
-                <div class="float-start">
-                    <p>2021 &copy; Mazer</p>
-                </div>
-                <div class="float-end">
-                    <p>Crafted with <span class="text-danger"><i class="bi bi-heart"></i></span> by <a href="https://saugi.me">Saugi</a></p>
-                </div>
-            </div>
-        </div>
-    </footer>
-
-    <script src="<?= asset('assets/js/bootstrap.js') ?>"></script>
-    <script src="<?= asset('assets/js/app.js') ?>"></script>
-    <script src="<?= asset('assets/js/pages/horizontal-layout.js') ?>"></script>
-    <script src="<?= asset('assets/extensions/apexcharts/apexcharts.min.js') ?>"></script>
-    <script src="<?= asset('assets/js/pages/dashboard.js') ?>"></script>
-
-    </div>
-    </div>
-    </div>
-
-    </body>
-
-    </html>
+    <?php include __DIR__ . '/Customer/footer.php'; ?>
