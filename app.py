@@ -99,6 +99,7 @@ if "pos_receipt" not in st.session_state:
     st.session_state["pos_receipt"] = None
 st.session_state.setdefault("pos_product_selectbox", "-- Sélectionner un produit --")
 st.session_state.setdefault("pos_qty_input", 1)
+st.session_state.setdefault("_pos_processing_notice", False)
 
 apply_ui_theme(st.session_state.get("ui_theme", "light"))
 
@@ -1549,6 +1550,10 @@ if authentication_status:
 
                 with action_cols[1]:
                     processing_sale = bool(st.session_state.get("pos_processing", False))
+                    processing_status_slot = st.empty()
+                    if processing_sale and not st.session_state.get("_pos_processing_notice"):
+                        processing_status_slot.info("Traitement d'une vente en cours…")
+                    st.session_state["_pos_processing_notice"] = processing_sale
                     finalize_clicked = st.button(
                         "Finaliser la vente",
                         key="btn_finalize_sale",
@@ -1561,6 +1566,7 @@ if authentication_status:
                             st.info("Une vente est déjà en cours de traitement…")
                         else:
                             st.session_state["pos_processing"] = True
+                            processing_status_slot.info("Traitement de la vente en cours…")
                             try:
                                 with st.spinner("Traitement de la vente en cours..."):
                                     sale_result = process_sale_transaction(
@@ -1605,6 +1611,7 @@ if authentication_status:
                                         "table_preview",
                                         "stock_diagnostics",
                                     )
+                                    st.session_state["_pos_processing_notice"] = False
                                     st.session_state["pos_processing"] = False
                                     st.rerun()
                                 else:
@@ -1614,8 +1621,11 @@ if authentication_status:
                                     )
                                     st.error(error_msg)
                                     st.session_state["pos_receipt"] = None
+                                    st.session_state["_pos_processing_notice"] = False
                             finally:
+                                st.session_state["_pos_processing_notice"] = False
                                 st.session_state["pos_processing"] = False
+                                processing_status_slot.empty()
 
         with input_col:
             with workspace_panel(

@@ -155,7 +155,15 @@ a:focus {
     font-weight: 500;
     background: var(--color-surface) !important;
     border-radius: var(--radius-sm);
-    min-height: 48px;
+    min-height: 56px;
+    padding: 0.75rem 1rem !important;
+    display: flex;
+    align-items: center;
+    line-height: 1.35;
+}
+
+.stSelectbox div[data-baseweb="select"] > div > div {
+    width: 100%;
 }
 
 .stSelectbox div[data-baseweb="select"] svg {
@@ -177,6 +185,7 @@ a:focus {
 .stSelectbox [data-baseweb="option"] {
     color: var(--color-text);
     font-family: "Inter", sans-serif;
+    padding: 0.65rem 0.85rem;
 }
 
 .stSelectbox [data-baseweb="option"]:hover {

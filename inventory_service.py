@@ -169,7 +169,22 @@ def _build_sale_receipt(aggregated: dict[int, dict[str, Decimal | str]], usernam
 
     timestamp = datetime.now()
     header_lines = [
-        "Inventaire Épicerie",
+        "L'INCONTOURNABLE MARKET",
+        "Nom commercial / Enseigne : L'INCONTOURNABLE MARKET",
+        "Adresse : 83 rue des Poissonnières 75018 Paris",
+        "RCS Paris : 922 478 706",
+        "Activités : Achat et vente de produits",
+        "alimentaires et non alimentaires.",
+        "Import / export de produits exotiques.",
+        "Début d'activité : 10/12/2022",
+        "Mode d'exploitation : Exploitation directe",
+        "Origine du fonds : Achat auprès de JENNY",
+        "Précédent propriétaire : JENNY",
+        "JENNY - 83 rue des Poissonnières 75018 Paris",
+        "Immatriculation précédente : 899 755 946 R.C.S. Paris",
+        "Précédent exploitant : JENNY",
+        "Annonce légale : affiches-parisiennes.com (13/12/2022)",
+        "",
         f"Ticket généré le {timestamp.strftime('%d/%m/%Y %H:%M:%S')}",
         f"Caissier: {username or 'inconnu'}",
         "",
