@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../app.php';
 require_once APP_ROOT . '/Metier/produit.php';
 
 $reference = isset($_GET['ref']) ? (string) $_GET['ref'] : '';
@@ -9,7 +9,7 @@ $product = $reference !== '' ? $dao->getProduit($reference) : null;
 if ($product === null) {
     http_response_code(404);
     $title = 'Produit introuvable';
-    include __DIR__ . '/pages/header.php';
+    include __DIR__ . '/header.php';
     ?>
     <div class="content-wrapper container">
         <div class="page-content">
@@ -48,7 +48,7 @@ if ($product === null) {
 }
 
 $title = $product->get('l');
-include __DIR__ . '/pages/header.php';
+include __DIR__ . '/header.php';
 
 $relatedProducts = array_filter(
     Produit::afficher(),
