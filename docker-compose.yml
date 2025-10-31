@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16
+    image: public.ecr.aws/docker/library/postgres:16
     container_name: inventaire-db
     restart: unless-stopped
     env_file:
@@ -24,7 +24,7 @@ services:
       retries: 10
 
   adminer:
-    image: adminer:latest
+    image: public.ecr.aws/docker/library/adminer:latest
     container_name: inventaire-adminer
     restart: unless-stopped
     environment:
@@ -58,7 +58,7 @@ services:
       - .:/app
 
   backup:
-    image: postgres:16
+    image: public.ecr.aws/docker/library/postgres:16
     container_name: inventaire-backup
     depends_on:
       db:
