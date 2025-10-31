@@ -54,6 +54,36 @@ CREATE TABLE IF NOT EXISTS mouvements_stock (
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- Utilisateurs (authentification & rôles)
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    email TEXT,
+    full_name TEXT,
+    role TEXT NOT NULL DEFAULT 'standard' CHECK (role IN ('admin', 'standard')),
+    hashed_password TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION set_users_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_users_set_updated_at ON users;
+CREATE TRIGGER trg_users_set_updated_at
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION set_users_updated_at();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_ci ON users (LOWER(username));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_ci ON users (LOWER(email)) WHERE email IS NOT NULL;
+
 -- 3. FONCTION DE MISE À JOUR DU STOCK (Trigger)
 -- =================================================================
 CREATE OR REPLACE FUNCTION update_stock_actuel()
