@@ -65,10 +65,11 @@ class DummyEngine:
 
 
 def test_process_sale_transaction_returns_false_for_empty_cart():
-    success, message = inventory_service.process_sale_transaction([], "user")
+    success, message, receipt = inventory_service.process_sale_transaction([], "user")
 
     assert success is False
     assert message == "Le panier est vide, aucune vente n'a été effectuée."
+    assert receipt is None
 
 
 def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
@@ -87,12 +88,13 @@ def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success, message = inventory_service.process_sale_transaction([
+    success, message, receipt = inventory_service.process_sale_transaction([
         {"id": 1, "qty": 5}
     ], "user")
 
     assert success is False
     assert "Stock insuffisant" in (message or "")
+    assert receipt is None
     stock_queries = sum(
         1 for stmt in calls if isinstance(stmt, str) and "SELECT stock_actuel" in stmt
     )
@@ -120,12 +122,15 @@ def test_process_sale_transaction_updates_stock_without_trigger(monkeypatch):
     monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
     monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
 
-    success, message = inventory_service.process_sale_transaction([
+    success, message, receipt = inventory_service.process_sale_transaction([
         {"id": 3, "qty": 4}
     ], "admin")
 
     assert success is True
     assert message is None
+    assert isinstance(receipt, dict)
+    assert receipt.get("filename", "").endswith(".pdf")
+    assert isinstance(receipt.get("content"), (bytes, bytearray))
     statements = [stmt for stmt, _ in execution_log]
     assert any("UPDATE produits" in stmt for stmt in statements)
     assert any("INSERT INTO mouvements_stock" in stmt for stmt in statements)
@@ -164,10 +169,11 @@ def test_process_sale_transaction_handles_legacy_cart_keys(monkeypatch):
     normalised = cart_normalizer.normalize_cart_rows(legacy_cart)
     assert normalised[0]["prix_total"] == pytest.approx(13.5)
 
-    success, message = inventory_service.process_sale_transaction(normalised, "legacy_user")
+    success, message, receipt = inventory_service.process_sale_transaction(normalised, "legacy_user")
 
     assert success is True
     assert message is None
+    assert receipt is not None
 
     insert_params_list = next(
         params
