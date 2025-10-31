@@ -97,6 +97,8 @@ if "ui_theme" not in st.session_state:
     st.session_state["ui_theme"] = "light"
 if "pos_receipt" not in st.session_state:
     st.session_state["pos_receipt"] = None
+st.session_state.setdefault("pos_product_selectbox", "-- Sélectionner un produit --")
+st.session_state.setdefault("pos_qty_input", 1)
 
 apply_ui_theme(st.session_state.get("ui_theme", "light"))
 
@@ -166,8 +168,8 @@ def _clear_cart() -> None:
 def _reset_pos_inputs() -> None:
     """Réinitialise les champs du formulaire PoS après un ajout réussi."""
 
-    st.session_state["pos_qty_input"] = 1
-    st.session_state["pos_product_selectbox"] = "-- Sélectionner un produit --"
+    st.session_state.pop("pos_qty_input", None)
+    st.session_state.pop("pos_product_selectbox", None)
 
 
 def _add_product_to_cart(
@@ -388,7 +390,7 @@ def _render_product_cards(df: pd.DataFrame, columns: int = 3) -> None:
                         st.image(
                             image_url,
                             caption=f"Visuel produit {name}",
-                            use_column_width=True,
+                            use_container_width=True,
                         )
                     else:
                         placeholder_initial = (name[:1] or "#").upper()
@@ -1561,10 +1563,30 @@ if authentication_status:
                             st.session_state["pos_processing"] = True
                             try:
                                 with st.spinner("Traitement de la vente en cours..."):
-                                    sale_ok, sale_msg, receipt_payload = process_sale_transaction(
+                                    sale_result = process_sale_transaction(
                                         cart_items,
                                         st.session_state.get("username", "inconnu"),
                                     )
+
+                                sale_ok: bool
+                                sale_msg: str | None
+                                receipt_payload: dict[str, bytes] | None
+
+                                if isinstance(sale_result, tuple):
+                                    if len(sale_result) == 3:
+                                        sale_ok, sale_msg, receipt_payload = sale_result
+                                    elif len(sale_result) == 2:
+                                        sale_ok, sale_msg = sale_result
+                                        receipt_payload = None
+                                    else:
+                                        padded = list(sale_result) + [None, None]
+                                        sale_ok = bool(padded[0])
+                                        sale_msg = padded[1]
+                                        receipt_payload = padded[2]
+                                else:
+                                    sale_ok = bool(sale_result)
+                                    sale_msg = None
+                                    receipt_payload = None
 
                                 if sale_ok:
                                     st.session_state["pos_success_message"] = (
