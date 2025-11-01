@@ -25,22 +25,6 @@ const DASHBOARD_CARDS = [
   },
 ];
 
-const PERSISTENT_VIEWS = [
-  {
-    id: 'custom-layout',
-    label: 'Disposition personnalisée',
-    description: 'Votre configuration enregistrée pour le suivi hebdomadaire.',
-    to: '/dashboard?layout=custom',
-  },
-  {
-    id: 'alerts',
-    label: 'Alertes critiques',
-    description: 'Derniers seuils d\'alerte configurés sur l\'inventaire.',
-    to: '/notifications',
-    badge: { label: '3', variant: 'count' },
-  },
-];
-
 export default function DashboardPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['inventory-summary'],
@@ -60,7 +44,8 @@ export default function DashboardPage() {
         <SavedViewsPanel
           title="Vos configurations"
           description="Les cartes que vous avez épinglées pour retrouver votre contexte en un clin d'œil."
-          views={PERSISTENT_VIEWS}
+          slot="dashboard"
+          allowManage
         />
       </header>
       <section className="card metric-grid">

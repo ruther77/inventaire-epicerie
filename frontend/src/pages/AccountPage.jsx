@@ -1,21 +1,6 @@
 import { useAuth } from '../auth/AuthContext.jsx';
 import SavedViewsPanel from '../components/SavedViewsPanel.jsx';
 
-const ACCOUNT_VIEWS = [
-  {
-    id: 'profile',
-    label: 'Profil',
-    description: 'Mettre à jour vos informations personnelles et professionnelles.',
-    to: '/parametres',
-  },
-  {
-    id: 'favorites',
-    label: 'Favoris',
-    description: 'Retrouvez les références que vous avez épinglées.',
-    to: '/favoris',
-  },
-];
-
 export default function AccountPage() {
   const { user } = useAuth();
 
@@ -32,7 +17,8 @@ export default function AccountPage() {
         <SavedViewsPanel
           title="Vos accès"
           description="Conservez vos raccourcis personnels après chaque connexion."
-          views={ACCOUNT_VIEWS}
+          slot="account"
+          allowManage
         />
       </header>
       <section className="card">
