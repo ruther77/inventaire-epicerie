@@ -72,7 +72,7 @@ _ENGINE_FACTORY: Callable[[], Engine] | None = None
 def _build_engine(database_url: str) -> Engine:
     engine_kwargs: dict = {"pool_pre_ping": True}
 
-    if database_url.startswith("sqlite:"):
+    if database_url.startswith("sqlite"):
         return create_engine(database_url, **engine_kwargs)
 
     engine_kwargs["pool_size"] = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
