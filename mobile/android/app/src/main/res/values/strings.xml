@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Inventaire Mobile</string>
+    <string name="login">Connexion</string>
+    <string name="username">Identifiant</string>
+    <string name="password">Mot de passe</string>
+    <string name="refresh">Actualiser</string>
+    <string name="logout">Déconnexion</string>
+    <string name="inventory_header">Inventaire</string>
+    <string name="empty_inventory">Aucun produit actif pour le moment.</string>
+    <string name="loading">Chargement…</string>
+    <string name="no_category">Sans catégorie</string>
+</resources>
