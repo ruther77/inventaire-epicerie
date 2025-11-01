@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import re
 
 import jwt
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.exc import IntegrityError
 
 from data_repository import (
@@ -49,7 +49,7 @@ from data_repository import (
     update_supplier_record,
     update_user_record,
 )
-from inventory_service import process_sale_transaction
+from inventory_service import get_saved_views_service, process_sale_transaction
 from product_service import (
     InvalidBarcodeError,
     ProductNotFoundError,
@@ -128,6 +128,23 @@ class CheckoutResponse(BaseModel):
     message: str | None = None
     receipt_filename: str | None = None
     receipt_base64: str | None = None
+
+
+class SavedViewBadge(BaseModel):
+    label: str
+    variant: str | None = None
+
+
+class SavedViewEntry(BaseModel):
+    id: str
+    label: str
+    description: str | None = None
+    to: str | None = None
+    badge: SavedViewBadge | None = None
+
+
+class SavedViewCollection(BaseModel):
+    slots: dict[str, list[SavedViewEntry]] = Field(default_factory=dict)
 
 
 class ProductUpdateRequest(BaseModel):
@@ -683,6 +700,29 @@ def _compute_procurement_total(lines: Iterable[ProcurementLinePayload]) -> Decim
     return total
 
 
+def _normalise_saved_views_payload(slots: dict[str, list[SavedViewEntry | dict]]) -> dict[str, list[dict]]:
+    if not isinstance(slots, dict):
+        return {}
+
+    normalised: dict[str, list[dict]] = {}
+    for slot, views in slots.items():
+        if not isinstance(slot, str):
+            continue
+        cleaned: list[dict] = []
+        if not isinstance(views, Iterable):
+            continue
+        for view in views:
+            try:
+                model = SavedViewEntry.model_validate(view)
+            except ValidationError:
+                logger.debug("Ignoring invalid saved view entry", extra={"slot": slot, "view": view})
+                continue
+            cleaned.append(model.model_dump(exclude_none=True))
+        if cleaned:
+            normalised[slot] = cleaned
+    return normalised
+
+
 def _ensure_datetime(value: datetime | None) -> datetime:
     if value is None:
         return datetime.now(timezone.utc)
@@ -802,6 +842,23 @@ def create_app() -> FastAPI:
     @app.get("/users/me", response_model=UserRead)
     def read_current_user(current_user: dict = Depends(get_current_active_user)) -> UserRead:
         return UserRead(**current_user)
+
+    @app.get("/users/me/saved-views", response_model=SavedViewCollection)
+    def read_saved_views(current_user: dict = Depends(get_current_active_user)) -> SavedViewCollection:
+        service = get_saved_views_service()
+        raw_slots = service.fetch_views(current_user["id"])
+        slots = _normalise_saved_views_payload(raw_slots)
+        return SavedViewCollection(slots=slots)
+
+    @app.put("/users/me/saved-views", response_model=SavedViewCollection)
+    def update_saved_views(
+        payload: SavedViewCollection,
+        current_user: dict = Depends(get_current_active_user),
+    ) -> SavedViewCollection:
+        slots = _normalise_saved_views_payload(payload.slots)
+        service = get_saved_views_service()
+        service.persist_views(current_user["id"], slots)
+        return SavedViewCollection(slots=slots)
 
     @app.get("/users", response_model=list[UserRead])
     def list_users(_: dict = Depends(require_admin)) -> list[UserRead]:

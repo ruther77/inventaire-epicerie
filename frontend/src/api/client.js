@@ -43,6 +43,16 @@ export const fetchCurrentUser = async () => {
   return data;
 };
 
+export const fetchSavedViews = async () => {
+  const { data } = await api.get('/users/me/saved-views');
+  return data;
+};
+
+export const persistSavedViews = async (payload) => {
+  const { data } = await api.put('/users/me/saved-views', payload);
+  return data;
+};
+
 export const fetchUsers = async () => {
   const { data } = await api.get('/users');
   return data;

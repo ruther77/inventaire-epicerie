@@ -1,148 +1,149 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
-import HomePage from './pages/HomePage.jsx';
-import CatalogPage from './pages/CatalogPage.jsx';
-import PosPage from './pages/PosPage.jsx';
-import ReportsPage from './pages/ReportsPage.jsx';
-import LegacyToolsPage from './pages/LegacyToolsPage.jsx';
-import UserManagementPage from './pages/UserManagementPage.jsx';
-import OrdersPage from './pages/OrdersPage.jsx';
-import PromotionsPage from './pages/PromotionsPage.jsx';
-import DashboardPage from './pages/DashboardPage.jsx';
-import SupportPage from './pages/SupportPage.jsx';
-import AccountPage from './pages/AccountPage.jsx';
-import CartPage from './pages/CartPage.jsx';
-import FavoritesPage from './pages/FavoritesPage.jsx';
-import NotificationsPage from './pages/NotificationsPage.jsx';
-import SettingsPage from './pages/SettingsPage.jsx';
-import LoginPage from './pages/LoginPage.jsx';
-import SignupPage from './pages/SignupPage.jsx';
-import CategoriesPage from './pages/CategoriesPage.jsx';
-import ClientsPage from './pages/ClientsPage.jsx';
-import SuppliersPage from './pages/SuppliersPage.jsx';
-import ProcurementsPage from './pages/ProcurementsPage.jsx';
 import { useAuth } from './auth/AuthContext.jsx';
 import LoginModal from './components/LoginModal.jsx';
 import MegaMenu from './components/MegaMenu.jsx';
 import Breadcrumbs from './components/Breadcrumbs.jsx';
 import UserMenu from './components/UserMenu.jsx';
 
+const HomePage = lazy(() => import('./pages/HomePage.jsx'));
+const CatalogPage = lazy(() => import('./pages/CatalogPage.jsx'));
+const PosPage = lazy(() => import('./pages/PosPage.jsx'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage.jsx'));
+const LegacyToolsPage = lazy(() => import('./pages/LegacyToolsPage.jsx'));
+const UserManagementPage = lazy(() => import('./pages/UserManagementPage.jsx'));
+const OrdersPage = lazy(() => import('./pages/OrdersPage.jsx'));
+const PromotionsPage = lazy(() => import('./pages/PromotionsPage.jsx'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage.jsx'));
+const SupportPage = lazy(() => import('./pages/SupportPage.jsx'));
+const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
+const CartPage = lazy(() => import('./pages/CartPage.jsx'));
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage.jsx'));
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage.jsx'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx'));
+const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
+const SignupPage = lazy(() => import('./pages/SignupPage.jsx'));
+const CategoriesPage = lazy(() => import('./pages/CategoriesPage.jsx'));
+const ClientsPage = lazy(() => import('./pages/ClientsPage.jsx'));
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage.jsx'));
+const ProcurementsPage = lazy(() => import('./pages/ProcurementsPage.jsx'));
+
 const ROUTES = [
-  { path: '/', element: <HomePage />, breadcrumb: 'Accueil', section: 'home' },
+  { path: '/', Component: HomePage, breadcrumb: 'Accueil', section: 'home' },
   {
     path: '/dashboard',
-    element: <DashboardPage />,
+    Component: DashboardPage,
     breadcrumb: 'Tableau de bord',
     section: 'explorer',
   },
   {
     path: '/catalogue',
-    element: <CatalogPage />,
+    Component: CatalogPage,
     breadcrumb: 'Catalogue',
     section: 'catalogue',
     badge: { label: 'Nouveau', variant: 'new' },
   },
   {
     path: '/commandes',
-    element: <OrdersPage />,
+    Component: OrdersPage,
     breadcrumb: 'Commandes',
     section: 'catalogue',
   },
   {
     path: '/categories',
-    element: <CategoriesPage />,
+    Component: CategoriesPage,
     breadcrumb: 'Catégories',
     section: 'catalogue',
   },
   {
     path: '/approvisionnements',
-    element: <ProcurementsPage />,
+    Component: ProcurementsPage,
     breadcrumb: 'Approvisionnements',
     section: 'catalogue',
   },
   {
     path: '/promotions',
-    element: <PromotionsPage />,
+    Component: PromotionsPage,
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
   },
   {
     path: '/clients',
-    element: <ClientsPage />,
+    Component: ClientsPage,
     breadcrumb: 'Clients',
     section: 'relations',
   },
   {
     path: '/fournisseurs',
-    element: <SuppliersPage />,
+    Component: SuppliersPage,
     breadcrumb: 'Fournisseurs',
     section: 'relations',
   },
   {
     path: '/pos',
-    element: <PosPage />,
+    Component: PosPage,
     breadcrumb: 'Point de vente',
     section: 'explorer',
   },
   {
     path: '/explorer/rapports',
-    element: <ReportsPage />,
+    Component: ReportsPage,
     breadcrumb: 'Analyses',
     section: 'explorer',
     badge: { label: 'Bêta', variant: 'beta' },
   },
   {
     path: '/explorer/outils',
-    element: <LegacyToolsPage />,
+    Component: LegacyToolsPage,
     breadcrumb: 'Outils Streamlit',
     section: 'explorer',
   },
   {
     path: '/aide',
-    element: <SupportPage />,
+    Component: SupportPage,
     breadcrumb: 'Aide',
     section: 'support',
   },
   {
     path: '/compte',
-    element: <AccountPage />,
+    Component: AccountPage,
     breadcrumb: 'Espace personnel',
     section: 'account',
   },
   {
     path: '/panier',
-    element: <CartPage />,
+    Component: CartPage,
     breadcrumb: 'Panier',
     section: 'account',
   },
   {
     path: '/favoris',
-    element: <FavoritesPage />,
+    Component: FavoritesPage,
     breadcrumb: 'Favoris',
     section: 'account',
   },
   {
     path: '/notifications',
-    element: <NotificationsPage />,
+    Component: NotificationsPage,
     breadcrumb: 'Notifications',
     section: 'account',
   },
   {
     path: '/parametres',
-    element: <SettingsPage />,
+    Component: SettingsPage,
     breadcrumb: 'Paramètres',
     section: 'account',
   },
   {
     path: '/auth/login',
-    element: <LoginPage />,
+    Component: LoginPage,
     breadcrumb: 'Connexion',
     section: 'auth',
   },
   {
     path: '/auth/signup',
-    element: <SignupPage />,
+    Component: SignupPage,
     breadcrumb: 'Créer un compte',
     section: 'auth',
     badge: { label: 'Nouveau', variant: 'new' },
@@ -152,7 +153,7 @@ const ROUTES = [
 const ADMIN_ROUTES = [
   {
     path: '/users',
-    element: <UserManagementPage />,
+    Component: UserManagementPage,
     breadcrumb: 'Comptes utilisateurs',
     section: 'administration',
     adminOnly: true,
@@ -323,11 +324,13 @@ export default function App() {
       </header>
       <Breadcrumbs routes={availableRoutes} />
       <main>
-        <Routes>
-          {availableRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={route.element} />
-          ))}
-        </Routes>
+        <Suspense fallback={<div className="app-loading">Chargement…</div>}>
+          <Routes>
+            {availableRoutes.map(({ path, Component }) => (
+              <Route key={path} path={path} element={<Component />} />
+            ))}
+          </Routes>
+        </Suspense>
       </main>
       <LoginModal />
     </div>
