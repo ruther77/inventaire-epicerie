@@ -124,10 +124,44 @@ def get_current_active_user(current_user: dict = Depends(get_current_user)) -> d
     return current_user
 
 
-def require_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
-    if current_user.get("role") != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Droits administrateur requis")
+MANAGEMENT_ROLES = {"admin", "catalog_manager"}
+CATALOG_EDITOR_ROLES = MANAGEMENT_ROLES | {"moderator"}
+PARTNER_ROLES = {"admin", "partner"}
+
+
+def _normalize_role(role: str | None) -> str:
+    return str(role or "standard").lower()
+
+
+def _enforce_roles(current_user: dict, allowed_roles: set[str], detail: str) -> dict:
+    role = _normalize_role(current_user.get("role"))
+    if role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
     return current_user
+
+
+def require_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
+    return _enforce_roles(current_user, {"admin"}, "Droits administrateur requis")
+
+
+def require_catalog_manager(current_user: dict = Depends(get_current_active_user)) -> dict:
+    return _enforce_roles(current_user, MANAGEMENT_ROLES, "Droits gestion catalogue requis")
+
+
+def require_catalog_editor(current_user: dict = Depends(get_current_active_user)) -> dict:
+    return _enforce_roles(
+        current_user,
+        CATALOG_EDITOR_ROLES,
+        "Droits de gestion ou de modération du catalogue requis",
+    )
+
+
+def require_partner_access(current_user: dict = Depends(get_current_active_user)) -> dict:
+    return _enforce_roles(current_user, PARTNER_ROLES, "Droits partenaire requis")
+
+
+def require_moderator(current_user: dict = Depends(get_current_active_user)) -> dict:
+    return _enforce_roles(current_user, {"admin", "moderator"}, "Droits de modération requis")
 
 
 def public_user(user: dict) -> dict:

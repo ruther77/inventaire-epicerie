@@ -8,7 +8,7 @@ import re
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-ALLOWED_ROLES = {"admin", "standard"}
+ALLOWED_ROLES = {"admin", "standard", "catalog_manager", "moderator", "partner"}
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 

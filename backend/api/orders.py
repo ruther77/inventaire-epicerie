@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from data_repository import create_order_record, list_orders as repository_list_orders, update_order_record
 
-from ..security import get_current_active_user
+from ..security import get_current_active_user, require_partner_access
 from .schemas import OrderCreate, OrderLinePayload, OrderRead, OrderUpdate
 from .utils import as_decimal, ensure_datetime
 
@@ -55,13 +55,13 @@ def _order_to_model(row: dict) -> OrderRead:
 
 
 @router.get("", response_model=list[OrderRead])
-def list_orders(_: dict = Depends(get_current_active_user)) -> list[OrderRead]:
+def list_orders(_: dict = Depends(require_partner_access)) -> list[OrderRead]:
     rows = repository_list_orders()
     return [_order_to_model(row) for row in rows]
 
 
 @router.post("", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
-def create_order(payload: OrderCreate, _: dict = Depends(get_current_active_user)) -> OrderRead:
+def create_order(payload: OrderCreate, _: dict = Depends(require_partner_access)) -> OrderRead:
     total_ht, total_ttc = _compute_order_totals(payload.lignes)
     order_payload = {
         "numero": payload.numero,
@@ -93,7 +93,7 @@ def create_order(payload: OrderCreate, _: dict = Depends(get_current_active_user
 
 
 @router.patch("/{order_id}", response_model=OrderRead)
-def update_order(order_id: int, payload: OrderUpdate, _: dict = Depends(get_current_active_user)) -> OrderRead:
+def update_order(order_id: int, payload: OrderUpdate, _: dict = Depends(require_partner_access)) -> OrderRead:
     updates = payload.model_dump(exclude_unset=True)
     if "date_commande" in updates and updates["date_commande"] is not None:
         updates["date_commande"] = ensure_datetime(updates["date_commande"])
