@@ -3,6 +3,7 @@
 import os
 import io
 import math
+import numbers
 from datetime import datetime
 from contextlib import contextmanager
 from typing import Any, Dict, List, Tuple
@@ -122,10 +123,11 @@ def _render_product_cards(
 
         if value is None:
             return None
-        if isinstance(value, (int, float)):
-            if isinstance(value, float) and math.isnan(value):
+        if isinstance(value, numbers.Real) and not isinstance(value, bool):
+            numeric_value = float(value)
+            if math.isnan(numeric_value):
                 return None
-            return float(value)
+            return numeric_value
         if isinstance(value, str):
             sanitized = value.strip()
             if not sanitized:
