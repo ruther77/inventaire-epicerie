@@ -11,7 +11,7 @@ from data_repository import (
     update_client_record,
 )
 
-from ..security import get_current_active_user, require_admin
+from ..security import get_current_active_user
 from .schemas import ClientCreate, ClientRead, ClientUpdate
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -36,13 +36,15 @@ def list_clients_endpoint(_: dict = Depends(get_current_active_user)) -> list[Cl
 
 
 @router.post("", response_model=ClientRead, status_code=status.HTTP_201_CREATED)
-def create_client(payload: ClientCreate, _: dict = Depends(require_admin)) -> ClientRead:
+def create_client(payload: ClientCreate, _: dict = Depends(get_current_active_user)) -> ClientRead:
     record = create_client_record(payload.model_dump())
     return _client_to_model(record)
 
 
 @router.patch("/{client_id}", response_model=ClientRead)
-def update_client(client_id: int, payload: ClientUpdate, _: dict = Depends(require_admin)) -> ClientRead:
+def update_client(
+    client_id: int, payload: ClientUpdate, _: dict = Depends(get_current_active_user)
+) -> ClientRead:
     updates = payload.model_dump(exclude_unset=True)
     record = update_client_record(client_id, updates)
     if record is None:
@@ -51,7 +53,9 @@ def update_client(client_id: int, payload: ClientUpdate, _: dict = Depends(requi
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_client(client_id: int, _: dict = Depends(require_admin)) -> Response:
+def delete_client(
+    client_id: int, _: dict = Depends(get_current_active_user)
+) -> Response:
     if not delete_client_record(client_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client introuvable")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
