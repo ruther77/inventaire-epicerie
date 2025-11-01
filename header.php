@@ -103,6 +103,38 @@ $quickActions = [
     ],
 ];
 
+$utilityLinks = [
+    [
+        'label' => 'Profil',
+        'icon' => 'bi-person-circle',
+        'url' => url_for('Customer/profile.php'),
+    ],
+    [
+        'label' => 'Paramètres',
+        'icon' => 'bi-gear',
+        'url' => url_for('Customer/settings.php'),
+    ],
+    [
+        'label' => 'Assistance',
+        'icon' => 'bi-question-circle',
+        'url' => url_for('Customer/support.php'),
+    ],
+    [
+        'label' => 'Déconnexion',
+        'icon' => 'bi-box-arrow-right',
+        'url' => url_for('Customer/logout.php'),
+    ],
+];
+
+$quickActionBadgeClasses = [
+    'Catalogue' => 'badge-soft-primary',
+    'Historique' => 'badge-soft-neutral',
+    'Panier' => 'badge-soft-success',
+    'Favoris' => 'badge-soft-danger',
+    'Promo' => 'badge-soft-warning',
+    'Equipe' => 'badge-soft-info',
+];
+
 $primaryShortcuts = [
     [
         'label' => 'Promotions du moment',
@@ -153,13 +185,19 @@ $catalogueAccents = array_map(static function ($filter) {
     ];
 }, array_slice($quickFilters, 0, 4));
 
-$explorerPreview = array_map(static function ($action) {
+$explorerPreview = array_map(static function ($action) use ($quickActionBadgeClasses) {
+    $badgeLabel = $action['badge'] ?? '';
     return [
         'label' => $action['label'],
         'description' => $action['description'],
         'url' => $action['url'],
         'icon' => $action['icon'],
-        'badge' => $action['badge'],
+        'badge' => $badgeLabel !== ''
+            ? [
+                'label' => $badgeLabel,
+                'class' => $quickActionBadgeClasses[$badgeLabel] ?? 'badge-soft-neutral',
+            ]
+            : null,
     ];
 }, array_slice($quickActions, 0, 4));
 
@@ -193,29 +231,6 @@ $megaSections = [
         'primary' => $explorerPreview,
         'secondary_title' => 'Outils favoris',
         'secondary_links' => $explorerUtilities,
-    ],
-];
-
-$utilityLinks = [
-    [
-        'label' => 'Profil',
-        'icon' => 'bi-person-circle',
-        'url' => url_for('Customer/profile.php'),
-    ],
-    [
-        'label' => 'Paramètres',
-        'icon' => 'bi-gear',
-        'url' => url_for('Customer/settings.php'),
-    ],
-    [
-        'label' => 'Assistance',
-        'icon' => 'bi-question-circle',
-        'url' => url_for('Customer/support.php'),
-    ],
-    [
-        'label' => 'Déconnexion',
-        'icon' => 'bi-box-arrow-right',
-        'url' => url_for('Customer/logout.php'),
     ],
 ];
 ?>

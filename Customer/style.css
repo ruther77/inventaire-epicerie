@@ -16,6 +16,39 @@ body.overflow-hidden {
     overflow: hidden;
 }
 
+.badge-top,
+.badge-soft-primary {
+    background-color: #eef2ff;
+    color: #4338ca;
+}
+
+.badge-promo,
+.badge-soft-warning {
+    background-color: #fffbeb;
+    color: #b45309;
+}
+
+.badge-new,
+.badge-soft-success {
+    background-color: #ecfdf5;
+    color: #047857;
+}
+
+.badge-soft-neutral {
+    background-color: #f3f4f6;
+    color: #1f2937;
+}
+
+.badge-soft-danger {
+    background-color: #fef2f2;
+    color: #b91c1c;
+}
+
+.badge-soft-info {
+    background-color: #e0f2fe;
+    color: #0369a1;
+}
+
 .app-shell {
     background-color: var(--surface-muted);
     min-height: 100vh;
@@ -23,7 +56,6 @@ body.overflow-hidden {
 
 .workspace-header {
     background-color: var(--surface);
-    border-bottom: 1px solid #e2e8f0;
     position: relative;
     z-index: 40;
 }
