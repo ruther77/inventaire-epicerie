@@ -397,7 +397,7 @@ def _build_items_markup(items: Sequence[Dict[str, Any]]) -> str:
 
 def _build_panel_markup(section: Dict[str, Any]) -> str:
     section_id = escape(section["id"])
-    title = escape(section.get("title", ""))
+    title = escape(section.get("title", section.get("label", "")))
     description = escape(section.get("description", ""))
     featured = section.get("featured", ())
     items = section.get("items", ())
@@ -405,25 +405,13 @@ def _build_panel_markup(section: Dict[str, Any]) -> str:
     featured_markup = _build_featured_markup(featured)
     items_markup = _build_items_markup(items)
 
-    header_description = (
-        f"<p>{description}</p>"
-        if description
-        else ""
-    )
-
+    description_markup = f"<p>{description}</p>" if description else ""
     featured_section = (
         f"<div class=\"mega-menu-featured\">{featured_markup}</div>"
         if featured_markup
         else ""
     )
 
-def _build_panel_markup(section: Dict[str, Any]) -> str:
-    section_id = escape(section["id"])
-    title = escape(section.get("title", section.get("label", "")))
-    description = escape(section.get("description", ""))
-    featured_markup = _build_featured_markup(section)
-    items_markup = _build_items_markup(section.get("items", ()))
-    description_markup = f"<p>{description}</p>" if description else ""
     return "".join(
         [
             f"<section class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" ",
@@ -431,7 +419,7 @@ def _build_panel_markup(section: Dict[str, Any]) -> str:
             "<div class=\"mega-menu-panel-header\">",
             "<div>",
             f"<h3>{title}</h3>",
-            header_description,
+            description_markup,
             "</div>",
             featured_section,
             "</div>",
