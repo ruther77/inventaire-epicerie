@@ -10,6 +10,7 @@ from sqlalchemy.sql.elements import ClauseElement
 
 
 DATABASE_URL_ENV = "DATABASE_URL"
+DATABASE_SEARCH_PATH_ENV = "DATABASE_SEARCH_PATH"
 
 
 logger = logging.getLogger(__name__)
@@ -87,14 +88,51 @@ def _get_pool_setting(env_var: str, default: int) -> int:
 _ENGINE_FACTORY: Callable[[], Engine] | None = None
 
 
+def _maybe_configure_search_path(engine_kwargs: dict, url) -> None:
+    """Inject a PostgreSQL search_path option when requested via the environment."""
+
+    raw_value = os.getenv(DATABASE_SEARCH_PATH_ENV)
+    if not raw_value:
+        return
+
+    try:
+        backend_name = (url.get_backend_name() or "").lower()
+    except AttributeError:  # pragma: no cover - defensive guard for unexpected URL objects
+        backend_name = ""
+
+    if not backend_name.startswith("postgresql"):
+        return
+
+    segments = [segment.strip() for segment in raw_value.split(",")]
+    cleaned = ",".join(segment for segment in segments if segment)
+    if not cleaned:
+        return
+
+    connect_args = dict(engine_kwargs.get("connect_args") or {})
+    existing_options = str(connect_args.get("options") or "").strip()
+    new_option = f"-csearch_path={cleaned}"
+    if existing_options:
+        if new_option not in existing_options:
+            connect_args["options"] = f"{existing_options} {new_option}".strip()
+    else:
+        connect_args["options"] = new_option
+
+    engine_kwargs["connect_args"] = connect_args
+
+
 def _build_engine(database_url: str) -> Engine:
     engine_kwargs: dict = {"pool_pre_ping": True}
+    url = make_url(database_url)
 
-    if database_url.startswith("sqlite"):
+    _maybe_configure_search_path(engine_kwargs, url)
+
+    backend_name = (url.get_backend_name() or "").lower()
+    if backend_name.startswith("sqlite"):
         return create_engine(database_url, **engine_kwargs)
 
-    engine_kwargs["pool_size"] = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
-    engine_kwargs["max_overflow"] = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
+    if backend_name.startswith("postgresql"):
+        engine_kwargs["pool_size"] = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
+        engine_kwargs["max_overflow"] = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
 
     return create_engine(database_url, **engine_kwargs)
 
