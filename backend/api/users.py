@@ -9,11 +9,18 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
-from inventory_service import get_saved_views_service
+from domain.preferences import get_saved_views_service
+from data_repository import (
+    count_active_admins,
+    create_user_record,
+    delete_user_record,
+    fetch_user_by_id,
+    list_users as repository_list_users,
+    update_user_record,
+)
 
 from ..security import get_current_active_user, get_password_hash, require_admin
 from .schemas import SavedViewCollection, SavedViewEntry, UserCreate, UserRead, UserUpdate
-from .utils import get_main_module
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +73,12 @@ def update_saved_views(payload: SavedViewCollection, current_user: dict = Depend
 
 @router.get("", response_model=list[UserRead])
 def list_users(_: dict = Depends(require_admin)) -> list[UserRead]:
-    records = get_main_module().repository_list_users()
+    records = repository_list_users()
     return [UserRead(**record) for record in records]
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def create_user(payload: UserCreate, _: dict = Depends(require_admin)) -> UserRead:
-    main = get_main_module()
     data = {
         "username": payload.username,
         "email": payload.email,
@@ -82,7 +88,7 @@ def create_user(payload: UserCreate, _: dict = Depends(require_admin)) -> UserRe
         "is_active": payload.is_active,
     }
     try:
-        record = main.create_user_record(data)
+        record = create_user_record(data)
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -94,8 +100,7 @@ def create_user(payload: UserCreate, _: dict = Depends(require_admin)) -> UserRe
 
 @router.patch("/{user_id}", response_model=UserRead)
 def update_user(user_id: int, payload: UserUpdate, _: dict = Depends(require_admin)) -> UserRead:
-    main = get_main_module()
-    existing = main.fetch_user_by_id(user_id)
+    existing = fetch_user_by_id(user_id)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
 
@@ -111,14 +116,14 @@ def update_user(user_id: int, payload: UserUpdate, _: dict = Depends(require_adm
     target_active = updates.get("is_active", existing["is_active"])
     if existing["role"] == "admin" and existing["is_active"]:
         if target_role != "admin" or target_active is False:
-            if main.count_active_admins(exclude_user_id=user_id) == 0:
+            if count_active_admins(exclude_user_id=user_id) == 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Impossible de retirer le dernier administrateur actif",
                 )
 
     try:
-        record = main.update_user_record(user_id, updates)
+        record = update_user_record(user_id, updates)
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -133,19 +138,18 @@ def update_user(user_id: int, payload: UserUpdate, _: dict = Depends(require_adm
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(user_id: int, _: dict = Depends(require_admin)) -> Response:
-    main = get_main_module()
-    existing = main.fetch_user_by_id(user_id)
+    existing = fetch_user_by_id(user_id)
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
 
     if existing["role"] == "admin" and existing["is_active"]:
-        if main.count_active_admins(exclude_user_id=user_id) == 0:
+        if count_active_admins(exclude_user_id=user_id) == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Impossible de supprimer le dernier administrateur actif",
             )
 
-    if not main.delete_user_record(user_id):
+    if not delete_user_record(user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

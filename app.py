@@ -57,16 +57,16 @@ from data_repository import (
 )
 from inventory_service import (
     match_invoice_products,
-    process_sale_transaction,
     register_invoice_reception,
 )
 import products_loader
-from product_service import (
-    parse_barcode_input,
-    update_catalog_entry,
-    delete_product_by_barcode,
-    ProductNotFoundError,
+from product_service import parse_barcode_input
+from domain import (
     InvalidBarcodeError,
+    ProductNotFoundError,
+    delete_product_by_barcode,
+    process_sale_transaction,
+    update_catalog_entry,
 )
 
 # --- FONCTION POUR CHARGER LE CSS EXTERNE (style.css) ---

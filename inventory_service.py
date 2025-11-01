@@ -10,44 +10,43 @@ import pandas as pd
 from data_repository import get_engine, query_df
 from sqlalchemy import exc as sa_exc, text
 
+from domain.preferences import (
+    get_saved_views_service as domain_get_saved_views_service,
+    set_saved_views_service as domain_set_saved_views_service,
+)
+from domain.sales import (
+    get_sale_service as domain_get_sale_service,
+    process_sale_transaction as domain_process_sale_transaction,
+    set_sale_service as domain_set_sale_service,
+)
 from services import SaleService, SavedViewsService, as_decimal, normalise_quantity
 from telemetry import get_tracer
 
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
-_sale_service: SaleService | None = None
-_saved_views_service: SavedViewsService | None = None
 
 
 def get_sale_service() -> SaleService:
-    global _sale_service
-    if _sale_service is None:
-        _sale_service = SaleService(engine_factory=get_engine)
-    return _sale_service
+    return domain_get_sale_service()
 
 
 def set_sale_service(service: SaleService | None) -> None:
-    global _sale_service
-    _sale_service = service
+    domain_set_sale_service(service)
 
 
 def get_saved_views_service() -> SavedViewsService:
-    global _saved_views_service
-    if _saved_views_service is None:
-        _saved_views_service = SavedViewsService(engine_factory=get_engine)
-    return _saved_views_service
+    return domain_get_saved_views_service()
 
 
 def set_saved_views_service(service: SavedViewsService | None) -> None:
-    global _saved_views_service
-    _saved_views_service = service
+    domain_set_saved_views_service(service)
 
 
 def process_sale_transaction(cart: list, username: str) -> tuple[bool, str | None, dict[str, bytes] | None]:
-    """Delegate sale processing to the domain service."""
+    """Delegate sale processing to the shared domain service."""
 
-    return get_sale_service().process_sale_transaction(cart, username)
+    return domain_process_sale_transaction(cart, username)
 
 # ---------------------------------------------------------------------------
 #  Pipelines de factures → commandes

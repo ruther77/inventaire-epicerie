@@ -38,11 +38,17 @@ from data_repository import (  # re-exported for backwards compatibility in test
     update_supplier_record,
     update_user_record,
 )
-from inventory_service import get_saved_views_service, process_sale_transaction
-from product_service import InvalidBarcodeError, ProductNotFoundError, update_catalog_entry
+from domain import (
+    InvalidBarcodeError,
+    ProductNotFoundError,
+    fetch_products as _fetch_products,
+    get_saved_views_service,
+    load_active_products_map as _load_active_products_map,
+    process_sale_transaction,
+    update_catalog_entry,
+)
 
 from .api import api_router
-from .api.products import fetch_products as _fetch_products, load_active_products_map as _load_active_products_map
 from .api.pos import _prepare_checkout_payload
 from .settings import APISettings, get_settings
 from .security import (

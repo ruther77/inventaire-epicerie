@@ -46,7 +46,7 @@ def test_health_endpoint():
 def test_products_listing(monkeypatch):
     client = TestClient(app)
 
-    monkeypatch.setattr('backend.main._fetch_products', lambda: [])
+    monkeypatch.setattr('backend.api.products.domain_fetch_products', lambda: [])
 
     response = client.get('/products')
     assert response.status_code == 200
@@ -61,9 +61,9 @@ def test_checkout_success(monkeypatch):
         assert username == 'tester'
         return True, None, {'filename': 'ticket.pdf', 'content': b'binary'}
 
-    monkeypatch.setattr('backend.main.process_sale_transaction', fake_checkout)
+    monkeypatch.setattr('backend.api.pos.process_sale_transaction', fake_checkout)
     monkeypatch.setattr(
-        'backend.main._load_active_products_map',
+        'backend.api.pos.load_active_products_map',
         lambda product_ids: {
             1: {'id': 1, 'nom': 'Test', 'prix_vente': 2.5, 'tva': 5.5},
         },
@@ -92,7 +92,7 @@ def test_product_update(monkeypatch):
         called['barcodes'] = barcodes
         return {'fields_updated': len(changes)}
 
-    monkeypatch.setattr('backend.main.update_catalog_entry', fake_update)
+    monkeypatch.setattr('backend.api.products.update_catalog_entry', fake_update)
 
     response = client.patch(
         '/products/123',
@@ -133,7 +133,7 @@ def test_moderator_can_toggle_activation(monkeypatch):
         called['barcodes'] = barcodes
         return {'fields_updated': len(changes)}
 
-    monkeypatch.setattr('backend.main.update_catalog_entry', fake_update)
+    monkeypatch.setattr('backend.api.products.update_catalog_entry', fake_update)
 
     app.dependency_overrides[get_current_active_user] = lambda: {
         'id': 3,
