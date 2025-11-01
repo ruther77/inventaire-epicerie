@@ -17,6 +17,24 @@ const DASHBOARD_CARDS = [
     to: '/commandes',
   },
   {
+    id: 'approvisionnements',
+    label: 'Approvisionnements',
+    description: 'Consignez vos réceptions fournisseurs en quelques clics.',
+    to: '/approvisionnements',
+  },
+  {
+    id: 'clients',
+    label: 'Clients',
+    description: 'Retrouvez les coordonnées et l’historique de vos clients.',
+    to: '/clients',
+  },
+  {
+    id: 'fournisseurs',
+    label: 'Fournisseurs',
+    description: 'Gardez vos partenaires commerciaux à portée de main.',
+    to: '/fournisseurs',
+  },
+  {
     id: 'analyses',
     label: 'Analyses',
     description: 'Consultez les rapports de performance et les tendances de ventes.',

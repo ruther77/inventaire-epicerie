@@ -17,6 +17,10 @@ import NotificationsPage from './pages/NotificationsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import SignupPage from './pages/SignupPage.jsx';
+import CategoriesPage from './pages/CategoriesPage.jsx';
+import ClientsPage from './pages/ClientsPage.jsx';
+import SuppliersPage from './pages/SuppliersPage.jsx';
+import ProcurementsPage from './pages/ProcurementsPage.jsx';
 import { useAuth } from './auth/AuthContext.jsx';
 import LoginModal from './components/LoginModal.jsx';
 import MegaMenu from './components/MegaMenu.jsx';
@@ -45,11 +49,35 @@ const ROUTES = [
     section: 'catalogue',
   },
   {
+    path: '/categories',
+    element: <CategoriesPage />,
+    breadcrumb: 'Catégories',
+    section: 'catalogue',
+  },
+  {
+    path: '/approvisionnements',
+    element: <ProcurementsPage />,
+    breadcrumb: 'Approvisionnements',
+    section: 'catalogue',
+  },
+  {
     path: '/promotions',
     element: <PromotionsPage />,
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
+  },
+  {
+    path: '/clients',
+    element: <ClientsPage />,
+    breadcrumb: 'Clients',
+    section: 'relations',
+  },
+  {
+    path: '/fournisseurs',
+    element: <SuppliersPage />,
+    breadcrumb: 'Fournisseurs',
+    section: 'relations',
   },
   {
     path: '/pos',
@@ -141,6 +169,7 @@ const MEGA_MENU_SECTIONS = [
     featuredActions: [
       { to: '/catalogue', label: 'Parcourir le catalogue', badge: { label: 'Nouveau', variant: 'new' } },
       { to: '/commandes', label: 'Créer une commande' },
+      { to: '/approvisionnements', label: 'Suivre les approvisionnements' },
       { to: '/promotions', label: 'Voir les promotions', badge: { label: 'Promo', variant: 'promo' } },
     ],
     items: [
@@ -150,9 +179,19 @@ const MEGA_MENU_SECTIONS = [
         description: 'Recherchez, filtrez et sauvegardez vos vues personnalisées.',
       },
       {
+        to: '/categories',
+        label: 'Catégories',
+        description: 'Organisez vos références par familles et mettez-les à jour.',
+      },
+      {
         to: '/commandes',
         label: 'Commandes',
         description: 'Suivez vos commandes et reprenez les brouillons.',
+      },
+      {
+        to: '/approvisionnements',
+        label: 'Approvisionnements',
+        description: 'Planifiez et consignez vos réceptions fournisseurs.',
       },
       {
         to: '/promotions',
@@ -164,6 +203,29 @@ const MEGA_MENU_SECTIONS = [
         to: '/panier',
         label: 'Panier',
         description: 'Retrouvez vos sélections d’achats en attente.',
+      },
+    ],
+  },
+  {
+    id: 'relations',
+    label: 'Contacts',
+    subtitle: 'Clients & fournisseurs',
+    title: 'Relations commerciales',
+    description: 'Retrouvez rapidement les interlocuteurs clés de votre activité.',
+    featuredActions: [
+      { to: '/clients', label: 'Répertoire clients' },
+      { to: '/fournisseurs', label: 'Carnet fournisseurs' },
+    ],
+    items: [
+      {
+        to: '/clients',
+        label: 'Clients',
+        description: 'Coordonnées, préférences et suivi des commandes.',
+      },
+      {
+        to: '/fournisseurs',
+        label: 'Fournisseurs',
+        description: 'Contacts privilégiés pour vos réassorts.',
       },
     ],
   },
