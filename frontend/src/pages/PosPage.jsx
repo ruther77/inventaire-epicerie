@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { checkoutCart, fetchProducts } from '../api/client.js';
+import { useAuth } from '../auth/AuthContext.jsx';
 
 export default function PosPage() {
+  const { user } = useAuth();
   const { data: products = [] } = useQuery({
     queryKey: ['products'],
     queryFn: fetchProducts,
@@ -11,13 +13,19 @@ export default function PosPage() {
   const [selectedId, setSelectedId] = useState('');
   const [qty, setQty] = useState(1);
   const [cart, setCart] = useState([]);
+  const [checkoutError, setCheckoutError] = useState(null);
 
   const mutation = useMutation({
     mutationFn: checkoutCart,
     onSuccess: (response) => {
       if (response.success) {
         setCart([]);
+        setCheckoutError(null);
       }
+    },
+    onError: (error) => {
+      const detail = error?.response?.data?.detail || error?.message || 'Erreur inconnue';
+      setCheckoutError(detail);
     },
   });
 
@@ -40,7 +48,17 @@ export default function PosPage() {
     setQty(1);
   };
 
-  const total = cart.reduce((sum, line) => sum + (line.prix_vente || 0) * line.qty, 0);
+  const total = useMemo(
+    () => cart.reduce((sum, line) => sum + (line.prix_vente || 0) * line.qty, 0),
+    [cart],
+  );
+
+  const handleCheckout = () => {
+    setCheckoutError(null);
+    mutation.mutate({ cart });
+  };
+
+  const computedServerTotal = mutation.data?.total_ttc ?? null;
 
   return (
     <div className="page">
@@ -51,6 +69,9 @@ export default function PosPage() {
           <p className="page-description">
             Encaissez rapidement tout en conservant vos préférences produits et paniers favoris.
           </p>
+          {user && (
+            <p className="page-helper">Session connectée : <strong>{user.username}</strong></p>
+          )}
         </div>
       </header>
       <section className="card">
@@ -92,10 +113,13 @@ export default function PosPage() {
                 ))}
               </ul>
             )}
-            <p className="pos-total">Total: {total.toFixed(2)} €</p>
+            <p className="pos-total">Total estimé: {total.toFixed(2)} €</p>
+            {typeof computedServerTotal === 'number' && (
+              <p className="pos-total server">Total calculé serveur: {computedServerTotal.toFixed(2)} €</p>
+            )}
             <button
               type="button"
-              onClick={() => mutation.mutate({ cart, username: 'spa-user' })}
+              onClick={handleCheckout}
               disabled={cart.length === 0 || mutation.isLoading}
             >
               Finaliser la vente
@@ -107,6 +131,7 @@ export default function PosPage() {
               </p>
             )}
             {mutation.data && !mutation.data.success && <p>Erreur: {mutation.data.message}</p>}
+            {checkoutError && <p>Erreur: {checkoutError}</p>}
           </div>
         </div>
       </section>

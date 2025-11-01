@@ -9,25 +9,52 @@ import {
 
 const STORAGE_KEY = 'inventaire-auth-state';
 
+const decodeExpiration = (token) => {
+  if (!token) {
+    return null;
+  }
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) {
+      return null;
+    }
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (typeof payload.exp !== 'number') {
+      return null;
+    }
+    return payload.exp * 1000;
+  } catch (error) {
+    console.warn('Impossible de décoder la date expiration du jeton', error);
+    return null;
+  }
+};
+
 const AuthContext = createContext(undefined);
 
 const loadStoredState = () => {
   if (typeof window === 'undefined') {
-    return { token: null, user: null };
+    return { token: null, user: null, expiresAt: null };
   }
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { token: null, user: null };
+      return { token: null, user: null, expiresAt: null };
     }
     const parsed = JSON.parse(raw);
+    const storedExpiry = typeof parsed?.expiresAt === 'number' ? parsed.expiresAt : null;
+    const expiresAt = storedExpiry ?? decodeExpiration(parsed?.token);
+    if (expiresAt && Date.now() >= expiresAt) {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+      return { token: null, user: null, expiresAt: null };
+    }
     return {
       token: parsed?.token ?? null,
       user: parsed?.user ?? null,
+      expiresAt,
     };
   } catch (error) {
     console.warn('Impossible de restaurer la session', error);
-    return { token: null, user: null };
+    return { token: null, user: null, expiresAt: null };
   }
 };
 
@@ -50,23 +77,31 @@ export function AuthProvider({ children }) {
     }
 
     if (authState.token) {
-      window.localStorage.setItem(
+      window.sessionStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ token: authState.token, user: authState.user }),
+        JSON.stringify({
+          token: authState.token,
+          user: authState.user,
+          expiresAt: authState.expiresAt,
+        }),
       );
     } else {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.sessionStorage.removeItem(STORAGE_KEY);
     }
-  }, [authState.token, authState.user]);
+  }, [authState.token, authState.user, authState.expiresAt]);
 
   const logout = useCallback(() => {
-    setAuthState({ token: null, user: null });
+    setAuthState({ token: null, user: null, expiresAt: null });
     setAuthError(null);
     clearAuthToken();
   }, []);
 
   const refreshCurrentUser = useCallback(async () => {
     if (!authState.token) {
+      return null;
+    }
+    if (authState.expiresAt && authState.expiresAt <= Date.now()) {
+      logout();
       return null;
     }
     setIsAuthenticating(true);
@@ -80,7 +115,7 @@ export function AuthProvider({ children }) {
     } finally {
       setIsAuthenticating(false);
     }
-  }, [authState.token, logout]);
+  }, [authState.token, authState.expiresAt, logout]);
 
   useEffect(() => {
     if (authState.token && !authState.user) {
@@ -97,7 +132,11 @@ export function AuthProvider({ children }) {
       try {
         const response = await loginUser({ username, password });
         setAuthToken(response.access_token);
-        setAuthState({ token: response.access_token, user: response.user });
+        setAuthState({
+          token: response.access_token,
+          user: response.user,
+          expiresAt: decodeExpiration(response.access_token),
+        });
         setIsLoginOpen(false);
         return response.user;
       } catch (error) {
@@ -121,10 +160,36 @@ export function AuthProvider({ children }) {
     setAuthError(null);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (!authState.token || !authState.expiresAt) {
+      return;
+    }
+
+    const remaining = authState.expiresAt - Date.now();
+    if (remaining <= 0) {
+      logout();
+      openLoginModal();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      logout();
+      openLoginModal();
+    }, remaining);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [authState.token, authState.expiresAt, logout, openLoginModal]);
+
   const value = useMemo(
     () => ({
       user: authState.user,
       token: authState.token,
+      sessionExpiresAt: authState.expiresAt,
       isLoginOpen,
       isAuthenticating,
       authError,
@@ -137,6 +202,7 @@ export function AuthProvider({ children }) {
     [
       authState.user,
       authState.token,
+      authState.expiresAt,
       isLoginOpen,
       isAuthenticating,
       authError,

@@ -22,6 +22,7 @@ import ClientsPage from './pages/ClientsPage.jsx';
 import SuppliersPage from './pages/SuppliersPage.jsx';
 import ProcurementsPage from './pages/ProcurementsPage.jsx';
 import { useAuth } from './auth/AuthContext.jsx';
+import RequireAuth from './auth/RequireAuth.jsx';
 import LoginModal from './components/LoginModal.jsx';
 import MegaMenu from './components/MegaMenu.jsx';
 import Breadcrumbs from './components/Breadcrumbs.jsx';
@@ -34,6 +35,7 @@ const ROUTES = [
     element: <DashboardPage />,
     breadcrumb: 'Tableau de bord',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/catalogue',
@@ -41,24 +43,28 @@ const ROUTES = [
     breadcrumb: 'Catalogue',
     section: 'catalogue',
     badge: { label: 'Nouveau', variant: 'new' },
+    requiresAuth: true,
   },
   {
     path: '/commandes',
     element: <OrdersPage />,
     breadcrumb: 'Commandes',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/categories',
     element: <CategoriesPage />,
     breadcrumb: 'Catégories',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/approvisionnements',
     element: <ProcurementsPage />,
     breadcrumb: 'Approvisionnements',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/promotions',
@@ -66,24 +72,28 @@ const ROUTES = [
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
+    requiresAuth: true,
   },
   {
     path: '/clients',
     element: <ClientsPage />,
     breadcrumb: 'Clients',
     section: 'relations',
+    requiresAuth: true,
   },
   {
     path: '/fournisseurs',
     element: <SuppliersPage />,
     breadcrumb: 'Fournisseurs',
     section: 'relations',
+    requiresAuth: true,
   },
   {
     path: '/pos',
     element: <PosPage />,
     breadcrumb: 'Point de vente',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/explorer/rapports',
@@ -91,48 +101,56 @@ const ROUTES = [
     breadcrumb: 'Analyses',
     section: 'explorer',
     badge: { label: 'Bêta', variant: 'beta' },
+    requiresAuth: true,
   },
   {
     path: '/explorer/outils',
     element: <LegacyToolsPage />,
     breadcrumb: 'Outils Streamlit',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/aide',
     element: <SupportPage />,
     breadcrumb: 'Aide',
     section: 'support',
+    requiresAuth: true,
   },
   {
     path: '/compte',
     element: <AccountPage />,
     breadcrumb: 'Espace personnel',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/panier',
     element: <CartPage />,
     breadcrumb: 'Panier',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/favoris',
     element: <FavoritesPage />,
     breadcrumb: 'Favoris',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/notifications',
     element: <NotificationsPage />,
     breadcrumb: 'Notifications',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/parametres',
     element: <SettingsPage />,
     breadcrumb: 'Paramètres',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/auth/login',
@@ -156,6 +174,7 @@ const ADMIN_ROUTES = [
     breadcrumb: 'Comptes utilisateurs',
     section: 'administration',
     adminOnly: true,
+    requiresAuth: true,
   },
 ];
 
@@ -324,9 +343,17 @@ export default function App() {
       <Breadcrumbs routes={availableRoutes} />
       <main>
         <Routes>
-          {availableRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={route.element} />
-          ))}
+          {availableRoutes.map((route) => {
+            const wrappedElement =
+              route.requiresAuth || route.adminOnly ? (
+                <RequireAuth requireAdmin={Boolean(route.adminOnly)}>
+                  {route.element}
+                </RequireAuth>
+              ) : (
+                route.element
+              );
+            return <Route key={route.path} path={route.path} element={wrappedElement} />;
+          })}
         </Routes>
       </main>
       <LoginModal />

@@ -126,7 +126,9 @@ l'affichage local et l'image exécutée en production.
    `pytest`.)
 
 3. Exportez les variables d'environnement nécessaires (voir `env.prod.example`
-   pour la liste complète) ou créez un fichier `.streamlit/secrets.toml`.
+   pour la liste complète) — en particulier `DATABASE_URL` et un
+   `AUTH_SECRET_KEY` d'au moins 32 caractères — ou créez un fichier
+   `.streamlit/secrets.toml`.
 4. Démarrez l'application puis ouvrez votre navigateur sur
    <http://localhost:8501> :
 
