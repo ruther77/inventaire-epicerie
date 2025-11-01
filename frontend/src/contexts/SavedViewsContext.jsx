@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 
-const STORAGE_KEY = 'inventaire-saved-views';
+import { fetchSavedViews, persistSavedViews } from '../api/client.js';
+import { useAuth } from '../auth/AuthContext.jsx';
 
 const DEFAULT_VIEWS = {
   home: [
@@ -110,37 +111,71 @@ const normaliseCollection = (collection) =>
     return accumulator;
   }, {});
 
-const getInitialViews = () => {
+const mergeWithDefaults = (collection) => {
   const defaults = normaliseCollection(DEFAULT_VIEWS);
-
-  if (typeof window === 'undefined') {
-    return defaults;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return defaults;
-    }
-    const parsed = JSON.parse(raw);
-    const merged = { ...defaults };
-    Object.entries(normaliseCollection(parsed)).forEach(([slot, list]) => {
-      merged[slot] = list;
-    });
-    return merged;
-  } catch (error) {
-    console.warn('Impossible de restaurer les vues sauvegardées', error);
-    return defaults;
-  }
+  const normalised = normaliseCollection(collection);
+  const merged = { ...defaults };
+  Object.entries(normalised).forEach(([slot, list]) => {
+    merged[slot] = list;
+  });
+  return merged;
 };
 
 export function SavedViewsProvider({ children }) {
-  const [views, setViews] = useState(getInitialViews);
+  const { user } = useAuth();
+  const [views, setViews] = useState(() => mergeWithDefaults(DEFAULT_VIEWS));
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(null);
   const persistTimeout = useRef(null);
+  const lastPayload = useRef('');
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
+    if (!user) {
+      setViews(mergeWithDefaults(DEFAULT_VIEWS));
+      lastPayload.current = '';
+      return;
+    }
+
+    let cancelled = false;
+    setIsSyncing(true);
+    setSyncError(null);
+
+    fetchSavedViews()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const merged = mergeWithDefaults(response?.slots);
+        setViews(merged);
+        lastPayload.current = JSON.stringify(merged);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        console.warn('Impossible de charger les vues sauvegardées', error);
+        setSyncError(error);
+        setViews(mergeWithDefaults(DEFAULT_VIEWS));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsSyncing(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') {
+      return () => {};
+    }
+
+    const payload = JSON.stringify(views);
+    if (payload === lastPayload.current) {
+      return () => {};
     }
 
     if (persistTimeout.current) {
@@ -148,9 +183,21 @@ export function SavedViewsProvider({ children }) {
     }
 
     persistTimeout.current = window.setTimeout(() => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(views));
-      persistTimeout.current = null;
-    }, 150);
+      setIsSyncing(true);
+      persistSavedViews({ slots: views })
+        .then(() => {
+          lastPayload.current = JSON.stringify(views);
+          setSyncError(null);
+        })
+        .catch((error) => {
+          console.warn('Impossible de sauvegarder les vues', error);
+          setSyncError(error);
+        })
+        .finally(() => {
+          setIsSyncing(false);
+          persistTimeout.current = null;
+        });
+    }, 250);
 
     return () => {
       if (persistTimeout.current) {
@@ -158,7 +205,7 @@ export function SavedViewsProvider({ children }) {
         persistTimeout.current = null;
       }
     };
-  }, [views]);
+  }, [views, user?.id]);
 
   const getViews = useCallback((slot) => views[slot] ?? [], [views]);
 
@@ -208,8 +255,10 @@ export function SavedViewsProvider({ children }) {
       getViews,
       saveView,
       removeView,
+      isSyncing,
+      syncError,
     }),
-    [views, getViews, saveView, removeView],
+    [views, getViews, saveView, removeView, isSyncing, syncError],
   );
 
   return <SavedViewsContext.Provider value={value}>{children}</SavedViewsContext.Provider>;

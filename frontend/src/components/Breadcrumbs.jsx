@@ -1,6 +1,8 @@
 import PropTypes from 'prop-types';
 import { Link, useLocation } from 'react-router-dom';
 
+import { Badge } from '../design-system/index.js';
+
 export default function Breadcrumbs({ routes }) {
   const location = useLocation();
   const pathname = location.pathname || '/';
@@ -35,14 +37,14 @@ export default function Breadcrumbs({ routes }) {
             return (
               <li key={crumb.path} aria-current="page">
                 <span>{crumb.label}</span>
-                {crumb.badge && <span className={`badge badge-${crumb.badge.variant}`}>{crumb.badge.label}</span>}
+                {crumb.badge && <Badge variant={crumb.badge.variant} label={crumb.badge.label} />}
               </li>
             );
           }
           return (
             <li key={crumb.path}>
               <Link to={crumb.path}>{crumb.label}</Link>
-              {crumb.badge && <span className={`badge badge-${crumb.badge.variant}`}>{crumb.badge.label}</span>}
+              {crumb.badge && <Badge variant={crumb.badge.variant} label={crumb.badge.label} />}
               <span className="breadcrumbs-separator">/</span>
             </li>
           );
