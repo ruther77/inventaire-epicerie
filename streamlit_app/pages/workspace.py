@@ -399,6 +399,10 @@ def authenticate_user() -> tuple[str | None, bool | None, str | None]:
 
     if "authentication_status" not in st.session_state:
         st.session_state["authentication_status"] = None
+    if "name" not in st.session_state:
+        st.session_state["name"] = None
+    if "username" not in st.session_state:
+        st.session_state["username"] = None
     if "logout" not in st.session_state:
         st.session_state["logout"] = False
 

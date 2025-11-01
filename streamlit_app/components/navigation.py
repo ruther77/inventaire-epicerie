@@ -1,9 +1,9 @@
-"""Navigation components for the Streamlit workspace."""
+"""Navigation components aligning Streamlit workspace with the SPA styling."""
 
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Dict, Final, List
+from typing import Any, Dict, Final, List, Sequence
 
 import streamlit as st
 
@@ -23,141 +23,155 @@ _PAGE_KEYS: Final[List[str]] = [
 
 _PAGE_KEY_TO_INDEX: Final[Dict[str, int]] = {key: idx for idx, key in enumerate(_PAGE_KEYS)}
 
-_NAV_SHORTCUTS: Final[List[Dict[str, Any]]] = [
+_HEADER_ACTIONS: Final[Sequence[Dict[str, Any]]] = (
+    {
+        "label": "Tableau de bord",
+        "icon": "bi-speedometer2",
+        "page_key": "dashboard",
+    },
     {
         "label": "Approvisionnement",
         "icon": "bi-truck",
-        "tab_index": _PAGE_KEY_TO_INDEX["supply"],
         "page_key": "supply",
     },
-    {
-        "label": "Vente (PoS)",
-        "icon": "bi-bag",
-        "tab_index": _PAGE_KEY_TO_INDEX["pos"],
-        "page_key": "pos",
-    },
-    {
-        "label": "Dashboard",
-        "icon": "bi-speedometer2",
-        "tab_index": _PAGE_KEY_TO_INDEX["dashboard"],
-        "page_key": "dashboard",
-    },
-]
+)
 
-_NAV_SECTIONS: Final[List[Dict[str, Any]]] = [
+_MEGA_MENU_SECTIONS: Final[Sequence[Dict[str, Any]]] = (
     {
         "id": "catalogue",
         "label": "Catalogue",
-        "icon": "bi-grid",
-        "description": "Suivez vos rayons, vos stocks et vos contrôles qualité.",
-        "items": [
+        "subtitle": "Rayons & produits",
+        "title": "Catalogue & merchandising",
+        "description": "Filtrez, pilotez les rayons et surveillez les alertes critiques.",
+        "featured": (
             {
                 "label": "Vitrine produits",
-                "description": "Aperçu client, ventes et mises en avant.",
-                "badge": "Rayons",
-                "tab_index": _PAGE_KEY_TO_INDEX["showcase"],
                 "page_key": "showcase",
+                "badge": {"label": "Client", "variant": "new"},
             },
             {
-                "label": "Catalogue",
-                "description": "Gestion détaillée des fiches et options produits.",
-                "badge": "Catalogue",
-                "tab_index": _PAGE_KEY_TO_INDEX["catalog"],
+                "label": "Gestion catalogue",
                 "page_key": "catalog",
             },
             {
-                "label": "Stock & mouvements",
-                "description": "Flux, projections et alertes de ruptures.",
-                "badge": "Stock",
-                "tab_index": _PAGE_KEY_TO_INDEX["movements"],
+                "label": "Flux de stock",
+                "page_key": "movements",
+            },
+        ),
+        "items": (
+            {
+                "label": "Vitrine produits",
+                "description": "Vue client enrichie des performances ventes & stocks.",
+                "page_key": "showcase",
+                "badge": {"label": "Rayons", "variant": "count"},
+            },
+            {
+                "label": "Catalogue",
+                "description": "Gestion détaillée des fiches, options et variantes.",
+                "page_key": "catalog",
+            },
+            {
+                "label": "Stocks & mouvements",
+                "description": "Flux, projections et alertes de rupture.",
                 "page_key": "movements",
             },
             {
                 "label": "Audit & écarts",
-                "description": "Suivi des écarts inventaires et plans d'actions.",
-                "badge": "Audit",
-                "tab_index": _PAGE_KEY_TO_INDEX["audit"],
+                "description": "Suivi des écarts d\'inventaire et plans d\'actions.",
                 "page_key": "audit",
             },
-        ],
-        "links": [
-            {
-                "label": "Top ventes",
-                "icon": "bi-graph-up",
-                "tab_index": _PAGE_KEY_TO_INDEX["showcase"],
-                "page_key": "showcase",
-            },
-            {
-                "label": "Produits critiques",
-                "icon": "bi-exclamation-octagon",
-                "tab_index": _PAGE_KEY_TO_INDEX["movements"],
-                "page_key": "movements",
-            },
-            {
-                "label": "Plans d'audit",
-                "icon": "bi-clipboard-check",
-                "tab_index": _PAGE_KEY_TO_INDEX["audit"],
-                "page_key": "audit",
-            },
-        ],
+        ),
     },
     {
-        "id": "explorer",
-        "label": "Explorer",
-        "icon": "bi-compass",
-        "description": "Accédez directement aux opérations et outils spécialisés.",
-        "items": [
+        "id": "operations",
+        "label": "Opérations",
+        "subtitle": "Achats & ventes",
+        "title": "Opérations quotidiennes",
+        "description": "Accédez aux modules d\'exécution et aux outils de saisie.",
+        "featured": (
             {
                 "label": "Approvisionnement",
-                "description": "Commandes fournisseurs et réassorts.",
-                "badge": "Achats",
-                "tab_index": _PAGE_KEY_TO_INDEX["supply"],
+                "page_key": "supply",
+            },
+            {
+                "label": "Point de vente",
+                "page_key": "pos",
+                "badge": {"label": "Live", "variant": "warning"},
+            },
+            {
+                "label": "Scanner codes-barres",
+                "page_key": "scanner",
+            },
+        ),
+        "items": (
+            {
+                "label": "Approvisionnements",
+                "description": "Commandes fournisseurs, réassorts et réceptions.",
                 "page_key": "supply",
             },
             {
                 "label": "Vente (PoS)",
                 "description": "Encaissement rapide et gestion panier.",
-                "badge": "Caisse",
-                "tab_index": _PAGE_KEY_TO_INDEX["pos"],
                 "page_key": "pos",
             },
             {
-                "label": "Dashboard",
-                "description": "Pilotage global et indicateurs clés.",
-                "badge": "Pilotage",
-                "tab_index": _PAGE_KEY_TO_INDEX["dashboard"],
-                "page_key": "dashboard",
-            },
-            {
-                "label": "Maintenance & Admin",
-                "description": "Tâches de support et outils techniques.",
-                "badge": "Admin",
-                "tab_index": _PAGE_KEY_TO_INDEX["admin"],
-                "page_key": "admin",
-            },
-        ],
-        "links": [
-            {
-                "label": "Scanner codes-barres",
-                "icon": "bi-upc-scan",
-                "tab_index": _PAGE_KEY_TO_INDEX["scanner"],
+                "label": "Scanner",
+                "description": "Lecture webcam des codes-barres & recherche instantanée.",
                 "page_key": "scanner",
             },
             {
                 "label": "Extraction facture",
-                "icon": "bi-receipt-cutoff",
-                "tab_index": _PAGE_KEY_TO_INDEX["extract"],
+                "description": "Analyse des factures fournisseurs et import automatique.",
                 "page_key": "extract",
             },
             {
-                "label": "Importation catalogues",
-                "icon": "bi-cloud-upload",
-                "tab_index": _PAGE_KEY_TO_INDEX["import"],
+                "label": "Import catalogue",
+                "description": "Import massif de références et contrôles de cohérence.",
                 "page_key": "import",
             },
-        ],
+        ),
     },
-]
+    {
+        "id": "pilotage",
+        "label": "Pilotage",
+        "subtitle": "Analyse & reporting",
+        "title": "Pilotage de la performance",
+        "description": "Suivez vos indicateurs clés et préparez vos arbitrages.",
+        "featured": (
+            {
+                "label": "Tableau de bord",
+                "page_key": "dashboard",
+                "badge": {"label": "Synthèse", "variant": "success"},
+            },
+            {
+                "label": "Produits critiques",
+                "page_key": "movements",
+            },
+        ),
+        "items": (
+            {
+                "label": "Dashboard",
+                "description": "KPIs consolidés, top ventes et valeur de stock.",
+                "page_key": "dashboard",
+            },
+            {
+                "label": "Diagnostic stock",
+                "description": "Analyse des écarts, rotations et projections.",
+                "page_key": "movements",
+            },
+            {
+                "label": "Top ventes",
+                "description": "Visualisation des produits performants sur 30 jours.",
+                "page_key": "showcase",
+            },
+            {
+                "label": "Maintenance & Admin",
+                "description": "Outils techniques, sauvegardes et réglages.",
+                "page_key": "admin",
+            },
+        ),
+    },
+)
 
 _ENHANCEMENT_SCRIPT: Final[str] = """
 <script>
@@ -287,31 +301,195 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
 """
 
 
-def render_workspace_navigation() -> None:
-    """Render the mega menu and shortcuts used to drive the tabs."""
+  const header = rootDocument.querySelector('[data-workspace-nav]');
+  if (!header || header.dataset.enhanced === 'true') {
+    return;
+  }
 
-    def _build_shortcuts() -> str:
-        parts: List[str] = []
-        for shortcut in _NAV_SHORTCUTS:
-            label = escape(shortcut["label"])
-            icon = escape(shortcut["icon"])
-            tab_index = shortcut.get("tab_index", 0)
-            page_key = shortcut.get("page_key")
-            data_page = f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
-            href = "#"
-            parts.append(
-                "".join(
-                    [
-                        f"<a class=\"workspace-shortcut\" href=\"{href}\" data-tab-target=\"{tab_index}\"",
-                        data_page,
-                        ">",
-                        "<span class=\"workspace-shortcut__icon\"><i class=\"bi ",
-                        f"{icon}",
-                        "\"></i></span>",
-                        f"<span class=\"workspace-shortcut__label\">{label}</span>",
-                        "</a>",
-                    ]
-                )
+  header.dataset.enhanced = 'true';
+
+  const megaMenu = header.querySelector('[data-mega-menu]');
+  const toggleButton = megaMenu?.querySelector('.mega-menu-trigger');
+  const brandToggle = header.querySelector('.hamburger');
+  const tabButtons = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-tab]')) : [];
+  const panels = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-panel]')) : [];
+
+  const toggleElements = [toggleButton, brandToggle].filter(Boolean);
+
+  const setActiveSection = (sectionId) => {
+    tabButtons.forEach((tab) => {
+      const isActive = tab.dataset.megaTab === sectionId;
+      tab.classList.toggle('active', isActive);
+      tab.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.dataset.megaPanel === sectionId;
+      panel.classList.toggle('visible', isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  };
+
+  if (tabButtons.length > 0) {
+    setActiveSection(tabButtons[0].dataset.megaTab);
+  }
+
+  const closeMenu = () => {
+    if (!megaMenu) return;
+    megaMenu.classList.remove('mega-menu-open');
+    toggleElements.forEach((toggle) => {
+      toggle.setAttribute('aria-expanded', 'false');
+    });
+  };
+
+  const selectWorkspaceTab = (index) => {
+    const tabButtons = rootDocument.querySelectorAll('[data-baseweb="tab"]');
+    const target = tabButtons?.[index];
+    if (target) {
+      target.click();
+    }
+  };
+
+  const updateActiveLinks = (pageKey) => {
+    if (!pageKey) return;
+    rootDocument.body?.setAttribute('data-current-page', pageKey);
+    header.querySelectorAll('[data-page-key]').forEach((node) => {
+      node.classList.toggle('is-active', node.getAttribute('data-page-key') === pageKey);
+    });
+  };
+
+  const syncFromStreamlitTabs = () => {
+    const streamlitTabs = Array.from(rootDocument.querySelectorAll('[data-baseweb="tab"]'));
+    const activeIndex = streamlitTabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+    if (activeIndex >= 0) {
+      const activeLink = header.querySelector(`[data-tab-target="${activeIndex}"][data-page-key]`);
+      const pageKey = activeLink?.getAttribute('data-page-key');
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+    }
+  };
+
+  tabButtons.forEach((tab) => {
+    tab.addEventListener('mouseenter', () => setActiveSection(tab.dataset.megaTab));
+    tab.addEventListener('focus', () => setActiveSection(tab.dataset.megaTab));
+    tab.addEventListener('click', (event) => {
+      event.preventDefault();
+      setActiveSection(tab.dataset.megaTab);
+    });
+  });
+
+  panels.forEach((panel) => {
+    const links = panel.querySelectorAll('[data-tab-target]');
+    links.forEach((link) => {
+      link.addEventListener('click', (event) => {
+        const targetIndex = Number(link.getAttribute('data-tab-target'));
+        const hasTarget = Number.isFinite(targetIndex);
+        const pageKey = link.getAttribute('data-page-key');
+        if (hasTarget) {
+          event.preventDefault();
+          selectWorkspaceTab(targetIndex);
+        }
+        if (pageKey) {
+          updateActiveLinks(pageKey);
+        }
+        closeMenu();
+      });
+    });
+  });
+
+  const actionLinks = header.querySelectorAll('.header-actions [data-tab-target]');
+  actionLinks.forEach((action) => {
+    action.addEventListener('click', (event) => {
+      const targetIndex = Number(action.getAttribute('data-tab-target'));
+      const hasTarget = Number.isFinite(targetIndex);
+      const pageKey = action.getAttribute('data-page-key');
+      if (hasTarget) {
+        event.preventDefault();
+        selectWorkspaceTab(targetIndex);
+      }
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+      closeMenu();
+    });
+  });
+
+  toggleElements.forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+      if (!megaMenu) return;
+      const isOpen = megaMenu.classList.toggle('mega-menu-open');
+      toggleElements.forEach((btn) => {
+        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      });
+    });
+  });
+
+  syncFromStreamlitTabs();
+
+  rootDocument.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && typeof target.closest === 'function') {
+      const tab = target.closest('[data-baseweb="tab"]');
+      if (tab) {
+        window.requestAnimationFrame(syncFromStreamlitTabs);
+      }
+    }
+  });
+
+  rootDocument.addEventListener('click', (event) => {
+    if (!megaMenu) return;
+    const target = event.target;
+    const clickedToggle = toggleElements.some((btn) => btn.contains(target));
+    if (!megaMenu.contains(target) && !clickedToggle) {
+      closeMenu();
+    }
+  });
+})();
+</script>
+"""
+
+
+def _badge_markup(badge: Dict[str, str] | None) -> str:
+    if not badge:
+        return ""
+    label = escape(badge.get("label", ""))
+    if not label:
+        return ""
+    variant = badge.get("variant", "").strip()
+    variant_class = f" badge-{escape(variant)}" if variant else ""
+    return f"<span class=\"badge{variant_class}\">{label}</span>"
+
+
+def _tab_target_attrs(page_key: str | None) -> str:
+    if not page_key:
+        return ""
+    tab_index = _PAGE_KEY_TO_INDEX.get(page_key)
+    if tab_index is None:
+        return ""
+    return (
+        f" data-tab-target=\"{tab_index}\" data-page-key=\"{escape(page_key)}\""
+    )
+
+
+def _build_tabs_markup() -> str:
+    buttons: List[str] = []
+    for section in _MEGA_MENU_SECTIONS:
+        section_id = escape(section["id"])
+        label = escape(section["label"])
+        subtitle = escape(section.get("subtitle", ""))
+        buttons.append(
+            "".join(
+                [
+                    f"<button class=\"mega-menu-tab\" type=\"button\" data-mega-tab=\"{section_id}\" ",
+                    f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\">",
+                    f"<span class=\"mega-menu-tab-label\">{label}</span>",
+                    (
+                        f"<span class=\"mega-menu-tab-subtitle\">{subtitle}</span>"
+                        if subtitle
+                        else ""
+                    ),
+                    "</button>",
+                ]
             )
         return "".join(parts)
 
@@ -327,6 +505,7 @@ def render_workspace_navigation() -> None:
                 f"<i class=\"bi {escape(section['icon'])}\"></i>"
                 f"<span>{escape(section['label'])}</span></button>"
             )
+        )
 
             item_parts: List[str] = []
             for item in section["items"]:
@@ -396,33 +575,77 @@ def render_workspace_navigation() -> None:
                 + "".join(link_parts)
                 + "</ul></div></div></section>"
             )
+        )
 
-            section_parts.append(header)
-            section_parts.append(panel)
+    return "".join(
+        [
+            f"<div class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" ",
+            f"id=\"mega-panel-{section_id}\" aria-hidden=\"true\">",
+            "<div class=\"mega-menu-panel-header\">",
+            "<div>",
+            f"<h3>{title}</h3>",
+            (f"<p>{description}</p>" if description else ""),
+            "</div>",
+            "<div class=\"mega-menu-featured-actions\">",
+            "".join(featured_markup),
+            "</div></div>",
+            "<div class=\"mega-menu-grid\">",
+            "".join(items_markup),
+            "</div>",
+            "</div>",
+        ]
+    )
 
-        toggles = "<div class=\"workspace-primary__toggles\" role=\"tablist\" aria-label=\"Navigation principale\">"
-        panels_wrapper = "<div class=\"workspace-primary__panels\">"
-        toggle_markup: List[str] = []
-        panel_markup: List[str] = []
-        for idx in range(0, len(section_parts), 2):
-            toggle_markup.append(section_parts[idx])
-            panel_markup.append(section_parts[idx + 1])
 
-        toggles += "".join(toggle_markup) + "</div>"
-        panels_wrapper += "".join(panel_markup) + "</div>"
-        return toggles + panels_wrapper
+def _build_panels_markup() -> str:
+    return "".join(_build_panel_markup(section) for section in _MEGA_MENU_SECTIONS)
+
+
+def _build_header_actions() -> str:
+    links: List[str] = []
+    for action in _HEADER_ACTIONS:
+        label = escape(action.get("label", ""))
+        icon = escape(action.get("icon", ""))
+        attrs = _tab_target_attrs(action.get("page_key"))
+        links.append(
+            "".join(
+                [
+                    f"<a class=\"quick-action\" href=\"#\"{attrs}>",
+                    (f"<i class=\"bi {icon}\"></i>" if icon else ""),
+                    f"<span>{label}</span>",
+                    "</a>",
+                ]
+            )
+        )
+    return "".join(links)
+
+
+def render_workspace_navigation() -> None:
+    """Render the SPA-aligned navigation header for the Streamlit workspace."""
 
     html_parts: List[str] = [
         "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />",
-        "<section class=\"workspace-header\" id=\"workspaceNavRoot\" data-workspace-nav>",
-        "<div class=\"workspace-header__bar\">",
-        "<div class=\"workspace-header__group workspace-header__group--left\">",
-        "<div class=\"workspace-header__brand\"><span class=\"workspace-header__brand-eyebrow\">Inventaire Épicerie</span>",
-        "<h1 class=\"workspace-header__brand-title\">Centre de navigation</h1></div>",
+        "<header class=\"app-header\" data-workspace-nav>",
+        "<div class=\"brand-area\">",
+        "<button class=\"hamburger\" type=\"button\" aria-expanded=\"false\">",
+        "<span class=\"visually-hidden\">Ouvrir le menu</span>",
+        "<span></span><span></span><span></span>",
+        "</button>",
+        "<span class=\"brand-title\">Inventaire Épicerie</span>",
         "</div>",
-        "<div class=\"workspace-header__cluster\">",
-        f"<div class=\"workspace-shortcuts\">{_build_shortcuts()}</div>",
+        "<nav class=\"mega-menu\" data-mega-menu>",
+        "<button class=\"mega-menu-trigger\" type=\"button\" aria-expanded=\"false\">Menu</button>",
+        "<div class=\"mega-menu-content\">",
+        "<div class=\"mega-menu-tabs\">",
+        _build_tabs_markup(),
         "</div>",
+        "<div class=\"mega-menu-panels\">",
+        _build_panels_markup(),
+        "</div>",
+        "</div>",
+        "</nav>",
+        "<div class=\"header-actions\">",
+        _build_header_actions(),
         "</div>",
         f"<div class=\"workspace-primary\">{_build_sections()}</div>",
         "</section>",
