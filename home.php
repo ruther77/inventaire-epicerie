@@ -15,35 +15,35 @@ include __DIR__ . '/header.php';
 
 <div class="content-wrapper container">
     <div class="page-content">
-        <section class="home-hero">
+        <section class="home-hero atlas-card" role="region" aria-labelledby="homeHeroTitle" aria-describedby="homeHeroSummary">
             <div class="row align-items-center g-4">
                 <div class="col-lg-7">
                     <span class="home-hero__eyebrow">Bienvenue chez Jellouli</span>
-                    <h1 class="display-6">Planifiez vos courses sans multiplier les onglets</h1>
-                    <p class="lead">Retrouvez produits, commandes et promotions depuis un point d'entrée unique. Commencez par rechercher une inspiration ou explorez nos catégories les plus consultées.</p>
-                    <form class="home-hero__search" action="<?= url_for('Customer/shop.php') ?>" method="get">
+                    <h1 class="display-6" id="homeHeroTitle">Planifiez vos courses sans multiplier les onglets</h1>
+                    <p class="lead" id="homeHeroSummary">Retrouvez produits, commandes et promotions depuis un point d'entrée unique. Commencez par rechercher une inspiration ou explorez nos catégories les plus consultées.</p>
+                    <form class="home-hero__search" action="<?= url_for('Customer/shop.php') ?>" method="get" role="search" aria-describedby="homeHeroSummary">
                         <label class="visually-hidden" for="homeSearch">Rechercher un produit</label>
                         <div class="input-group input-group-lg">
-                            <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input id="homeSearch" class="form-control" type="search" name="q" placeholder="Rechercher un produit, une marque, une catégorie…">
-                            <button class="btn btn-primary" type="submit">Chercher</button>
+                            <span class="input-group-text" aria-hidden="true"><i class="bi bi-search"></i></span>
+                            <input id="homeSearch" class="form-control" type="search" name="q" placeholder="Rechercher un produit, une marque, une catégorie…" autocomplete="off">
+                            <button class="btn btn-primary atlas-btn" type="submit">Chercher</button>
                         </div>
                     </form>
-                    <div class="home-hero__quick-links">
+                    <nav class="home-hero__quick-links" aria-label="Catégories suggérées">
                         <?php foreach ($suggestedCategories as $category): ?>
-                            <a class="quick-link-chip" href="<?= url_for('Customer/shop.php?id=' . urlencode($category->get('n'))) ?>">
-                                <i class="bi bi-tag"></i>
-                                <?= htmlspecialchars($category->get('n'), ENT_QUOTES, 'UTF-8') ?>
+                            <a class="quick-link-chip atlas-chip" href="<?= url_for('Customer/shop.php?id=' . urlencode($category->get('n'))) ?>">
+                                <i class="bi bi-tag" aria-hidden="true"></i>
+                                <span><?= htmlspecialchars($category->get('n'), ENT_QUOTES, 'UTF-8') ?></span>
                             </a>
                         <?php endforeach; ?>
-                    </div>
+                    </nav>
                     <div class="home-hero__insight">
-                        <i class="bi bi-lightning-charge-fill text-warning"></i>
+                        <i class="bi bi-lightning-charge-fill text-warning" aria-hidden="true"></i>
                         <span>Astuce : épinglez vos sections favorites depuis le menu « Catalogue » pour y accéder plus vite.</span>
                     </div>
                     <div class="mt-3">
-                        <span class="text-muted small d-block mb-1">Vos recherches enregistrées</span>
-                        <div class="saved-search-chips" data-saved-searches data-placeholder="false"></div>
+                        <span class="text-muted small d-block mb-1" id="homeSavedSearches">Vos recherches enregistrées</span>
+                        <div class="saved-search-chips" data-saved-searches data-placeholder="false" role="status" aria-live="polite" aria-describedby="homeSavedSearches"></div>
                     </div>
                 </div>
                 <div class="col-lg-5">
@@ -124,11 +124,19 @@ include __DIR__ . '/header.php';
                                         <h4 class="title"><a href="<?= url_for('Customer/single-product.php?ref=' . urlencode($product->get('r'))) ?>" tabindex="0"><?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?></a></h4>
                                         <span class="price"><strong>Prix :</strong> <?= number_format((float) $product->get('p'), 2, '.', ' ') ?> Dhs</span>
                                     </div>
-                                    <div class="product-item__action">
-                                        <button class="btn-add-to-cart" tabindex="0"><i class="ion-bag"></i></button>
-                                        <button class="btn-add-to-cart" tabindex="0"><i class="ion-ios-loop-strong"></i></button>
-                                        <button class="btn-add-to-cart" tabindex="0"><i class="ion-ios-heart-outline"></i></button>
-                                        <button class="btn-add-to-cart" tabindex="0"><i class="ion-eye"></i></button>
+                                    <div class="product-item__action" role="group" aria-label="Actions rapides">
+                                        <button class="btn-add-to-cart" type="button" aria-label="Ajouter <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?> au panier">
+                                            <i class="ion-bag" aria-hidden="true"></i>
+                                        </button>
+                                        <button class="btn-add-to-cart" type="button" aria-label="Comparer <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?>">
+                                            <i class="ion-ios-loop-strong" aria-hidden="true"></i>
+                                        </button>
+                                        <button class="btn-add-to-cart" type="button" aria-label="Ajouter <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?> aux favoris">
+                                            <i class="ion-ios-heart-outline" aria-hidden="true"></i>
+                                        </button>
+                                        <button class="btn-add-to-cart" type="button" aria-label="Voir les détails de <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?>">
+                                            <i class="ion-eye" aria-hidden="true"></i>
+                                        </button>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
@@ -171,11 +179,19 @@ include __DIR__ . '/header.php';
                                             <h4 class="title"><a href="<?= url_for('Customer/single-product.php?ref=' . urlencode($product->get('r'))) ?>" tabindex="0"><?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?></a></h4>
                                             <span class="price"><strong>Prix :</strong> <?= number_format((float) $product->get('p'), 2, '.', ' ') ?> Dhs</span>
                                         </div>
-                                        <div class="product-item__action">
-                                            <button class="btn-add-to-cart" tabindex="0"><i class="ion-bag"></i></button>
-                                            <button class="btn-add-to-cart" tabindex="0"><i class="ion-ios-loop-strong"></i></button>
-                                            <button class="btn-add-to-cart" tabindex="0"><i class="ion-ios-heart-outline"></i></button>
-                                            <button class="btn-add-to-cart" tabindex="0"><i class="ion-eye"></i></button>
+                                        <div class="product-item__action" role="group" aria-label="Actions rapides">
+                                            <button class="btn-add-to-cart" type="button" aria-label="Ajouter <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?> au panier">
+                                                <i class="ion-bag" aria-hidden="true"></i>
+                                            </button>
+                                            <button class="btn-add-to-cart" type="button" aria-label="Comparer <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?>">
+                                                <i class="ion-ios-loop-strong" aria-hidden="true"></i>
+                                            </button>
+                                            <button class="btn-add-to-cart" type="button" aria-label="Ajouter <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?> aux favoris">
+                                                <i class="ion-ios-heart-outline" aria-hidden="true"></i>
+                                            </button>
+                                            <button class="btn-add-to-cart" type="button" aria-label="Voir les détails de <?= htmlspecialchars($product->get('l'), ENT_QUOTES, 'UTF-8') ?>">
+                                                <i class="ion-eye" aria-hidden="true"></i>
+                                            </button>
                                         </div>
                                     </div>
                                 <?php endforeach; ?>
