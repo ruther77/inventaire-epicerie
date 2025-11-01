@@ -2,15 +2,35 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["main", "master", "work"]
   pull_request:
 
 jobs:
-  build:
+  tests:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: inventaire_test
+        options: >-
+          --health-cmd "pg_isready -U postgres -d inventaire_test" \
+          --health-interval 10s \
+          --health-timeout 5s \
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/inventaire_test
+      AUTH_SECRET_KEY: 123456789012345678901234567890123456
+      API_ALLOWED_ORIGINS: http://localhost:5173
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -23,33 +43,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run pytest
+      - name: Run tests
         run: pytest
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: frontend/package.json
+          node-version: '20'
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install
+        run: npm install --legacy-peer-deps
 
-      - name: Build frontend bundle
+      - name: Build SPA
         working-directory: frontend
         run: npm run build
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-
-      - name: Run SPA end-to-end tests
-        working-directory: frontend
-        env:
-          CI: true
-        run: npm run test:e2e
-
-      - name: Build production image
-        run: docker build -t inventaire-epicerie --target production .

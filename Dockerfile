@@ -15,7 +15,12 @@ RUN pip install --no-cache-dir --timeout 120 -r requirements.txt
 # --- STAGE 2 : FINAL (Production) ---
 FROM public.ecr.aws/docker/library/python:3.11-slim AS final
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_PROCESS=streamlit \
+    STREAMLIT_SERVER_PORT=8501 \
+    API_PORT=8000
+
 WORKDIR /app
 
 # 1. Installation des librairies d'exécution (minimales)
@@ -30,5 +35,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # 3. Copie du code source (application complète)
 COPY . .
 
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+# 4. Point d'entrée multi-process (Streamlit, FastAPI, workers)
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8501 8000
+ENTRYPOINT ["/entrypoint.sh"]
