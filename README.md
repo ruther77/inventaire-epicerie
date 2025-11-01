@@ -188,6 +188,10 @@ dispose des éléments suivants :
    l'ancienne application via l'iframe « Outils Streamlit » tant que certaines
    fonctionnalités n'ont pas été portées.
 
+   > ℹ️ Si `uvicorn` signale l'absence du module `fastapi`, (ré)exécutez
+   > `pip install -r requirements.txt` ou `pip install -r requirements-dev.txt`
+   > dans l'environnement virtuel actif avant de relancer le serveur.
+
 ### Importer des produits
 
 Un Makefile facilite l'import CSV :
