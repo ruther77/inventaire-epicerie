@@ -1,0 +1,107 @@
+:root {
+  --ds-font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ds-color-text: #1f2933;
+  --ds-color-muted: #52606d;
+  --ds-color-border: rgba(15, 23, 42, 0.08);
+  --ds-color-surface: #ffffff;
+  --ds-color-surface-alt: #f5f7fb;
+  --ds-color-primary: #2563eb;
+  --ds-color-primary-strong: #1d4ed8;
+  --ds-color-accent: #f97316;
+  --ds-radius-md: 12px;
+  --ds-radius-sm: 8px;
+  --ds-shadow-sm: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+body {
+  font-family: var(--ds-font-family);
+  color: var(--ds-color-text);
+}
+
+.ds-surface {
+  background: var(--ds-color-surface);
+  border-radius: var(--ds-radius-md);
+  border: 1px solid var(--ds-color-border);
+  box-shadow: var(--ds-shadow-sm);
+}
+
+.ds-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-stack-gap, 1rem);
+}
+
+.ds-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  border-radius: var(--ds-radius-sm);
+  border: 1px solid transparent;
+  font-weight: 600;
+  background: var(--ds-color-primary);
+  color: #fff;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.2);
+}
+
+.ds-button:hover {
+  background: var(--ds-color-primary-strong);
+  transform: translateY(-1px);
+}
+
+.ds-button:active {
+  transform: translateY(0);
+  box-shadow: 0 3px 12px rgba(37, 99, 235, 0.18);
+}
+
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  background: var(--ds-color-surface-alt);
+  color: var(--ds-color-muted);
+}
+
+.ds-badge[data-variant="new"] {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--ds-color-primary-strong);
+}
+
+.ds-badge[data-variant="promo"] {
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--ds-color-accent);
+}
+
+.ds-badge[data-variant="count"] {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0e7490;
+}
+
+.ds-badge[data-variant="warning"] {
+  background: rgba(250, 204, 21, 0.14);
+  color: #92400e;
+}
+
+.ds-card {
+  padding: 1.25rem;
+  background: var(--ds-color-surface);
+  border-radius: var(--ds-radius-md);
+  border: 1px solid var(--ds-color-border);
+  box-shadow: var(--ds-shadow-sm);
+}
+
+.ds-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.ds-card p {
+  margin: 0;
+  color: var(--ds-color-muted);
+}

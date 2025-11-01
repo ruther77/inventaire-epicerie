@@ -1,5 +1,6 @@
 import importlib.util
 from decimal import Decimal
+import importlib
 from pathlib import Path
 import sys
 
@@ -17,6 +18,9 @@ inventory_service = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(inventory_service)
 
 import cart_normalizer
+
+
+sales_module = importlib.import_module("services.sales")
 
 
 class DummyScalarResult:
@@ -64,6 +68,12 @@ class DummyEngine:
         return DummyContext(self.connection)
 
 
+def _use_sale_service(monkeypatch, engine):
+    monkeypatch.setattr(sales_module, "text", lambda sql: sql)
+    monkeypatch.setattr(sales_module, "instrument_sqlalchemy_engine", lambda _engine: None)
+    inventory_service.set_sale_service(sales_module.SaleService(lambda: engine))
+
+
 def test_process_sale_transaction_returns_false_for_empty_cart():
     success, message, receipt = inventory_service.process_sale_transaction([], "user")
 
@@ -85,8 +95,7 @@ def test_process_sale_transaction_fails_when_stock_insufficient(monkeypatch):
 
     connection = DummyConnection(handler)
     engine = DummyEngine(connection)
-    monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
-    monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
+    _use_sale_service(monkeypatch, engine)
 
     success, message, receipt = inventory_service.process_sale_transaction([
         {"id": 1, "qty": 5}
@@ -119,8 +128,7 @@ def test_process_sale_transaction_updates_stock_without_trigger(monkeypatch):
 
     connection = DummyConnection(handler)
     engine = DummyEngine(connection)
-    monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
-    monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
+    _use_sale_service(monkeypatch, engine)
 
     success, message, receipt = inventory_service.process_sale_transaction([
         {"id": 3, "qty": 4}
@@ -153,8 +161,7 @@ def test_process_sale_transaction_handles_legacy_cart_keys(monkeypatch):
 
     connection = DummyConnection(handler)
     engine = DummyEngine(connection)
-    monkeypatch.setattr(inventory_service, "get_engine", lambda: engine)
-    monkeypatch.setattr(inventory_service, "text", lambda sql: sql)
+    _use_sale_service(monkeypatch, engine)
 
     legacy_cart = [
         {
