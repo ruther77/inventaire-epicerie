@@ -7,9 +7,12 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from domain.catalogue import load_active_products_map
+from domain.sales import process_sale_transaction
+
 from ..security import get_current_active_user
 from .schemas import CheckoutRequest, CheckoutResponse, POSCartLine
-from .utils import as_decimal, get_main_module, quantize_currency
+from .utils import as_decimal, quantize_currency
 
 router = APIRouter(prefix="/pos", tags=["pos"])
 
@@ -19,7 +22,7 @@ def _prepare_checkout_payload(cart: list[POSCartLine]) -> tuple[list[dict[str, o
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le panier est vide.")
 
     product_ids = {line.id for line in cart}
-    product_map = get_main_module()._load_active_products_map(product_ids)
+    product_map = load_active_products_map(product_ids)
     missing = sorted(pid for pid in product_ids if pid not in product_map)
     if missing:
         raise HTTPException(
@@ -63,7 +66,7 @@ def _prepare_checkout_payload(cart: list[POSCartLine]) -> tuple[list[dict[str, o
 @router.post("/checkout", response_model=CheckoutResponse)
 def checkout(payload: CheckoutRequest, current_user: dict = Depends(get_current_active_user)) -> CheckoutResponse:
     sanitized_cart, total_ht, total_ttc = _prepare_checkout_payload(payload.cart)
-    success, message, receipt = get_main_module().process_sale_transaction(
+    success, message, receipt = process_sale_transaction(
         sanitized_cart,
         current_user.get("username") or "api_user",
     )

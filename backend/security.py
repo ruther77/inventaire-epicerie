@@ -12,7 +12,8 @@ import secrets
 import jwt
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from importlib import import_module
+
+from data_repository import fetch_user_by_username
 
 from .settings import APISettings, get_settings
 
@@ -110,7 +111,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security
     if username is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Jeton invalide")
 
-    fetch_user_by_username = import_module("backend.main").fetch_user_by_username
     user = fetch_user_by_username(username)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur inconnu")
