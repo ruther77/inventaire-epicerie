@@ -1,0 +1,138 @@
+"""Authentication helpers shared across API routers."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+from datetime import datetime, timedelta, timezone
+from typing import Any
+import secrets
+
+import jwt
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from importlib import import_module
+
+from .settings import APISettings, get_settings
+
+
+token_bearer = HTTPBearer(auto_error=False)
+
+
+class InvalidTokenError(Exception):
+    """Raised when an authentication token cannot be validated."""
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode((data + padding).encode("ascii"))
+
+
+def get_password_hash(password: str, settings: APISettings | None = None) -> str:
+    cfg = settings or get_settings()
+    salt = secrets.token_bytes(cfg.password_salt_bytes)
+    derived = hashlib.pbkdf2_hmac(
+        cfg.password_algorithm,
+        password.encode("utf-8"),
+        salt,
+        cfg.auth_pbkdf2_iterations,
+    )
+    return (
+        f"pbkdf2_{cfg.password_algorithm}$"
+        f"{cfg.auth_pbkdf2_iterations}$"
+        f"{_b64url_encode(salt)}$"
+        f"{_b64url_encode(derived)}"
+    )
+
+
+def verify_password(plain_password: str, hashed_password: str, settings: APISettings | None = None) -> bool:
+    cfg = settings or get_settings()
+    try:
+        scheme, iterations_text, salt_segment, hash_segment = hashed_password.split("$", 3)
+    except ValueError:
+        return False
+
+    if scheme != f"pbkdf2_{cfg.password_algorithm}":
+        return False
+
+    try:
+        iterations = int(iterations_text)
+    except ValueError:
+        return False
+
+    salt = _b64url_decode(salt_segment)
+    stored_hash = _b64url_decode(hash_segment)
+    computed = hashlib.pbkdf2_hmac(
+        cfg.password_algorithm,
+        plain_password.encode("utf-8"),
+        salt,
+        iterations,
+    )
+    return hmac.compare_digest(stored_hash, computed)
+
+
+def create_access_token(data: dict[str, Any], settings: APISettings | None = None, *, expires_delta: timedelta | None = None) -> str:
+    cfg = settings or get_settings()
+    to_encode = data.copy()
+    expire_delta = expires_delta or timedelta(minutes=cfg.access_token_expire_minutes)
+    expire = datetime.now(timezone.utc) + expire_delta
+    to_encode["exp"] = expire
+    return jwt.encode(to_encode, cfg.auth_secret_key, algorithm="HS256")
+
+
+def decode_access_token(token: str, settings: APISettings | None = None) -> dict[str, Any]:
+    cfg = settings or get_settings()
+    try:
+        payload = jwt.decode(token, cfg.auth_secret_key, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError as exc:
+        raise InvalidTokenError("jeton expiré") from exc
+    except jwt.InvalidTokenError as exc:
+        raise InvalidTokenError("jeton invalide") from exc
+    return payload
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(token_bearer)) -> dict:
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentification requise")
+
+    token = credentials.credentials
+    try:
+        payload = decode_access_token(token)
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Jeton invalide") from exc
+
+    username: str | None = payload.get("sub")
+    if username is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Jeton invalide")
+
+    fetch_user_by_username = import_module("backend.main").fetch_user_by_username
+    user = fetch_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur inconnu")
+    if not user.get("is_active"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Compte utilisateur inactif")
+
+    return public_user(user)
+
+
+def get_current_active_user(current_user: dict = Depends(get_current_user)) -> dict:
+    return current_user
+
+
+def require_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Droits administrateur requis")
+    return current_user
+
+
+def public_user(user: dict) -> dict:
+    return {
+        key: user.get(key)
+        for key in ("id", "username", "email", "full_name", "role", "is_active", "created_at", "updated_at")
+        if key in user
+    }
