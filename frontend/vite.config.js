@@ -2,6 +2,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
+const appHistoryFallback = {
+  disableDotRule: true,
+  rewrites: [{ from: /^\/app(?:\/.*)?$/, to: '/app/index.html' }],
+};
+
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -13,9 +18,11 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
+    historyApiFallback: appHistoryFallback,
   },
   preview: {
     port: 5173,
+    historyApiFallback: appHistoryFallback,
   },
   build: {
     rollupOptions: {
