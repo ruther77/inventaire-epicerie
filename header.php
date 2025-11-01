@@ -19,6 +19,42 @@ $quickFilters = array_slice(array_map(static function ($category) {
     ];
 }, $categoryList), 0, 6);
 
+$categoryPreviews = [];
+foreach ($categoryList as $index => $category) {
+    $name = $category->get('n');
+    $categoryPreviews[] = [
+        'label' => $name,
+        'url' => url_for('Customer/shop.php?id=' . urlencode($name)),
+        'summary' => 'Voir les nouveautés, promotions et top ventes de la catégorie « ' . $name . ' ».',
+        'badge' => $badgeCycle[$index % count($badgeCycle)],
+    ];
+}
+
+$initialPreview = $categoryPreviews[0] ?? [
+    'label' => 'Catégorie',
+    'url' => '#',
+    'summary' => 'Sélectionnez une catégorie pour afficher sa description.',
+    'badge' => $badgeCycle[0],
+];
+
+$primaryShortcuts = [
+    [
+        'label' => 'Commandes',
+        'url' => url_for('Customer/orders.php'),
+        'icon' => 'bi-receipt-cutoff',
+    ],
+    [
+        'label' => 'Panier',
+        'url' => url_for('Customer/cart.php'),
+        'icon' => 'bi-bag',
+    ],
+    [
+        'label' => 'Favoris',
+        'url' => url_for('Customer/favorites.php'),
+        'icon' => 'bi-heart',
+    ],
+];
+
 $cartCount = isset($_SESSION['cart_items']) && is_array($_SESSION['cart_items']) ? count($_SESSION['cart_items']) : 0;
 $wishlistCount = isset($_SESSION['wishlist']) && is_array($_SESSION['wishlist']) ? count($_SESSION['wishlist']) : 0;
 
@@ -214,10 +250,6 @@ $utilityLinks = [
                             <a class="workspace-header__logo" href="<?= url_for('Customer/home.php') ?>">
                                 <img src="<?= asset('assets/images/logo/logo-jell.png') ?>" height="30" alt="Logo Jellouli">
                             </a>
-                            <button class="workspace-header__switch d-none d-lg-inline-flex align-items-center" type="button" aria-expanded="false" aria-controls="workspacePanel" data-workspace-toggle>
-                                <i class="bi bi-layout-text-sidebar-reverse me-2"></i>
-                                Espace navigation
-                            </button>
                         </div>
                         <div class="workspace-header__cluster">
                             <div class="workspace-primary" data-mega-menu id="megaMenu">
