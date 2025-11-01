@@ -1,6 +1,6 @@
 """Domain routers for the FastAPI application."""
 
-from fastapi import APIRouter
+from .._fastapi_compat import APIRouter
 
 from . import auth, categories, clients, health, inventory, orders, pos, procurements, products, suppliers, users
 

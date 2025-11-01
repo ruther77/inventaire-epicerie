@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from .._fastapi_compat import APIRouter, HTTPException, status
 
 from data_repository import fetch_user_by_username
 

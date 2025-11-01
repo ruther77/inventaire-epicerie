@@ -1,6 +1,6 @@
 """Healthcheck endpoint."""
 
-from fastapi import APIRouter
+from .._fastapi_compat import APIRouter
 
 router = APIRouter(tags=["health"])
 

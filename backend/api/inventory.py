@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from .._fastapi_compat import APIRouter, Depends
 
 from data_repository import query_df
 

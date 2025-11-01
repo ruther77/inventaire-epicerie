@@ -10,8 +10,14 @@ from typing import Any
 import secrets
 
 import jwt
-from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from ._fastapi_compat import (
+    Depends,
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    HTTPException,
+    Security,
+    status,
+)
 
 from data_repository import fetch_user_by_username
 

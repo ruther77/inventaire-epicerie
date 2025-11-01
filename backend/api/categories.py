@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from .._fastapi_compat import APIRouter, Depends, HTTPException, Response, status
 
 from data_repository import (
     create_category_record,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from .._fastapi_compat import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from data_repository import create_order_record, list_orders as repository_list_orders, update_order_record

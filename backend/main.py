@@ -6,14 +6,7 @@ import importlib.util
 
 from dotenv import load_dotenv
 
-if importlib.util.find_spec("fastapi") is None:  # pragma: no cover - guard for runtime failures
-    raise ModuleNotFoundError(
-        "FastAPI is required to run the inventory API. Install dependencies with "
-        "`pip install -r requirements.txt` before starting the server."
-    )
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from ._fastapi_compat import CORSMiddleware, FastAPI
 
 # Ensure environment variables from a local .env file are available before
 # importing modules that resolve the database configuration at import time.
