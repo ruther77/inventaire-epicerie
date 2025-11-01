@@ -4,6 +4,7 @@ import os
 import io
 import math
 import re
+import json
 from datetime import datetime
 from contextlib import contextmanager
 from html import escape
@@ -102,10 +103,41 @@ def apply_ui_theme(theme_key: str) -> None:
 
 
 # --- NAVIGATION MEGA MENU (Streamlit) ---
+_PAGE_KEYS = [
+    "showcase",
+    "supply",
+    "pos",
+    "catalog",
+    "movements",
+    "audit",
+    "dashboard",
+    "scanner",
+    "extract",
+    "import",
+    "admin",
+]
+
+_PAGE_KEY_TO_INDEX = {key: idx for idx, key in enumerate(_PAGE_KEYS)}
+
 _NAV_SHORTCUTS = [
-    {"label": "Approvisionnement", "icon": "bi-truck", "tab_index": 1},
-    {"label": "Vente (PoS)", "icon": "bi-bag", "tab_index": 2},
-    {"label": "Dashboard", "icon": "bi-speedometer2", "tab_index": 6},
+    {
+        "label": "Approvisionnement",
+        "icon": "bi-truck",
+        "tab_index": _PAGE_KEY_TO_INDEX["supply"],
+        "page_key": "supply",
+    },
+    {
+        "label": "Vente (PoS)",
+        "icon": "bi-bag",
+        "tab_index": _PAGE_KEY_TO_INDEX["pos"],
+        "page_key": "pos",
+    },
+    {
+        "label": "Dashboard",
+        "icon": "bi-speedometer2",
+        "tab_index": _PAGE_KEY_TO_INDEX["dashboard"],
+        "page_key": "dashboard",
+    },
 ]
 
 _NAV_SECTIONS = [
@@ -119,31 +151,50 @@ _NAV_SECTIONS = [
                 "label": "Vitrine produits",
                 "description": "Aperçu client, ventes et mises en avant.",
                 "badge": "Rayons",
-                "tab_index": 0,
+                "tab_index": _PAGE_KEY_TO_INDEX["showcase"],
+                "page_key": "showcase",
             },
             {
                 "label": "Catalogue",
                 "description": "Gestion détaillée des fiches et options produits.",
                 "badge": "Catalogue",
-                "tab_index": 3,
+                "tab_index": _PAGE_KEY_TO_INDEX["catalog"],
+                "page_key": "catalog",
             },
             {
                 "label": "Stock & mouvements",
                 "description": "Flux, projections et alertes de ruptures.",
                 "badge": "Stock",
-                "tab_index": 4,
+                "tab_index": _PAGE_KEY_TO_INDEX["movements"],
+                "page_key": "movements",
             },
             {
                 "label": "Audit & écarts",
                 "description": "Suivi des écarts inventaires et plans d'actions.",
                 "badge": "Audit",
-                "tab_index": 5,
+                "tab_index": _PAGE_KEY_TO_INDEX["audit"],
+                "page_key": "audit",
             },
         ],
         "links": [
-            {"label": "Top ventes", "icon": "bi-graph-up", "tab_index": 0},
-            {"label": "Produits critiques", "icon": "bi-exclamation-octagon", "tab_index": 4},
-            {"label": "Plans d'audit", "icon": "bi-clipboard-check", "tab_index": 5},
+            {
+                "label": "Top ventes",
+                "icon": "bi-graph-up",
+                "tab_index": _PAGE_KEY_TO_INDEX["showcase"],
+                "page_key": "showcase",
+            },
+            {
+                "label": "Produits critiques",
+                "icon": "bi-exclamation-octagon",
+                "tab_index": _PAGE_KEY_TO_INDEX["movements"],
+                "page_key": "movements",
+            },
+            {
+                "label": "Plans d'audit",
+                "icon": "bi-clipboard-check",
+                "tab_index": _PAGE_KEY_TO_INDEX["audit"],
+                "page_key": "audit",
+            },
         ],
     },
     {
@@ -156,31 +207,50 @@ _NAV_SECTIONS = [
                 "label": "Approvisionnement",
                 "description": "Commandes fournisseurs et réassorts.",
                 "badge": "Achats",
-                "tab_index": 1,
+                "tab_index": _PAGE_KEY_TO_INDEX["supply"],
+                "page_key": "supply",
             },
             {
                 "label": "Vente (PoS)",
                 "description": "Encaissement rapide et gestion panier.",
                 "badge": "Caisse",
-                "tab_index": 2,
+                "tab_index": _PAGE_KEY_TO_INDEX["pos"],
+                "page_key": "pos",
             },
             {
                 "label": "Dashboard",
                 "description": "Pilotage global et indicateurs clés.",
                 "badge": "Pilotage",
-                "tab_index": 6,
+                "tab_index": _PAGE_KEY_TO_INDEX["dashboard"],
+                "page_key": "dashboard",
             },
             {
                 "label": "Maintenance & Admin",
                 "description": "Tâches de support et outils techniques.",
                 "badge": "Admin",
-                "tab_index": 10,
+                "tab_index": _PAGE_KEY_TO_INDEX["admin"],
+                "page_key": "admin",
             },
         ],
         "links": [
-            {"label": "Scanner codes-barres", "icon": "bi-upc-scan", "tab_index": 7},
-            {"label": "Extraction facture", "icon": "bi-receipt-cutoff", "tab_index": 8},
-            {"label": "Importation catalogues", "icon": "bi-cloud-upload", "tab_index": 9},
+            {
+                "label": "Scanner codes-barres",
+                "icon": "bi-upc-scan",
+                "tab_index": _PAGE_KEY_TO_INDEX["scanner"],
+                "page_key": "scanner",
+            },
+            {
+                "label": "Extraction facture",
+                "icon": "bi-receipt-cutoff",
+                "tab_index": _PAGE_KEY_TO_INDEX["extract"],
+                "page_key": "extract",
+            },
+            {
+                "label": "Importation catalogues",
+                "icon": "bi-cloud-upload",
+                "tab_index": _PAGE_KEY_TO_INDEX["import"],
+                "page_key": "import",
+            },
         ],
     },
 ]
@@ -195,10 +265,24 @@ def render_workspace_navigation() -> None:
             label = escape(shortcut["label"])
             icon = escape(shortcut["icon"])
             tab_index = shortcut.get("tab_index", 0)
+            page_key = shortcut.get("page_key")
+            data_page = (
+                f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
+            )
+            href = f"?page={escape(page_key)}" if page_key else "#"
             parts.append(
-                f"<button class=\"workspace-shortcut\" type=\"button\" "
-                f"data-tab-target=\"{tab_index}\"><span class=\"workspace-shortcut__icon\">"
-                f"<i class=\"bi {icon}\"></i></span><span class=\"workspace-shortcut__label\">{label}</span></button>"
+                "".join(
+                    [
+                        f"<a class=\"workspace-shortcut\" href=\"{href}\" data-tab-target=\"{tab_index}\"",
+                        data_page,
+                        ">",
+                        "<span class=\"workspace-shortcut__icon\"><i class=\"bi ",
+                        f"{icon}",
+                        "\"></i></span>",
+                        f"<span class=\"workspace-shortcut__label\">{label}</span>",
+                        "</a>",
+                    ]
+                )
             )
         return "".join(parts)
 
@@ -220,6 +304,11 @@ def render_workspace_navigation() -> None:
                 description = escape(item["description"])
                 badge = escape(item.get("badge", ""))
                 tab_index = item.get("tab_index", 0)
+                page_key = item.get("page_key")
+                page_data = (
+                    f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
+                )
+                href = f"?page={escape(page_key)}" if page_key else "#"
                 badge_markup = (
                     f"<span class=\"badge workspace-preview__badge\">{badge}</span>" if badge else ""
                 )
@@ -227,7 +316,7 @@ def render_workspace_navigation() -> None:
                     "".join(
                         [
                             "<li class=\"workspace-preview__item\">",
-                            f"<a class=\"workspace-preview__link\" href=\"#\" data-tab-target=\"{tab_index}\">",
+                            f"<a class=\"workspace-preview__link\" href=\"{href}\" data-tab-target=\"{tab_index}\"{page_data}>",
                             "<span class=\"workspace-preview__icon\"><i class=\"bi bi-arrow-up-right\"></i></span>",
                             "<span class=\"workspace-preview__content\">",
                             f"<span class=\"workspace-preview__label\">{label}{badge_markup}</span>",
@@ -242,11 +331,21 @@ def render_workspace_navigation() -> None:
                 label = escape(link["label"])
                 icon = escape(link.get("icon", "bi-arrow-right-short"))
                 tab_index = link.get("tab_index", 0)
+                page_key = link.get("page_key")
+                page_data = (
+                    f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
+                )
+                href = f"?page={escape(page_key)}" if page_key else "#"
                 link_parts.append(
                     "".join(
                         [
-                            "<li><a class=\"workspace-preview__secondary-link\" href=\"#\" ",
-                            f"data-tab-target=\"{tab_index}\"><i class=\"bi {icon}\"></i>",
+                            "<li><a class=\"workspace-preview__secondary-link\" href=\"",
+                            href,
+                            "\" data-tab-target=\"",
+                            str(tab_index),
+                            "\"",
+                            page_data,
+                            f"><i class=\"bi {icon}\"></i>",
                             f"<span>{label}</span></a></li>",
                         ]
                     )
@@ -306,143 +405,228 @@ def render_workspace_navigation() -> None:
         "</section>",
     ]
 
-    script = f"""
+    page_keys_json = json.dumps(_PAGE_KEYS)
+
+    script = """
     <script>
-    (function() {{
+    (function() {
         const localDoc = window.document;
-        const rootDoc = window.parent.document || document;
+        const rootWindow = (window.parent && window.parent !== window) ? window.parent : window;
+        let rootDoc;
+        try {
+            rootDoc = rootWindow.document || document;
+        } catch (error) {
+            rootDoc = document;
+        }
         const navRoot = localDoc.getElementById('workspaceNavRoot');
-        if (!navRoot) {{
+        if (!navRoot) {
             return;
-        }}
+        }
 
         const overlay = navRoot.querySelector('[data-mega-overlay]');
         const triggers = navRoot.querySelectorAll('[data-mega-trigger]');
         const panels = navRoot.querySelectorAll('[data-mega-panel]');
         let activeId = null;
         let primaryContainer = null;
+        const pageKeys = __PAGE_KEYS__;
+        let currentPageKey = null;
+        let skipHistoryUpdate = false;
 
-        function setActive(id) {{
+        function pageKeyForIndex(index) {
+            return (index >= 0 && index < pageKeys.length) ? pageKeys[index] : null;
+        }
+
+        function indexForPageKey(pageKey) {
+            if (!pageKey) {
+                return -1;
+            }
+            return pageKeys.indexOf(pageKey);
+        }
+
+        function updateHistory(pageKey, isInitialUpdate) {
+            if (!pageKey) {
+                return;
+            }
+            try {
+                const url = new URL(rootWindow.location.href);
+                url.searchParams.set('page', pageKey);
+                if (isInitialUpdate) {
+                    rootWindow.history.replaceState(null, '', url.toString());
+                } else {
+                    rootWindow.history.pushState(null, '', url.toString());
+                }
+            } catch (historyError) {
+                console.warn('Navigation history update failed', historyError);
+            }
+        }
+
+        function setActive(id) {
             activeId = id;
-            triggers.forEach((trigger) => {{
+            triggers.forEach((trigger) => {
                 const targetId = trigger.getAttribute('data-mega-target');
                 const isActive = targetId === id;
                 trigger.classList.toggle('is-active', isActive);
                 trigger.setAttribute('aria-expanded', String(isActive));
-            }});
-            panels.forEach((panel) => {{
-                const isActive = panel.id === `mega-panel-${{id}}`;
+            });
+            panels.forEach((panel) => {
+                const isActive = panel.id === 'mega-panel-' + id;
                 panel.classList.toggle('is-active', isActive);
                 panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
-            }});
+            });
             navRoot.classList.toggle('has-active', Boolean(id));
-        }}
+        }
 
-        function closeMega() {{
+        function closeMega() {
             setActive(null);
-        }}
+        }
 
-        triggers.forEach((trigger) => {{
-            trigger.addEventListener('click', (event) => {{
+        triggers.forEach((trigger) => {
+            trigger.addEventListener('click', (event) => {
                 event.preventDefault();
                 const targetId = trigger.getAttribute('data-mega-target');
                 setActive(activeId === targetId ? null : targetId);
-            }});
-        }});
+            });
+        });
 
-        if (overlay) {{
+        if (overlay) {
             overlay.addEventListener('click', closeMega);
-        }}
+        }
 
-        rootDoc.addEventListener('keydown', (event) => {{
-            if (event.key === 'Escape') {{
+        rootDoc.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
                 closeMega();
-            }}
-        }});
+            }
+        });
 
-        function findPrimaryContainer() {{
-            if (primaryContainer && rootDoc.body.contains(primaryContainer)) {{
+        function findPrimaryContainer() {
+            if (primaryContainer && rootDoc.body.contains(primaryContainer)) {
                 return primaryContainer;
-            }}
+            }
             const containers = rootDoc.querySelectorAll('div[data-testid="stTabs"]');
-            for (const container of containers) {{
+            for (const container of containers) {
                 const buttons = Array.from(container.querySelectorAll('button[role="tab"]'));
                 const labels = buttons.map((btn) => btn.textContent.trim());
-                if (labels.includes('Vitrine') && labels.includes('Maintenance (Admin)')) {{
+                if (labels.includes('Vitrine') && labels.includes('Maintenance (Admin)')) {
                     container.classList.add('workspace-tab-host');
                     primaryContainer = container;
                     return container;
-                }}
-            }}
+                }
+            }
             primaryContainer = null;
             return null;
-        }}
+        }
 
-        function getTabButtons() {{
+        function getTabButtons() {
             const container = findPrimaryContainer();
-            if (!container) {{
+            if (!container) {
                 return [];
-            }}
+            }
             return Array.from(container.querySelectorAll('button[role="tab"]'));
-        }}
+        }
 
-        function activateTab(index) {{
+        function activateTab(index) {
             const buttons = getTabButtons();
-            if (buttons[index]) {{
+            if (buttons[index]) {
                 buttons[index].click();
                 setTimeout(syncActiveNav, 80);
                 closeMega();
-            }}
-        }}
+            }
+        }
 
-        function syncActiveNav() {{
+        function syncActiveNav() {
             const buttons = getTabButtons();
             let activeIndex = buttons.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
-            if (activeIndex === -1) {{
+            if (activeIndex === -1) {
                 activeIndex = buttons.findIndex((btn) => btn.classList.contains('st-emotion-cache-1v0mbdj'));
-            }}
-            navRoot.querySelectorAll('[data-tab-target]').forEach((el) => {{
+            }
+            navRoot.querySelectorAll('[data-tab-target]').forEach((el) => {
                 const target = Number(el.getAttribute('data-tab-target'));
                 el.classList.toggle('is-active', target === activeIndex);
-            }});
-        }}
+            });
 
-        function setupObserver(container) {{
-            if (!container) {{
+            const pageKey = pageKeyForIndex(activeIndex);
+            if (pageKey) {
+                if (skipHistoryUpdate) {
+                    currentPageKey = pageKey;
+                } else if (pageKey !== currentPageKey) {
+                    const isInitialUpdate = currentPageKey === null;
+                    updateHistory(pageKey, isInitialUpdate);
+                    currentPageKey = pageKey;
+                }
+            }
+
+            skipHistoryUpdate = false;
+        }
+
+        function setupObserver(container) {
+            if (!container) {
                 return;
-            }}
+            }
             const tablist = container.querySelector('[role="tablist"]');
-            if (tablist) {{
+            if (tablist) {
                 tablist.classList.add('workspace-tabs--hidden');
-            }}
+            }
             const observer = new MutationObserver(syncActiveNav);
-            observer.observe(container, {{ attributes: true, subtree: true, attributeFilter: ['aria-selected'] }});
-        }}
+            observer.observe(container, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
+        }
 
-        function init() {{
+        let initialised = false;
+
+        function init() {
             const container = findPrimaryContainer();
-            if (!container) {{
+            if (!container) {
                 setTimeout(init, 200);
                 return;
-            }}
+            }
             setupObserver(container);
+            if (!initialised) {
+                initialised = true;
+                try {
+                    const params = new URLSearchParams(rootWindow.location.search || '');
+                    const initialKey = params.get('page');
+                    const initialIndex = indexForPageKey(initialKey);
+                    if (initialIndex >= 0) {
+                        skipHistoryUpdate = true;
+                        activateTab(initialIndex);
+                        return;
+                    }
+                } catch (error) {
+                    console.warn('Failed to read initial page from URL', error);
+                }
+            }
             syncActiveNav();
-        }}
+        }
 
-        navRoot.querySelectorAll('[data-tab-target]').forEach((element) => {{
-            element.addEventListener('click', (event) => {{
+        navRoot.querySelectorAll('[data-tab-target]').forEach((element) => {
+            element.addEventListener('click', (event) => {
                 event.preventDefault();
                 const target = Number(element.getAttribute('data-tab-target'));
-                if (!Number.isNaN(target)) {{
+                if (!Number.isNaN(target)) {
+                    skipHistoryUpdate = false;
                     activateTab(target);
-                }}
-            }});
-        }});
+                }
+            });
+        });
+
+        rootWindow.addEventListener('popstate', () => {
+            try {
+                const params = new URLSearchParams(rootWindow.location.search || '');
+                const pageKey = params.get('page');
+                const index = indexForPageKey(pageKey);
+                if (index >= 0) {
+                    skipHistoryUpdate = true;
+                    activateTab(index);
+                }
+            } catch (error) {
+                console.warn('Failed to handle navigation popstate', error);
+            }
+        });
 
         init();
-    }})();
+    })();
     </script>
     """
+    script = script.replace("__PAGE_KEYS__", page_keys_json)
 
     st.markdown("\n".join(html_parts) + script, unsafe_allow_html=True)
 
