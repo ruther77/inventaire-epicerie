@@ -19,6 +19,42 @@ $quickFilters = array_slice(array_map(static function ($category) {
     ];
 }, $categoryList), 0, 6);
 
+$categoryPreviews = [];
+foreach ($categoryList as $index => $category) {
+    $name = $category->get('n');
+    $categoryPreviews[] = [
+        'label' => $name,
+        'url' => url_for('Customer/shop.php?id=' . urlencode($name)),
+        'summary' => 'Voir les nouveautés, promotions et top ventes de la catégorie « ' . $name . ' ».',
+        'badge' => $badgeCycle[$index % count($badgeCycle)],
+    ];
+}
+
+$initialPreview = $categoryPreviews[0] ?? [
+    'label' => 'Catégorie',
+    'url' => '#',
+    'summary' => 'Sélectionnez une catégorie pour afficher sa description.',
+    'badge' => $badgeCycle[0],
+];
+
+$primaryShortcuts = [
+    [
+        'label' => 'Commandes',
+        'url' => url_for('Customer/orders.php'),
+        'icon' => 'bi-receipt-cutoff',
+    ],
+    [
+        'label' => 'Panier',
+        'url' => url_for('Customer/cart.php'),
+        'icon' => 'bi-bag',
+    ],
+    [
+        'label' => 'Favoris',
+        'url' => url_for('Customer/favorites.php'),
+        'icon' => 'bi-heart',
+    ],
+];
+
 $cartCount = isset($_SESSION['cart_items']) && is_array($_SESSION['cart_items']) ? count($_SESSION['cart_items']) : 0;
 $wishlistCount = isset($_SESSION['wishlist']) && is_array($_SESSION['wishlist']) ? count($_SESSION['wishlist']) : 0;
 
@@ -121,11 +157,108 @@ $utilityLinks = [
                             <a class="workspace-header__logo" href="<?= url_for('Customer/home.php') ?>">
                                 <img src="<?= asset('assets/images/logo/logo-jell.png') ?>" height="30" alt="Logo Jellouli">
                             </a>
-                            <button class="workspace-header__switch d-none d-lg-inline-flex align-items-center" type="button" aria-expanded="false" aria-controls="workspacePanel" data-workspace-toggle>
-                                <i class="bi bi-layout-text-sidebar-reverse me-2"></i>
-                                Espace navigation
-                            </button>
                         </div>
+                        <nav class="mega-nav d-none d-lg-flex" aria-label="Navigation principale">
+                            <div class="mega-nav__item" data-mega-item>
+                                <button class="mega-nav__toggle" type="button" aria-expanded="false" aria-controls="megaPanelCatalogue" data-mega-toggle="catalogue">
+                                    <i class="bi bi-grid-3x3-gap me-2"></i>
+                                    Catalogue
+                                </button>
+                                <div class="mega-nav__panel" id="megaPanelCatalogue" data-mega-panel="catalogue" hidden>
+                                    <div class="mega-panel">
+                                        <div class="mega-panel__header">
+                                            <div>
+                                                <span class="mega-panel__eyebrow">Parcourir</span>
+                                                <h3 class="mega-panel__title">Toutes les familles de produits</h3>
+                                                <p class="mega-panel__subtitle">Repérez rapidement la bonne catégorie et visualisez son contenu avant de cliquer.</p>
+                                            </div>
+                                            <div class="mega-panel__shortcuts">
+                                                <?php foreach ($primaryShortcuts as $shortcut): ?>
+                                                    <a class="mega-panel__shortcut" href="<?= $shortcut['url'] ?>">
+                                                        <i class="bi <?= $shortcut['icon'] ?>"></i>
+                                                        <?= htmlspecialchars($shortcut['label'], ENT_QUOTES, 'UTF-8') ?>
+                                                    </a>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                                        <div class="mega-panel__body">
+                                            <div class="mega-panel__column mega-panel__column--list">
+                                                <h4 class="mega-panel__column-title">Catégories principales</h4>
+                                                <ul class="mega-panel__list">
+                                                    <?php foreach (array_slice($categoryPreviews, 0, 10) as $preview): ?>
+                                                        <li>
+                                                            <a class="mega-panel__link" href="<?= $preview['url'] ?>" data-mega-preview-trigger data-preview-label="<?= htmlspecialchars($preview['label'], ENT_QUOTES, 'UTF-8') ?>" data-preview-summary="<?= htmlspecialchars($preview['summary'], ENT_QUOTES, 'UTF-8') ?>" data-preview-badge="<?= htmlspecialchars($preview['badge']['label'], ENT_QUOTES, 'UTF-8') ?>" data-preview-badge-class="<?= htmlspecialchars($preview['badge']['class'], ENT_QUOTES, 'UTF-8') ?>">
+                                                                <span class="mega-panel__link-label"><?= htmlspecialchars($preview['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                                <i class="bi bi-arrow-right-short"></i>
+                                                            </a>
+                                                        </li>
+                                                    <?php endforeach; ?>
+                                                </ul>
+                                                <div class="mega-panel__filters">
+                                                    <span class="mega-panel__filters-title">Filtres rapides</span>
+                                                    <div class="mega-panel__chips">
+                                                        <?php foreach ($quickFilters as $filter): ?>
+                                                            <a class="mega-panel__chip" href="<?= $filter['url'] ?>">#<?= htmlspecialchars($filter['label'], ENT_QUOTES, 'UTF-8') ?></a>
+                                                        <?php endforeach; ?>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="mega-panel__column mega-panel__column--preview">
+                                                <article class="mega-preview" data-mega-preview>
+                                                    <header class="mega-preview__header">
+                                                        <span class="mega-preview__badge badge <?= htmlspecialchars($initialPreview['badge']['class'], ENT_QUOTES, 'UTF-8') ?>" data-mega-preview-badge><?= htmlspecialchars($initialPreview['badge']['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                        <h4 class="mega-preview__title" data-mega-preview-title><?= htmlspecialchars($initialPreview['label'], ENT_QUOTES, 'UTF-8') ?></h4>
+                                                    </header>
+                                                    <p class="mega-preview__summary" data-mega-preview-summary><?= htmlspecialchars($initialPreview['summary'], ENT_QUOTES, 'UTF-8') ?></p>
+                                                    <a class="mega-preview__cta btn btn-primary" href="<?= $initialPreview['url'] ?>" data-mega-preview-link>Explorer la catégorie</a>
+                                                    <footer class="mega-preview__footer">
+                                                        <span class="mega-preview__hint">Astuce : épinglez les catégories clés pour les retrouver en tête de page.</span>
+                                                    </footer>
+                                                </article>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mega-nav__item" data-mega-item>
+                                <button class="mega-nav__toggle" type="button" aria-expanded="false" aria-controls="megaPanelExplorer" data-mega-toggle="explorer">
+                                    <i class="bi bi-compass me-2"></i>
+                                    Explorer
+                                </button>
+                                <div class="mega-nav__panel" id="megaPanelExplorer" data-mega-panel="explorer" hidden>
+                                    <div class="mega-panel mega-panel--explorer">
+                                        <div class="mega-panel__header">
+                                            <div>
+                                                <span class="mega-panel__eyebrow">Actions clés</span>
+                                                <h3 class="mega-panel__title">Préparer vos prochaines étapes</h3>
+                                                <p class="mega-panel__subtitle">Accédez aux parcours les plus utilisés et retrouvez vos éléments épinglés.</p>
+                                            </div>
+                                        </div>
+                                        <div class="mega-panel__body">
+                                            <div class="mega-panel__column mega-panel__column--cards">
+                                                <?php foreach (array_slice($quickActions, 0, 4) as $action): ?>
+                                                    <a class="mega-panel__card" href="<?= $action['url'] ?>">
+                                                        <span class="mega-panel__card-icon"><i class="bi <?= $action['icon'] ?>"></i></span>
+                                                        <div class="mega-panel__card-content">
+                                                            <span class="mega-panel__card-label"><?= htmlspecialchars($action['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                            <p class="mega-panel__card-desc mb-0"><?= htmlspecialchars($action['description'], ENT_QUOTES, 'UTF-8') ?></p>
+                                                        </div>
+                                                        <span class="mega-panel__card-badge"><?= htmlspecialchars($action['badge'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                    </a>
+                                                <?php endforeach; ?>
+                                            </div>
+                                            <div class="mega-panel__column mega-panel__column--pins">
+                                                <h4 class="mega-panel__column-title">Mes éléments épinglés</h4>
+                                                <div class="mega-panel__pins" data-pinned-summary></div>
+                                                <a class="mega-panel__link mega-panel__link--drawer" href="#" data-workspace-toggle>
+                                                    <i class="bi bi-layout-sidebar me-1"></i>Ouvrir le centre de navigation
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </nav>
                         <button class="workspace-command" type="button" data-search-toggle aria-expanded="false" aria-controls="globalSearch">
                             <i class="bi bi-search me-2"></i>
                             <span>Rechercher un produit, une action ou une page</span>

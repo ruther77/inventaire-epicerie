@@ -10,6 +10,16 @@
     const globalSearch = document.querySelector('[data-global-search]');
     const searchToggles = document.querySelectorAll('[data-search-toggle]');
 
+    const megaNav = document.querySelector('.mega-nav');
+    const megaToggles = document.querySelectorAll('[data-mega-toggle]');
+    const megaPanels = document.querySelectorAll('[data-mega-panel]');
+    const megaPreview = document.querySelector('[data-mega-preview]');
+    const megaPreviewTitle = megaPreview ? megaPreview.querySelector('[data-mega-preview-title]') : null;
+    const megaPreviewSummary = megaPreview ? megaPreview.querySelector('[data-mega-preview-summary]') : null;
+    const megaPreviewBadge = megaPreview ? megaPreview.querySelector('[data-mega-preview-badge]') : null;
+    const megaPreviewLink = megaPreview ? megaPreview.querySelector('[data-mega-preview-link]') : null;
+    const megaPreviewTriggers = document.querySelectorAll('[data-mega-preview-trigger]');
+
     const pinnedContainer = document.querySelector('[data-pinned-container]');
     const pinnedList = pinnedContainer ? pinnedContainer.querySelector('[data-pinned-list]') : null;
     const pinnedEmpty = pinnedContainer ? pinnedContainer.querySelector('[data-empty-message]') : null;
@@ -88,12 +98,89 @@
     function closeAllPanels() {
         closePanel(workspacePanel);
         closePanel(globalSearch);
+        closeMegaPanels();
         if (workspaceBackdrop) {
             workspaceBackdrop.classList.remove('is-visible');
         }
         workspaceToggles.forEach((toggle) => {
             toggle.setAttribute('aria-expanded', 'false');
         });
+    }
+
+    function closeMegaPanels() {
+        megaPanels.forEach((panel) => {
+            if (!panel.hidden) {
+                panel.hidden = true;
+            }
+            panel.classList.remove('is-open');
+            const item = panel.closest('[data-mega-item]');
+            if (item) {
+                item.classList.remove('is-open');
+            }
+        });
+        megaToggles.forEach((toggle) => {
+            toggle.setAttribute('aria-expanded', 'false');
+            const item = toggle.closest('[data-mega-item]');
+            if (item) {
+                item.classList.remove('is-open');
+            }
+        });
+    }
+
+    function openMegaPanel(id, trigger) {
+        const panel = document.querySelector(`[data-mega-panel="${id}"]`);
+        if (!panel) {
+            return;
+        }
+        const alreadyOpen = !panel.hidden;
+        closeMegaPanels();
+        if (alreadyOpen) {
+            return;
+        }
+        panel.hidden = false;
+        panel.classList.add('is-open');
+        const item = trigger ? trigger.closest('[data-mega-item]') : panel.closest('[data-mega-item]');
+        if (item) {
+            item.classList.add('is-open');
+        }
+        if (trigger) {
+            trigger.setAttribute('aria-expanded', 'true');
+        }
+    }
+
+    function isMegaOpen() {
+        return Array.from(megaPanels).some((panel) => !panel.hidden);
+    }
+
+    function updateMegaPreview(trigger) {
+        if (!megaPreview || !trigger) {
+            return;
+        }
+        const label = trigger.getAttribute('data-preview-label') || trigger.textContent;
+        const summary = trigger.getAttribute('data-preview-summary');
+        const badge = trigger.getAttribute('data-preview-badge');
+        const badgeClass = trigger.getAttribute('data-preview-badge-class');
+
+        if (megaPreviewTitle && label) {
+            megaPreviewTitle.textContent = label;
+        }
+        if (megaPreviewSummary && summary) {
+            megaPreviewSummary.textContent = summary;
+        }
+        if (megaPreviewLink) {
+            const href = trigger.getAttribute('href');
+            if (href) {
+                megaPreviewLink.setAttribute('href', href);
+            }
+        }
+        if (megaPreviewBadge) {
+            if (badgeClass) {
+                megaPreviewBadge.className = `mega-preview__badge badge ${badgeClass}`;
+            }
+            if (badge) {
+                megaPreviewBadge.textContent = badge;
+            }
+        }
     }
 
     function toggleWorkspace(trigger) {
@@ -323,6 +410,38 @@
         });
     });
 
+    megaToggles.forEach((toggle) => {
+        toggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            const id = toggle.getAttribute('data-mega-toggle');
+            if (!id) {
+                return;
+            }
+            const panel = document.querySelector(`[data-mega-panel="${id}"]`);
+            const isOpen = panel && !panel.hidden;
+            if (isOpen) {
+                closeMegaPanels();
+            } else {
+                openMegaPanel(id, toggle);
+            }
+        });
+    });
+
+    megaPreviewTriggers.forEach((trigger) => {
+        trigger.addEventListener('mouseenter', () => updateMegaPreview(trigger));
+        trigger.addEventListener('focus', () => updateMegaPreview(trigger));
+    });
+
+    if (megaNav) {
+        document.addEventListener('click', (event) => {
+            if (!megaNav.contains(event.target)) {
+                closeMegaPanels();
+            }
+        });
+    }
+
+    window.addEventListener('resize', closeMegaPanels);
+
     if (workspaceBackdrop) {
         workspaceBackdrop.addEventListener('click', () => {
             closeAllPanels();
@@ -376,8 +495,13 @@
     });
 
     document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && anyPanelOpen()) {
-            closeAllPanels();
+        if (event.key === 'Escape' && (anyPanelOpen() || isMegaOpen())) {
+            if (isMegaOpen()) {
+                closeMegaPanels();
+            }
+            if (anyPanelOpen()) {
+                closeAllPanels();
+            }
             return;
         }
 
