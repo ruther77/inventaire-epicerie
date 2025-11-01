@@ -11,7 +11,7 @@ from data_repository import (
     update_supplier_record,
 )
 
-from ..security import get_current_active_user, require_admin
+from ..security import get_current_active_user
 from .schemas import SupplierCreate, SupplierRead, SupplierUpdate
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
@@ -36,13 +36,15 @@ def list_suppliers_endpoint(_: dict = Depends(get_current_active_user)) -> list[
 
 
 @router.post("", response_model=SupplierRead, status_code=status.HTTP_201_CREATED)
-def create_supplier(payload: SupplierCreate, _: dict = Depends(require_admin)) -> SupplierRead:
+def create_supplier(payload: SupplierCreate, _: dict = Depends(get_current_active_user)) -> SupplierRead:
     record = create_supplier_record(payload.model_dump())
     return _supplier_to_model(record)
 
 
 @router.patch("/{supplier_id}", response_model=SupplierRead)
-def update_supplier(supplier_id: int, payload: SupplierUpdate, _: dict = Depends(require_admin)) -> SupplierRead:
+def update_supplier(
+    supplier_id: int, payload: SupplierUpdate, _: dict = Depends(get_current_active_user)
+) -> SupplierRead:
     updates = payload.model_dump(exclude_unset=True)
     record = update_supplier_record(supplier_id, updates)
     if record is None:
@@ -51,7 +53,9 @@ def update_supplier(supplier_id: int, payload: SupplierUpdate, _: dict = Depends
 
 
 @router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_supplier(supplier_id: int, _: dict = Depends(require_admin)) -> Response:
+def delete_supplier(
+    supplier_id: int, _: dict = Depends(get_current_active_user)
+) -> Response:
     if not delete_supplier_record(supplier_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fournisseur introuvable")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
