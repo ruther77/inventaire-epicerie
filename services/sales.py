@@ -5,16 +5,31 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import logging
+import os
 from typing import Callable, Iterable
 
+from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlalchemy import exc as sa_exc
 
 from telemetry import get_tracer, instrument_sqlalchemy_engine
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SaleDatabaseProfile:
+    """Represents the database-specific behaviours required by the sale flow."""
+
+    dialect: str
+    has_stock_trigger: bool
+    stock_lock_sql: str
+    manual_stock_update_sql: str
+
+    @property
+    def requires_manual_stock_update(self) -> bool:
+        return not self.has_stock_trigger
 
 
 @dataclass
@@ -24,9 +39,11 @@ class SaleService:
     engine_factory: Callable[[], Engine]
     tracer_name: str = "services.sales"
     _tracer: object = field(init=False, repr=False)
+    _db_profile: SaleDatabaseProfile = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._tracer = get_tracer(self.tracer_name)
+        self._db_profile = self._initialise_database_profile()
 
     # ------------------------------------------------------------------
     # Public API
@@ -55,19 +72,6 @@ class SaleService:
 
             try:
                 with engine.begin() as conn:
-                    has_stock_trigger = conn.execute(
-                        text(
-                            """
-                            SELECT EXISTS (
-                                SELECT 1
-                                FROM pg_trigger
-                                WHERE tgname = 'trg_update_stock_actuel'
-                                  AND tgrelid = 'mouvements_stock'::regclass
-                            )
-                            """
-                        )
-                    ).scalar()
-
                     missing_products: list[int] = []
                     insufficient: list[str] = []
 
@@ -75,9 +79,7 @@ class SaleService:
                         with self._tracer.start_as_current_span("sale.check_stock") as check_span:
                             check_span.set_attribute("sale.product_id", pid)
                             stock_row = conn.execute(
-                                text(
-                                    "SELECT stock_actuel FROM produits WHERE id = :pid FOR UPDATE"
-                                ),
+                                text(self._db_profile.stock_lock_sql),
                                 {"pid": pid},
                             ).fetchone()
 
@@ -135,17 +137,13 @@ class SaleService:
                         movements_payload,
                     )
 
-                    if not has_stock_trigger:
+                    if self._db_profile.requires_manual_stock_update:
+                        update_statement = text(
+                            self._db_profile.manual_stock_update_sql
+                        )
                         for payload in movements_payload:
                             conn.execute(
-                                text(
-                                    """
-                                    UPDATE produits
-                                    SET stock_actuel = stock_actuel - :qty,
-                                        updated_at = now()
-                                    WHERE id = :pid
-                                    """
-                                ),
+                                update_statement,
                                 payload,
                             )
 
@@ -285,6 +283,99 @@ class SaleService:
             pdf_bytes = _render_receipt_pdf(header_lines + detail_lines + footer_lines)
             filename = f"ticket_{timestamp.strftime('%Y%m%d_%H%M%S')}.pdf"
             return {"filename": filename, "content": pdf_bytes}
+
+    # ------------------------------------------------------------------
+    # Database configuration helpers
+    # ------------------------------------------------------------------
+    def _initialise_database_profile(self) -> SaleDatabaseProfile:
+        """Inspect the configured engine and determine DB-specific behaviour."""
+
+        try:
+            engine = self.engine_factory()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Unable to create engine for sale service", exc_info=exc)
+            return self._default_db_profile("unknown")
+
+        dialect = (engine.dialect.name or "unknown").lower()
+        feature_flag = os.getenv("SALE_DISABLE_STOCK_TRIGGER", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+        has_stock_trigger = False
+        if not feature_flag:
+            has_stock_trigger = self._verify_stock_trigger(engine, dialect)
+        else:
+            logger.info(
+                "Stock trigger usage disabled via SALE_DISABLE_STOCK_TRIGGER feature flag"
+            )
+
+        stock_lock_sql = self._determine_stock_lock_sql(engine)
+        manual_update_sql = self._determine_manual_update_sql()
+
+        logger.info(
+            "SaleService database profile initialised", extra={
+                "dialect": dialect,
+                "has_stock_trigger": has_stock_trigger,
+                "stock_lock_sql": stock_lock_sql,
+                "manual_update_sql": manual_update_sql,
+            }
+        )
+
+        return SaleDatabaseProfile(
+            dialect=dialect,
+            has_stock_trigger=has_stock_trigger,
+            stock_lock_sql=stock_lock_sql,
+            manual_stock_update_sql=manual_update_sql,
+        )
+
+    def _verify_stock_trigger(self, engine: Engine, dialect: str) -> bool:
+        if dialect != "postgresql":
+            return False
+
+        trigger_query = text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_trigger
+                WHERE tgname = 'trg_update_stock_actuel'
+                  AND tgrelid = 'mouvements_stock'::regclass
+            )
+            """
+        )
+
+        try:
+            with engine.connect() as conn:
+                return bool(conn.execute(trigger_query).scalar())
+        except sa_exc.SQLAlchemyError as exc:
+            logger.warning(
+                "Unable to verify PostgreSQL stock trigger, falling back to manual updates",
+                exc_info=exc,
+            )
+            return False
+
+    def _determine_stock_lock_sql(self, engine: Engine) -> str:
+        supports_for_update = bool(getattr(engine.dialect, "supports_for_update", False))
+        if supports_for_update:
+            return "SELECT stock_actuel FROM produits WHERE id = :pid FOR UPDATE"
+        return "SELECT stock_actuel FROM produits WHERE id = :pid"
+
+    def _determine_manual_update_sql(self) -> str:
+        return (
+            "UPDATE produits "
+            "SET stock_actuel = stock_actuel - :qty, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :pid"
+        )
+
+    def _default_db_profile(self, dialect: str) -> SaleDatabaseProfile:
+        return SaleDatabaseProfile(
+            dialect=dialect,
+            has_stock_trigger=False,
+            stock_lock_sql="SELECT stock_actuel FROM produits WHERE id = :pid",
+            manual_stock_update_sql=self._determine_manual_update_sql(),
+        )
 
 
 # ---------------------------------------------------------------------------
