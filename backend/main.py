@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 from dotenv import load_dotenv
 
 from ._fastapi_compat import CORSMiddleware, FastAPI
