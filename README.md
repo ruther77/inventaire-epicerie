@@ -133,6 +133,9 @@ dispose des éléments suivants :
 * **Variables d'environnement** :
   * `DATABASE_URL` doit pointer vers l'instance PostgreSQL utilisée par
     l'application (format `postgresql+psycopg2://USER:PASSWORD@HOST:PORT/DB`).
+  * `DATABASE_SEARCH_PATH` (optionnel) permet de forcer le `search_path`
+    PostgreSQL utilisé par l'API (`inventory,public` par exemple) lorsque les
+    tables / vues sont exposées dans un schéma dédié.
   * `AUTH_SECRET_KEY` doit contenir au minimum 32 caractères afin que
     l'authentification via `streamlit-authenticator` et l'API FastAPI puissent
     signer / vérifier les jetons.
