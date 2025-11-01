@@ -5,7 +5,7 @@ from typing import Callable
 
 import pandas as pd
 from sqlalchemy import TextClause, create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.sql.elements import ClauseElement
 
 
@@ -72,7 +72,7 @@ _ENGINE_FACTORY: Callable[[], Engine] | None = None
 def _build_engine(database_url: str) -> Engine:
     engine_kwargs: dict = {"pool_pre_ping": True}
 
-    if database_url.lower().startswith("sqlite"):
+    if make_url(database_url).get_backend_name() == "sqlite":
         return create_engine(database_url, **engine_kwargs)
 
     engine_kwargs["pool_size"] = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
