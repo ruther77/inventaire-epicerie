@@ -49,6 +49,7 @@ from domain import (
 )
 
 from .api import api_router
+from .api.stock_external import router as stock_external_router
 from .api.pos import _prepare_checkout_payload
 from .settings import APISettings, get_settings
 from .security import (
@@ -83,6 +84,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     )
 
     app.include_router(api_router)
+    app.include_router(stock_external_router)
 
     return app
 
