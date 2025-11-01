@@ -201,6 +201,29 @@ $explorerPreview = array_map(static function ($action) use ($quickActionBadgeCla
     ];
 }, array_slice($quickActions, 0, 4));
 
+$utilityLinks = [
+    [
+        'label' => 'Profil',
+        'icon' => 'bi-person-circle',
+        'url' => url_for('Customer/profile.php'),
+    ],
+    [
+        'label' => 'Paramètres',
+        'icon' => 'bi-gear',
+        'url' => url_for('Customer/settings.php'),
+    ],
+    [
+        'label' => 'Assistance',
+        'icon' => 'bi-question-circle',
+        'url' => url_for('Customer/support.php'),
+    ],
+    [
+        'label' => 'Déconnexion',
+        'icon' => 'bi-box-arrow-right',
+        'url' => url_for('Customer/logout.php'),
+    ],
+];
+
 $explorerUtilities = array_map(static function ($link) {
     return [
         'label' => $link['label'],
