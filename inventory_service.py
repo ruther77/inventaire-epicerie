@@ -2,12 +2,16 @@
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import logging
 from typing import Iterable
 
 import pandas as pd
 
 from data_repository import get_engine, query_df
 from sqlalchemy import text, exc as sa_exc
+
+
+logger = logging.getLogger(__name__)
 
 
 def _as_decimal(value, default: str = "0") -> Decimal:
@@ -305,29 +309,20 @@ def _render_receipt_pdf(lines: list[str]) -> bytes:
 def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
     """Associe les lignes d'une facture aux produits du catalogue via code-barres."""
 
+    empty_columns = [
+        "code",
+        "produit_id",
+        "produit_nom",
+        "categorie",
+        "prix_achat_catalogue",
+        "prix_vente_catalogue",
+    ]
+
     if not isinstance(invoice_df, pd.DataFrame) or invoice_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "produit_id",
-                "produit_nom",
-                "categorie",
-                "prix_achat_catalogue",
-                "prix_vente_catalogue",
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     if "codes" not in invoice_df.columns:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "produit_id",
-                "produit_nom",
-                "categorie",
-                "prix_achat_catalogue",
-                "prix_vente_catalogue",
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     codes: list[str] = []
     for raw in invoice_df["codes"].tolist():
@@ -343,16 +338,7 @@ def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
 
     unique_codes = sorted({code.lower() for code in codes if code})
     if not unique_codes:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "produit_id",
-                "produit_nom",
-                "categorie",
-                "prix_achat_catalogue",
-                "prix_vente_catalogue",
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     placeholders = ", ".join(f"LOWER(:code{i})" for i in range(len(unique_codes)))
     params = {f"code{i}": code for i, code in enumerate(unique_codes)}
@@ -373,16 +359,14 @@ def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
     try:
         df = query_df(sql, params=params)
     except Exception:
-        return pd.DataFrame(
-            columns=[
-                "code",
-                "produit_id",
-                "produit_nom",
-                "categorie",
-                "prix_achat_catalogue",
-                "prix_vente_catalogue",
-            ]
+        logger.exception(
+            "match_invoice_products failed to fetch catalogue data",
+            extra={
+                "code_count": len(unique_codes),
+                "sample_codes": unique_codes[:10],
+            },
         )
+        raise
 
     if "code" in df.columns:
         df["code"] = df["code"].astype(str).str.lower()
@@ -436,7 +420,7 @@ def register_invoice_reception(
         payloads.append(
             {
                 "pid": int(product_id),
-                "qty": float(normalised_qty),
+                "qty": normalised_qty,
                 "source": source_label,
                 "type": safe_type,
                 "date_mvt": reception_date,
@@ -456,7 +440,44 @@ def register_invoice_reception(
     eng = get_engine()
     try:
         with eng.begin() as conn:
+            has_stock_trigger = conn.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_trigger
+                        WHERE tgname = 'trg_update_stock_actuel'
+                          AND tgrelid = 'mouvements_stock'::regclass
+                    )
+                    """
+                )
+            ).scalar()
+
             conn.execute(insert_sql, payloads)
+
+            if not has_stock_trigger:
+                update_sql = text(
+                    """
+                    UPDATE produits
+                    SET stock_actuel = COALESCE(stock_actuel, 0) + :delta,
+                        updated_at = now()
+                    WHERE id = :pid
+                    """
+                )
+
+                for payload in payloads:
+                    movement_type = str(payload.get("type", "")).upper()
+                    delta = payload["qty"]
+                    if movement_type == "SORTIE":
+                        delta = -delta
+
+                    conn.execute(
+                        update_sql,
+                        {
+                            "pid": payload["pid"],
+                            "delta": delta,
+                        },
+                    )
     except sa_exc.IntegrityError as exc:
         summary["errors"].append(f"Erreur d'intégrité lors de l'enregistrement: {exc.orig}")
         return summary
