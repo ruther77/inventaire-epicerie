@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Dict, Final, List, Sequence
+from typing import Any, Dict, Final, Iterable, List, Sequence
 
 import streamlit as st
 
@@ -318,9 +318,7 @@ def _tab_target_attrs(page_key: str | None) -> str:
     tab_index = _PAGE_KEY_TO_INDEX.get(page_key)
     if tab_index is None:
         return ""
-    return (
-        f" data-tab-target=\"{tab_index}\" data-page-key=\"{escape(page_key)}\""
-    )
+    return f" data-tab-target=\"{tab_index}\" data-page-key=\"{escape(page_key)}\""
 
 
 def _build_tabs_markup() -> str:
@@ -419,6 +417,13 @@ def _build_panel_markup(section: Dict[str, Any]) -> str:
         else ""
     )
 
+def _build_panel_markup(section: Dict[str, Any]) -> str:
+    section_id = escape(section["id"])
+    title = escape(section.get("title", section.get("label", "")))
+    description = escape(section.get("description", ""))
+    featured_markup = _build_featured_markup(section)
+    items_markup = _build_items_markup(section.get("items", ()))
+    description_markup = f"<p>{description}</p>" if description else ""
     return "".join(
         [
             f"<section class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" ",
@@ -446,6 +451,8 @@ def _build_header_actions() -> str:
     links: List[str] = []
     for action in _HEADER_ACTIONS:
         label = escape(action.get("label", ""))
+        if not label:
+            continue
         icon = escape(action.get("icon", ""))
         attrs = _tab_target_attrs(action.get("page_key"))
         icon_markup = f"<i class=\"bi {icon}\"></i>" if icon else ""
