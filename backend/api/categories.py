@@ -11,7 +11,7 @@ from data_repository import (
     update_category_record,
 )
 
-from ..security import get_current_active_user, require_admin
+from ..security import get_current_active_user, require_catalog_manager
 from .schemas import CategoryCreate, CategoryRead, CategoryUpdate
 
 router = APIRouter(prefix="/categories", tags=["categories"])
@@ -35,7 +35,7 @@ def list_categories_endpoint(_: dict = Depends(get_current_active_user)) -> list
 
 
 @router.post("", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)
-def create_category(payload: CategoryCreate, _: dict = Depends(require_admin)) -> CategoryRead:
+def create_category(payload: CategoryCreate, _: dict = Depends(require_catalog_manager)) -> CategoryRead:
     record = create_category_record(payload.model_dump())
     enriched = next((row for row in list_categories() if row["id"] == record["id"]), None)
     data = enriched or {**record, "produits_count": 0}
@@ -43,7 +43,7 @@ def create_category(payload: CategoryCreate, _: dict = Depends(require_admin)) -
 
 
 @router.patch("/{category_id}", response_model=CategoryRead)
-def update_category(category_id: int, payload: CategoryUpdate, _: dict = Depends(require_admin)) -> CategoryRead:
+def update_category(category_id: int, payload: CategoryUpdate, _: dict = Depends(require_catalog_manager)) -> CategoryRead:
     updates = payload.model_dump(exclude_unset=True)
     record = update_category_record(category_id, updates)
     if record is None:
@@ -54,7 +54,7 @@ def update_category(category_id: int, payload: CategoryUpdate, _: dict = Depends
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_category(category_id: int, _: dict = Depends(require_admin)) -> Response:
+def delete_category(category_id: int, _: dict = Depends(require_catalog_manager)) -> Response:
     if not delete_category_record(category_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie introuvable")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

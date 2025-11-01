@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 
 from data_repository import query_df
 from product_service import InvalidBarcodeError, ProductNotFoundError, update_catalog_entry
 
-from ..security import get_current_active_user, require_admin
+from ..security import get_current_active_user, require_catalog_editor
 from .schemas import ProductPayload, ProductUpdateRequest
 from .utils import get_main_module
 
@@ -65,14 +65,38 @@ def list_products(_: dict = Depends(get_current_active_user)) -> list[ProductPay
 
 
 @router.patch("/{product_id}")
-def update_product(product_id: int, payload: ProductUpdateRequest, _: dict = Depends(require_admin)) -> dict:
+def update_product(
+    product_id: int,
+    payload: ProductUpdateRequest,
+    current_user: dict = Depends(require_catalog_editor),
+) -> dict:
     updates = {
         key: value
         for key, value in payload.model_dump(exclude={"barcodes"}).items()
         if value is not None
     }
+
+    role = (current_user.get("role") or "standard").lower()
+    if role == "moderator":
+        allowed_updates = {"actif", "nom", "categorie"}
+        forbidden = set(updates) - allowed_updates
+        if forbidden:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Modifications non autorisées pour ce rôle",
+            )
+        if payload.barcodes is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Les modérateurs ne peuvent pas modifier les codes-barres",
+            )
+
+    barcodes = payload.barcodes
+    if role == "moderator":
+        barcodes = None
+
     try:
-        result = get_main_module().update_catalog_entry(product_id, updates, payload.barcodes)
+        result = get_main_module().update_catalog_entry(product_id, updates, barcodes)
     except ProductNotFoundError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except InvalidBarcodeError as exc:  # pragma: no cover - defensive

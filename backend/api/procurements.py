@@ -14,7 +14,7 @@ from data_repository import (
     update_procurement_record,
 )
 
-from ..security import get_current_active_user
+from ..security import get_current_active_user, require_catalog_manager
 from .schemas import ProcurementCreate, ProcurementLinePayload, ProcurementRead, ProcurementUpdate
 from .utils import as_decimal, ensure_datetime
 
@@ -54,7 +54,7 @@ def list_procurements_endpoint(_: dict = Depends(get_current_active_user)) -> li
 
 
 @router.post("", response_model=ProcurementRead, status_code=status.HTTP_201_CREATED)
-def create_procurement(payload: ProcurementCreate, _: dict = Depends(get_current_active_user)) -> ProcurementRead:
+def create_procurement(payload: ProcurementCreate, _: dict = Depends(require_catalog_manager)) -> ProcurementRead:
     total_ht = _compute_procurement_total(payload.lignes)
     procurement_payload = {
         "numero": payload.numero,
@@ -87,7 +87,7 @@ def create_procurement(payload: ProcurementCreate, _: dict = Depends(get_current
 def update_procurement(
     procurement_id: int,
     payload: ProcurementUpdate,
-    _: dict = Depends(get_current_active_user),
+    _: dict = Depends(require_catalog_manager),
 ) -> ProcurementRead:
     updates = payload.model_dump(exclude_unset=True)
     if "date_appro" in updates and updates["date_appro"] is not None:
