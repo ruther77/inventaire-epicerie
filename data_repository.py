@@ -5,7 +5,7 @@ from typing import Callable
 
 import pandas as pd
 from sqlalchemy import TextClause, create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.sql.elements import ClauseElement
 
 
