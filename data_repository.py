@@ -19,6 +19,19 @@ _FALLBACK_DATABASE_URL = "sqlite+pysqlite:///:memory:"
 _warned_missing_database_url = False
 
 
+def _require_database_url() -> str:
+    """Return the configured database URL or raise when it is missing."""
+
+    url = os.getenv(DATABASE_URL_ENV)
+    if url:
+        return url
+
+    raise RuntimeError(
+        f"{DATABASE_URL_ENV} environment variable must be set. "
+        "Use configure_engine(database_url=...) to inject a custom value when running tests."
+    )
+
+
 def _resolve_database_url() -> str:
     """Return the configured database URL or fall back to an in-memory SQLite database."""
 
@@ -35,6 +48,9 @@ def _resolve_database_url() -> str:
             _FALLBACK_DATABASE_URL,
         )
         _warned_missing_database_url = True
+
+    return _FALLBACK_DATABASE_URL
+
 
 # Re-export the resolved URL for legacy callers (e.g. Streamlit dashboard).
 # This mirrors the previous module level constant while keeping validation.
