@@ -226,24 +226,43 @@
         /*-----------------------------------
            09. Product Quantity
         -----------------------------------*/
-        var proQty = $(".pro-qty");
-        proQty.append('<a href="#" class="inc qty-btn">+</a>');
-        proQty.append('<a href="#" class= "dec qty-btn">-</a>');
-        $('.qty-btn').on('click', function(e) {
-            e.preventDefault();
-            var $button = $(this);
-            var oldValue = $button.parent().find('input').val();
-            if ($button.hasClass('inc')) {
-                var newVal = parseFloat(oldValue) + 1;
-            } else {
-                // Don't allow decrementing below zero
-                if (oldValue > 0) {
-                    var newVal = parseFloat(oldValue) - 1;
-                } else {
-                    newVal = 0;
+        var qtyControls = $(".product-quantity-control");
+        qtyControls.each(function() {
+            var $control = $(this);
+            var $input = $control.find('input[type="number"]');
+
+            $control.find('[data-qty-action]').on('click', function(e) {
+                e.preventDefault();
+
+                var $button = $(this);
+                var action = $button.data('qty-action');
+                var step = parseFloat($input.attr('step')) || 1;
+                var min = parseFloat($input.attr('min'));
+                var max = parseFloat($input.attr('max'));
+                var currentValue = parseFloat($input.val());
+
+                if (isNaN(currentValue)) {
+                    currentValue = min || 0;
                 }
-            }
-            $button.parent().find('input').val(newVal);
+
+                var newValue = currentValue;
+
+                if (action === 'increment') {
+                    newValue = currentValue + step;
+                    if (!isNaN(max)) {
+                        newValue = Math.min(newValue, max);
+                    }
+                } else if (action === 'decrement') {
+                    newValue = currentValue - step;
+                    if (!isNaN(min)) {
+                        newValue = Math.max(newValue, min);
+                    } else {
+                        newValue = Math.max(newValue, 0);
+                    }
+                }
+
+                $input.val(newValue).trigger('change');
+            });
         });
 
         /*--------------------------------------
