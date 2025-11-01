@@ -4,6 +4,7 @@ import os
 import io
 import math
 import re
+from datetime import datetime
 from contextlib import contextmanager
 from html import escape
 from typing import Any, Dict, List, Tuple
@@ -53,7 +54,11 @@ from data_repository import (
     get_product_details,
     get_product_options,
 )
-from inventory_service import *
+from inventory_service import (
+    match_invoice_products,
+    process_sale_transaction,
+    register_invoice_reception,
+)
 import products_loader
 from product_service import (
     parse_barcode_input,
