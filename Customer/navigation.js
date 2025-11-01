@@ -38,6 +38,15 @@
     const filterPills = document.querySelectorAll('[data-filter]');
     const contextTabs = document.querySelectorAll('[data-context-tab]');
 
+    const megaMenu = document.querySelector('[data-mega-menu]');
+    const megaTriggers = megaMenu ? megaMenu.querySelectorAll('[data-mega-trigger]') : [];
+    const megaPanels = megaMenu ? megaMenu.querySelectorAll('[data-mega-panel]') : [];
+    const megaOverlay = document.querySelector('[data-mega-overlay]');
+    const megaMobileToggle = document.querySelector('[data-mega-mobile-toggle]');
+    const desktopBreakpoint = window.matchMedia('(min-width: 992px)');
+
+    let activeMegaId = null;
+
     function tryParse(json, fallback) {
         try {
             const parsed = JSON.parse(json);
@@ -91,11 +100,90 @@
     function anyPanelOpen() {
         return (
             (workspacePanel && workspacePanel.classList.contains('is-open')) ||
-            (globalSearch && globalSearch.classList.contains('is-open'))
+            (globalSearch && globalSearch.classList.contains('is-open')) ||
+            (megaMenu && (megaMenu.classList.contains('is-open') || activeMegaId !== null))
         );
     }
 
+    function syncMegaOverlay() {
+        if (!megaOverlay) {
+            return;
+        }
+        const isDesktop = desktopBreakpoint.matches;
+        const shouldShow = isDesktop
+            ? activeMegaId !== null
+            : megaMenu && megaMenu.classList.contains('is-open');
+        megaOverlay.classList.toggle('is-visible', shouldShow);
+    }
+
+    function setMegaActive(id) {
+        if (!megaMenu) {
+            return;
+        }
+        activeMegaId = id;
+        megaTriggers.forEach((trigger) => {
+            const targetId = trigger.getAttribute('data-mega-target');
+            const isActive = targetId === id;
+            trigger.classList.toggle('is-active', isActive);
+            trigger.setAttribute('aria-expanded', String(isActive));
+        });
+        megaPanels.forEach((panel) => {
+            const isActive = id ? panel.id === `mega-panel-${id}` : false;
+            panel.classList.toggle('is-active', isActive);
+            panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+        });
+        megaMenu.classList.toggle('has-active', Boolean(id));
+
+        if (id && desktopBreakpoint.matches) {
+            lockBodyScroll(true);
+        }
+        if (!id) {
+            lockBodyScroll(anyPanelOpen());
+        }
+        syncMegaOverlay();
+    }
+
+    function clearMegaActive() {
+        setMegaActive(null);
+    }
+
+    function openMegaMenu(targetId) {
+        if (!megaMenu) {
+            return;
+        }
+        megaMenu.classList.add('is-open');
+        if (megaMobileToggle) {
+            megaMobileToggle.setAttribute('aria-expanded', 'true');
+        }
+        const defaultId = targetId || (megaTriggers[0] && megaTriggers[0].getAttribute('data-mega-target'));
+        if (defaultId) {
+            setMegaActive(defaultId);
+        } else {
+            lockBodyScroll(true);
+            syncMegaOverlay();
+        }
+
+        if (!desktopBreakpoint.matches) {
+            lockBodyScroll(true);
+            syncMegaOverlay();
+        }
+    }
+
+    function closeMegaMenu() {
+        if (!megaMenu) {
+            return;
+        }
+        megaMenu.classList.remove('is-open');
+        if (megaMobileToggle) {
+            megaMobileToggle.setAttribute('aria-expanded', 'false');
+        }
+        clearMegaActive();
+        lockBodyScroll(anyPanelOpen());
+        syncMegaOverlay();
+    }
+
     function closeAllPanels() {
+        closeMegaMenu();
         closePanel(workspacePanel);
         closePanel(globalSearch);
         closeMegaPanels();
@@ -401,6 +489,131 @@
         applyFilter(initial || 'all');
         setActive(filterPills, initial || 'all', 'data-filter');
         setActive(contextTabs, initial || 'all', 'data-context-tab');
+    }
+
+    if (megaMenu) {
+        megaTriggers.forEach((trigger) => {
+            const targetId = trigger.getAttribute('data-mega-target');
+            trigger.addEventListener('click', (event) => {
+                event.preventDefault();
+                const isDesktop = desktopBreakpoint.matches;
+                const isActive = activeMegaId === targetId;
+
+                closePanel(workspacePanel);
+                closePanel(globalSearch);
+                if (workspaceBackdrop) {
+                    workspaceBackdrop.classList.remove('is-visible');
+                }
+                workspaceToggles.forEach((button) => {
+                    button.setAttribute('aria-expanded', 'false');
+                });
+
+                if (!isDesktop && !megaMenu.classList.contains('is-open')) {
+                    openMegaMenu(targetId);
+                    return;
+                }
+
+                if (!isDesktop) {
+                    if (isActive) {
+                        clearMegaActive();
+                    } else {
+                        setMegaActive(targetId);
+                    }
+                    return;
+                }
+
+                if (isActive) {
+                    clearMegaActive();
+                } else {
+                    setMegaActive(targetId);
+                }
+            });
+
+            trigger.addEventListener('mouseenter', () => {
+                if (desktopBreakpoint.matches) {
+                    setMegaActive(targetId);
+                }
+            });
+
+            trigger.addEventListener('focus', () => {
+                if (desktopBreakpoint.matches) {
+                    setMegaActive(targetId);
+                }
+            });
+        });
+
+        megaMenu.addEventListener('mouseleave', () => {
+            if (desktopBreakpoint.matches) {
+                clearMegaActive();
+            }
+        });
+
+        megaMenu.addEventListener('focusout', (event) => {
+            if (desktopBreakpoint.matches && megaMenu && !megaMenu.contains(event.relatedTarget)) {
+                clearMegaActive();
+            }
+        });
+    }
+
+    if (megaOverlay) {
+        megaOverlay.addEventListener('click', () => {
+            if (megaMenu && (megaMenu.classList.contains('is-open') || activeMegaId !== null)) {
+                closeMegaMenu();
+            }
+        });
+    }
+
+    if (megaMobileToggle) {
+        megaMobileToggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            closePanel(workspacePanel);
+            closePanel(globalSearch);
+            if (workspaceBackdrop) {
+                workspaceBackdrop.classList.remove('is-visible');
+            }
+            workspaceToggles.forEach((button) => {
+                button.setAttribute('aria-expanded', 'false');
+            });
+            if (megaMenu && megaMenu.classList.contains('is-open')) {
+                closeMegaMenu();
+            } else {
+                openMegaMenu();
+            }
+        });
+    }
+
+    if (typeof desktopBreakpoint.addEventListener === 'function') {
+        desktopBreakpoint.addEventListener('change', (event) => {
+            if (event.matches) {
+                if (megaMenu) {
+                    megaMenu.classList.remove('is-open');
+                }
+                clearMegaActive();
+                if (megaMobileToggle) {
+                    megaMobileToggle.setAttribute('aria-expanded', 'false');
+                }
+                syncMegaOverlay();
+                lockBodyScroll(anyPanelOpen());
+            } else {
+                closeMegaMenu();
+            }
+        });
+    } else if (typeof desktopBreakpoint.addListener === 'function') {
+        desktopBreakpoint.addListener((event) => {
+            if (event.matches) {
+                if (megaMenu) {
+                    megaMenu.classList.remove('is-open');
+                }
+                clearMegaActive();
+                if (megaMobileToggle) {
+                    megaMobileToggle.setAttribute('aria-expanded', 'false');
+                }
+                syncMegaOverlay();
+                lockBodyScroll(anyPanelOpen());
+            } else {
+                closeMegaMenu();
+            }
+        });
     }
 
     workspaceToggles.forEach((button) => {
