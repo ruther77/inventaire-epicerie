@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Home navigation', () => {
   test('renders the landing hero and saved views', async ({ page }) => {
     // Ensure the page is fully loaded before checking for elements
-    await page.goto('/', { waitUntil: 'networkidle' });
+    await page.goto('/app/', { waitUntil: 'networkidle' });
 
     const heading = page.getByRole('heading', { name: /Que souhaitez-vous faire|What would you like to do/i });
     try {
