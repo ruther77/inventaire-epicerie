@@ -1,16 +1,20 @@
 :root {
   --ds-font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --ds-color-text: #1f2933;
-  --ds-color-muted: #52606d;
-  --ds-color-border: rgba(15, 23, 42, 0.08);
+  --ds-color-text: #0f172a;
+  --ds-color-muted: #475569;
+  --ds-color-border: rgba(15, 23, 42, 0.1);
   --ds-color-surface: #ffffff;
-  --ds-color-surface-alt: #f5f7fb;
+  --ds-color-surface-alt: #f8fafc;
+  --ds-color-surface-strong: #0b1120;
   --ds-color-primary: #2563eb;
   --ds-color-primary-strong: #1d4ed8;
   --ds-color-accent: #f97316;
+  --ds-color-success: #10b981;
+  --ds-radius-lg: 18px;
   --ds-radius-md: 12px;
   --ds-radius-sm: 8px;
-  --ds-shadow-sm: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --ds-shadow-sm: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --ds-shadow-md: 0 20px 60px rgba(15, 23, 42, 0.12);
 }
 
 body {
@@ -20,7 +24,7 @@ body {
 
 .ds-surface {
   background: var(--ds-color-surface);
-  border-radius: var(--ds-radius-md);
+  border-radius: var(--ds-radius-lg);
   border: 1px solid var(--ds-color-border);
   box-shadow: var(--ds-shadow-sm);
 }
@@ -37,13 +41,13 @@ body {
   justify-content: center;
   gap: 0.5rem;
   padding: 0.65rem 1.25rem;
-  border-radius: var(--ds-radius-sm);
+  border-radius: 999px;
   border: 1px solid transparent;
   font-weight: 600;
   background: var(--ds-color-primary);
   color: #fff;
   transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.2);
+  box-shadow: 0 16px 30px rgba(37, 99, 235, 0.22);
 }
 
 .ds-button:hover {
@@ -90,9 +94,15 @@ body {
 .ds-card {
   padding: 1.25rem;
   background: var(--ds-color-surface);
-  border-radius: var(--ds-radius-md);
+  border-radius: var(--ds-radius-lg);
   border: 1px solid var(--ds-color-border);
   box-shadow: var(--ds-shadow-sm);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.ds-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--ds-shadow-md);
 }
 
 .ds-card h3 {
