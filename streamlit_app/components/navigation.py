@@ -159,6 +159,133 @@ _NAV_SECTIONS: Final[List[Dict[str, Any]]] = [
     },
 ]
 
+_ENHANCEMENT_SCRIPT: Final[str] = """
+<script>
+(function () {
+  const rootDocument = window.parent?.document ?? document;
+  if (!rootDocument) {
+    return;
+  }
+
+  const header = rootDocument.querySelector('[data-workspace-nav]');
+  if (!header || header.dataset.enhanced === 'true') {
+    return;
+  }
+
+  header.dataset.enhanced = 'true';
+
+  const toggles = header.querySelectorAll('[data-mega-trigger]');
+  const panels = header.querySelectorAll('[data-mega-panel]');
+
+  const setActiveSection = (sectionId) => {
+    toggles.forEach((toggle) => {
+      const isActive = toggle.getAttribute('data-mega-target') === sectionId;
+      toggle.classList.toggle('is-active', isActive);
+      toggle.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+      toggle.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    panels.forEach((panel) => {
+      const isActive = panel.getAttribute('data-mega-panel') === sectionId;
+      panel.classList.toggle('is-active', isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  };
+
+  const selectWorkspaceTab = (index) => {
+    const tabButtons = rootDocument.querySelectorAll('[data-baseweb="tab"]');
+    const target = tabButtons?.[index];
+    if (target instanceof HTMLElement) {
+      target.click();
+    }
+  };
+
+  const updateActiveLinks = (pageKey) => {
+    if (!pageKey) {
+      return;
+    }
+
+    rootDocument.body?.setAttribute('data-current-page', pageKey);
+    header.querySelectorAll('[data-page-key]').forEach((node) => {
+      const isActive = node.getAttribute('data-page-key') === pageKey;
+      node.classList.toggle('is-active', isActive);
+      if (isActive) {
+        node.setAttribute('aria-current', 'page');
+      } else {
+        node.removeAttribute('aria-current');
+      }
+    });
+  };
+
+  const syncFromStreamlitTabs = () => {
+    const streamlitTabs = Array.from(
+      rootDocument.querySelectorAll('[data-baseweb="tab"]')
+    );
+    const activeIndex = streamlitTabs.findIndex(
+      (tab) => tab.getAttribute('aria-selected') === 'true'
+    );
+    if (activeIndex >= 0) {
+      const activeLink = header.querySelector(
+        `[data-tab-target="${activeIndex}"][data-page-key]`
+      );
+      const pageKey = activeLink?.getAttribute('data-page-key');
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+    }
+  };
+
+  toggles.forEach((toggle) => {
+    const targetSection = toggle.getAttribute('data-mega-target');
+    if (!targetSection) {
+      return;
+    }
+
+    toggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      setActiveSection(targetSection);
+    });
+
+    toggle.addEventListener('mouseenter', () => setActiveSection(targetSection));
+    toggle.addEventListener('focus', () => setActiveSection(targetSection));
+  });
+
+  const tabLinks = header.querySelectorAll('[data-tab-target]');
+  tabLinks.forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const targetIndex = Number(link.getAttribute('data-tab-target'));
+      const hasTarget = Number.isFinite(targetIndex);
+      const pageKey = link.getAttribute('data-page-key');
+      if (hasTarget) {
+        event.preventDefault();
+        selectWorkspaceTab(targetIndex);
+      }
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+    });
+  });
+
+  const initialSection = toggles[0]?.getAttribute('data-mega-target');
+  if (initialSection) {
+    setActiveSection(initialSection);
+  }
+
+  syncFromStreamlitTabs();
+
+  rootDocument.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && typeof target.closest === 'function') {
+      const tab = target.closest('[data-baseweb="tab"]');
+      if (tab) {
+        window.requestAnimationFrame(syncFromStreamlitTabs);
+      }
+    }
+  });
+})();
+</script>
+"""
+
 
 def render_workspace_navigation() -> None:
     """Render the mega menu and shortcuts used to drive the tabs."""
@@ -195,7 +322,8 @@ def render_workspace_navigation() -> None:
             header = (
                 f"<button class=\"workspace-primary__toggle\" type=\"button\" "
                 f"id=\"mega-trigger-{section_id}\" data-mega-trigger data-mega-target=\"{section_id}\" "
-                f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\">"
+                f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\" "
+                "role=\"tab\" aria-selected=\"false\">"
                 f"<i class=\"bi {escape(section['icon'])}\"></i>"
                 f"<span>{escape(section['label'])}</span></button>"
             )
@@ -251,7 +379,8 @@ def render_workspace_navigation() -> None:
 
             panel = (
                 f"<section class=\"workspace-primary__panel\" id=\"mega-panel-{section_id}\" "
-                "data-mega-panel role=\"tabpanel\" aria-hidden=\"true\">"
+                f"data-mega-panel=\"{section_id}\" role=\"tabpanel\" "
+                f"aria-labelledby=\"mega-trigger-{section_id}\" aria-hidden=\"true\">"
                 "<header class=\"workspace-primary__panel-header\">"
                 f"<div class=\"workspace-primary__panel-title\"><span class=\"workspace-primary__panel-icon\">"
                 f"<i class=\"bi {escape(section['icon'])}\"></i></span>"
@@ -297,6 +426,7 @@ def render_workspace_navigation() -> None:
         "</div>",
         f"<div class=\"workspace-primary\">{_build_sections()}</div>",
         "</section>",
+        _ENHANCEMENT_SCRIPT,
     ]
 
     st.markdown("".join(html_parts), unsafe_allow_html=True)
