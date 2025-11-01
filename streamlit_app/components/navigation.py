@@ -173,7 +173,9 @@ _MEGA_MENU_SECTIONS: Final[Sequence[Dict[str, Any]]] = (
     },
 )
 
-_ENHANCEMENT_SCRIPT: Final[str] = """
+_PRIMARY_TAB_COUNT: Final[int] = len(_PAGE_KEYS)
+
+_ENHANCEMENT_SCRIPT_TEMPLATE: Final[str] = """
 <script>
 (function () {
   const rootDocument = window.parent?.document ?? document;
@@ -187,6 +189,29 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
   }
 
   header.dataset.enhanced = 'true';
+
+  const PRIMARY_TABS_COUNT = __PRIMARY_TAB_COUNT__;
+  const allTabButtons = Array.from(
+    rootDocument.querySelectorAll('[data-baseweb="tab"]')
+  );
+  const workspaceTabButtons = allTabButtons.slice(0, PRIMARY_TABS_COUNT);
+  if (workspaceTabButtons.length === 0) {
+    return;
+  }
+
+  const workspaceTabList = workspaceTabButtons[0]?.closest(
+    '[data-baseweb="tab-list"]'
+  );
+  if (workspaceTabList) {
+    workspaceTabList.classList.add('workspace-tabs-hidden');
+    const styleId = 'workspace-tabs-hidden-style';
+    if (!rootDocument.getElementById(styleId)) {
+      const styleTag = rootDocument.createElement('style');
+      styleTag.id = styleId;
+      styleTag.textContent = '.workspace-tabs-hidden { display: none !important; }';
+      rootDocument.head?.appendChild(styleTag);
+    }
+  }
 
   const toggles = header.querySelectorAll('[data-mega-trigger]');
   const panels = header.querySelectorAll('[data-mega-panel]');
@@ -207,8 +232,7 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
   };
 
   const selectWorkspaceTab = (index) => {
-    const tabButtons = rootDocument.querySelectorAll('[data-baseweb="tab"]');
-    const target = tabButtons?.[index];
+    const target = workspaceTabButtons?.[index];
     if (target instanceof HTMLElement) {
       target.click();
     }
@@ -232,10 +256,7 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
   };
 
   const syncFromStreamlitTabs = () => {
-    const streamlitTabs = Array.from(
-      rootDocument.querySelectorAll('[data-baseweb="tab"]')
-    );
-    const activeIndex = streamlitTabs.findIndex(
+    const activeIndex = workspaceTabButtons.findIndex(
       (tab) => tab.getAttribute('aria-selected') === 'true'
     );
     if (activeIndex >= 0) {
@@ -291,7 +312,7 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
     const target = event.target;
     if (target && typeof target.closest === 'function') {
       const tab = target.closest('[data-baseweb="tab"]');
-      if (tab) {
+      if (tab && workspaceTabButtons.includes(tab)) {
         window.requestAnimationFrame(syncFromStreamlitTabs);
       }
     }
@@ -299,6 +320,10 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
 })();
 </script>
 """
+
+_ENHANCEMENT_SCRIPT: Final[str] = _ENHANCEMENT_SCRIPT_TEMPLATE.replace(
+    "__PRIMARY_TAB_COUNT__", str(_PRIMARY_TAB_COUNT)
+)
 
 
 def _badge_markup(badge: Dict[str, str] | None) -> str:
