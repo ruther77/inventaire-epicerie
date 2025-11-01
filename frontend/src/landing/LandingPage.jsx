@@ -1,40 +1,79 @@
 import { useMemo } from "react";
 
-const FEATURES = [
+const HERO_METRICS = [
+  { value: "120K", label: "Références synchronisées" },
+  { value: "< 24h", label: "Pour être opérationnel" },
+  { value: "+18%", label: "Gain de productivité moyen" },
+];
+
+const FEATURE_GROUPS = [
   {
-    title: "Centralisez votre catalogue",
+    title: "Catalogue unifié",
     description:
-      "Synchronisez vos fournisseurs, mettez à jour les prix en temps réel et construisez des assortiments sur-mesure.",
+      "Pilotez vos fiches produits, gérez les déclinaisons et automatisez la mise à jour des tarifs en quelques clics.",
+    tags: ["Données fiables", "Visuels enrichis", "Alertes ruptures"],
   },
   {
-    title: "Accélérez la préparation des commandes",
+    title: "Approvisionnement assisté",
     description:
-      "Retrouvez les listes intelligentes, vos favoris et l'historique des achats pour gagner du temps au quotidien.",
+      "Anticipez la demande grâce aux prévisions, consolidez vos commandes et suivez les réceptions en temps réel.",
+    tags: ["Prévisions IA", "Listes intelligentes", "Plans de commandes"],
   },
   {
-    title: "Pilotez vos performances",
+    title: "Pilotage 360°",
     description:
-      "Suivez vos indicateurs clés, analysez les ventes et identifiez les opportunités de promotion.",
+      "Suivez vos marges, vos écarts d'inventaire et la performance des opérations marketing sur un tableau de bord unique.",
+    tags: ["Tableaux de bord", "Alertes automatiques", "Exports BI"],
   },
 ];
 
 const TIMELINE_STEPS = [
   {
-    title: "Créez votre compte",
+    title: "Onboarding express",
     description:
-      "Activez votre espace sécurisé et invitez votre équipe pour collaborer sur le même environnement de travail.",
+      "Nous importons vos historiques et configurons vos règles métiers pour que vos équipes retrouvent leurs repères.",
   },
   {
-    title: "Connectez vos données",
-    description: "Importez vos catalogues fournisseurs, vos commandes et vos stocks en quelques clics.",
+    title: "Connexion des flux",
+    description:
+      "ERP, caisse, facturation... nous activons les intégrations nécessaires et sécurisons les échanges de données.",
   },
   {
-    title: "Lancez-vous !",
-    description: "Accédez au tableau de bord et commencez à piloter vos opérations en magasin.",
+    title: "Accompagnement terrain",
+    description:
+      "Formations ciblées, coaching magasin et support premium pour garantir l'adoption par toutes vos équipes.",
   },
 ];
 
-const PARTNERS = ["Carrefour Market", "U Express", "Grand Frais", "Bio C Bon"];
+const INTEGRATIONS = ["Cegid", "Generix", "Octave", "Microsoft Dynamics", "CashMag", "Power BI"];
+
+const TESTIMONIALS = [
+  {
+    quote:
+      "Inventaire Épicerie nous fait gagner près d'une demi-journée par semaine sur la préparation des commandes tout en réduisant les ruptures.",
+    author: "Sonia, directrice U Express Lyon",
+  },
+  {
+    quote:
+      "La vue consolidée des marges et des écarts nous permet de piloter finement nos opérations promotionnelles.",
+    author: "Yanis, responsable exploitation Carrefour Market",
+  },
+];
+
+const CTA_CARDS = [
+  {
+    title: "Demander une démo",
+    description: "Bénéficiez d'une présentation personnalisée avec nos experts retail.",
+    actionLabel: "Prendre rendez-vous",
+    href: "mailto:contact@inventaire-epicerie.fr",
+  },
+  {
+    title: "Essayer gratuitement",
+    description: "Activez un espace test et explorez nos outils pendant 14 jours.",
+    actionLabel: "Créer mon compte",
+    href: "/app/auth/signup",
+  },
+];
 
 export default function LandingPage() {
   const currentYear = useMemo(() => new Date().getFullYear(), []);
@@ -42,95 +81,139 @@ export default function LandingPage() {
   return (
     <div className="landing-page">
       <header className="landing-hero">
+        <div className="landing-hero__background" aria-hidden="true" />
         <div className="landing-hero__content">
-          <p className="landing-eyebrow">Plateforme retail augmentée</p>
-          <h1>Inventaire Épicerie accompagne vos équipes magasin au quotidien.</h1>
+          <p className="landing-eyebrow">Suite SaaS pour les épiceries & réseaux de magasins</p>
+          <h1>Un cockpit moderne pour orchestrer vos opérations retail.</h1>
           <p className="landing-description">
-            De la gestion du catalogue à la commande, en passant par la mise en avant des promotions, tout est pensé
-            pour simplifier vos opérations et booster votre marge.
+            Inventaire Épicerie connecte vos équipes terrain, vos fournisseurs et vos outils métiers pour offrir une
+            visibilité temps réel sur le stock, les ventes et la rentabilité.
           </p>
           <div className="landing-actions">
             <a className="landing-cta" href="/app/">
               Accéder à l'application
             </a>
             <a className="landing-secondary" href="#features">
-              Découvrir les fonctionnalités
+              Explorer les modules
             </a>
           </div>
+          <dl className="landing-metrics">
+            {HERO_METRICS.map((metric) => (
+              <div key={metric.label}>
+                <dt>{metric.label}</dt>
+                <dd>{metric.value}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
-        <div className="landing-hero__card">
-          <p className="landing-card__title">Vos chiffres clés en un coup d'œil</p>
-          <ul>
+
+        <aside className="landing-hero__panel">
+          <h2>Pilotez la performance de votre magasin</h2>
+          <ul className="landing-hero__list">
             <li>
-              <span className="landing-card__metric">-18%</span>
-              <span className="landing-card__label">Temps passé à préparer les commandes</span>
+              <span className="landing-card__metric">98%</span>
+              <span className="landing-card__label">de fiabilité sur les stocks valorisés</span>
             </li>
             <li>
-              <span className="landing-card__metric">+12%</span>
-              <span className="landing-card__label">Marge moyenne sur les rayons frais</span>
+              <span className="landing-card__metric">x3</span>
+              <span className="landing-card__label">plus de campagnes promotionnelles analysées</span>
             </li>
             <li>
-              <span className="landing-card__metric">24h</span>
-              <span className="landing-card__label">Pour déployer Inventaire Épicerie en magasin</span>
+              <span className="landing-card__metric">7j/7</span>
+              <span className="landing-card__label">support opérationnel basé en France</span>
             </li>
           </ul>
-        </div>
+        </aside>
       </header>
 
       <main>
-        <section id="features" className="landing-section">
-          <h2>Une plateforme conçue pour la distribution alimentaire</h2>
-          <div className="landing-features">
-            {FEATURES.map((feature) => (
+        <section id="features" className="landing-section landing-section--grid">
+          <div className="landing-section__heading">
+            <h2>Une plateforme modulaire qui évolue avec vos besoins</h2>
+            <p>
+              Nos modules couvrent l'ensemble du cycle retail : sourcing, mise en avant, vente et pilotage. Composez votre
+              stack selon vos priorités.
+            </p>
+          </div>
+          <div className="landing-feature-grid">
+            {FEATURE_GROUPS.map((feature) => (
               <article key={feature.title} className="landing-feature">
                 <h3>{feature.title}</h3>
                 <p>{feature.description}</p>
+                <ul className="landing-feature__tags">
+                  {feature.tags.map((tag) => (
+                    <li key={tag}>{tag}</li>
+                  ))}
+                </ul>
               </article>
             ))}
           </div>
         </section>
 
-        <section className="landing-section landing-section--highlight">
-          <div className="landing-section__content">
-            <h2>Connectez vos outils existants</h2>
+        <section className="landing-section landing-section--integrations">
+          <div className="landing-section__heading">
+            <h2>Compatible avec vos outils existants</h2>
             <p>
-              Inventaire Épicerie s'intègre avec vos ERP, solutions de caisse et outils de BI. Notre équipe vous
-              accompagne pour activer les imports automatiques et sécuriser vos échanges de données.
+              API ouvertes, webhooks, connecteurs natifs et import automatiques : Inventaire Épicerie s'imbrique dans votre
+              écosystème sans perturber vos habitudes.
             </p>
-            <div className="landing-partners">
-              {PARTNERS.map((partner) => (
-                <span key={partner}>{partner}</span>
-              ))}
-            </div>
+          </div>
+          <div className="landing-partners">
+            {INTEGRATIONS.map((name) => (
+              <span key={name}>{name}</span>
+            ))}
           </div>
         </section>
 
-        <section className="landing-section">
-          <h2>Déploiement express</h2>
+        <section className="landing-section landing-section--timeline">
+          <div className="landing-section__heading">
+            <h2>Un déploiement orchestré en trois étapes</h2>
+            <p>Notre équipe Customer Success vous accompagne du cadrage initial à l'adoption complète en magasin.</p>
+          </div>
           <ol className="landing-timeline">
-            {TIMELINE_STEPS.map((step) => (
+            {TIMELINE_STEPS.map((step, index) => (
               <li key={step.title}>
-                <h3>{step.title}</h3>
-                <p>{step.description}</p>
+                <span className="landing-timeline__index">{index + 1}</span>
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.description}</p>
+                </div>
               </li>
             ))}
           </ol>
         </section>
 
-        <section className="landing-section landing-section--cta">
-          <div>
-            <h2>Prêt à transformer vos opérations magasin ?</h2>
-            <p>Créez votre compte en ligne et commencez à piloter vos assortiments en toute autonomie.</p>
+        <section className="landing-section landing-section--testimonials">
+          <div className="landing-section__heading">
+            <h2>Ils parlent de nous</h2>
+            <p>Réseaux d'épiceries, franchises et magasins indépendants nous font confiance chaque jour.</p>
           </div>
-          <a className="landing-cta" href="/app/auth/signup">
-            Créer un compte
-          </a>
+          <div className="landing-testimonials">
+            {TESTIMONIALS.map((testimonial) => (
+              <figure key={testimonial.author}>
+                <blockquote>“{testimonial.quote}”</blockquote>
+                <figcaption>{testimonial.author}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        <section className="landing-section landing-section--cta">
+          {CTA_CARDS.map((card) => (
+            <article key={card.title} className="landing-cta-card">
+              <h3>{card.title}</h3>
+              <p>{card.description}</p>
+              <a className="landing-cta" href={card.href}>
+                {card.actionLabel}
+              </a>
+            </article>
+          ))}
         </section>
       </main>
 
       <footer className="landing-footer">
         <p>
-          © {currentYear} Inventaire Épicerie · <a href="mailto:contact@inventaire-epicerie.fr">Contact</a> ·
+          © {currentYear} Inventaire Épicerie · <a href="mailto:contact@inventaire-epicerie.fr">Contact</a> ·{' '}
           <a href="/app/aide">Centre d'aide</a>
         </p>
       </footer>

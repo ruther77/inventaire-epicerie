@@ -66,11 +66,13 @@ shell ouvert via `make shell`.
 
 ### Avec Docker (recommandé)
 
-1. Créez un fichier `.env` à partir de `env.prod.example` en adaptant les
+1. Créez un fichier `.env` à partir de `.env.example` (ou `env.prod.example` pour
+   une configuration prête pour la production) en adaptant les
    valeurs si nécessaire.
 2. Lancez la stack :
 
    ```bash
+   cp .env.example .env  # si vous ne l'avez pas encore fait
    make up
    ```
 
@@ -85,6 +87,25 @@ shell ouvert via `make shell`.
    ```bash
    make down
    ```
+
+#### Déployer l'ensemble hébergeable
+
+Le fichier `docker-compose.prod.yml` décrit la stack complète (PostgreSQL,
+API FastAPI, interface Streamlit et SPA React). Les images utilisent le même
+Dockerfile avec un point d'entrée multi-process (`docker/entrypoint.sh`) qui
+sélectionne automatiquement le service à lancer via la variable `APP_PROCESS`.
+
+```bash
+cp env.prod.example .env  # personnalisez ensuite les valeurs
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Les ports exposés par défaut sont :
+
+* 5432 pour PostgreSQL
+* 8000 pour l'API FastAPI
+* 8501 pour Streamlit
+* 4173 pour l'aperçu du front React (build Vite)
 
 #### Mettre à jour le conteneur `app`
 
