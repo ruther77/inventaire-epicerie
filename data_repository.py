@@ -15,16 +15,28 @@ DATABASE_URL_ENV = "DATABASE_URL"
 logger = logging.getLogger(__name__)
 
 
-def _require_database_url() -> str:
+_FALLBACK_DATABASE_URL = "sqlite+pysqlite:///:memory:"
+_warned_missing_database_url = False
+
+
+def _resolve_database_url() -> str:
+    """Return the configured database URL or fall back to an in-memory SQLite database."""
+
+    global _warned_missing_database_url  # noqa: PLW0603 - module level cache for warning
+
     url = os.getenv(DATABASE_URL_ENV)
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL environment variable must be configured before accessing the database."
+    if url:
+        return url
+
+    if not _warned_missing_database_url:
+        logger.warning(
+            "%s is not set. Using fallback %s intended for local testing only.",
+            DATABASE_URL_ENV,
+            _FALLBACK_DATABASE_URL,
         )
-    return url
+        _warned_missing_database_url = True
 
-
-_require_database_url()
+    return _FALLBACK_DATABASE_URL
 
 
 def _get_pool_setting(env_var: str, default: int) -> int:
@@ -57,17 +69,21 @@ def _get_pool_setting(env_var: str, default: int) -> int:
 _ENGINE_FACTORY: Callable[[], Engine] | None = None
 
 
-def _default_engine_factory() -> Engine:
-    database_url = _require_database_url()
-    pool_size = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
-    max_overflow = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
+def _build_engine(database_url: str) -> Engine:
+    engine_kwargs: dict = {"pool_pre_ping": True}
 
-    return create_engine(
-        database_url,
-        pool_pre_ping=True,
-        pool_size=pool_size,
-        max_overflow=max_overflow,
-    )
+    if database_url.startswith("sqlite:"):
+        return create_engine(database_url, **engine_kwargs)
+
+    engine_kwargs["pool_size"] = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
+    engine_kwargs["max_overflow"] = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
+
+    return create_engine(database_url, **engine_kwargs)
+
+
+def _default_engine_factory() -> Engine:
+    database_url = _resolve_database_url()
+    return _build_engine(database_url)
 
 
 def _resolve_engine_factory() -> Callable[[], Engine]:
@@ -92,12 +108,7 @@ def configure_engine(*, engine_factory: Callable[[], Engine] | None = None, data
 
     if database_url is not None:
         def _factory() -> Engine:
-            return create_engine(
-                database_url,
-                pool_pre_ping=True,
-                pool_size=_get_pool_setting("SQLALCHEMY_POOL_SIZE", 10),
-                max_overflow=_get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20),
-            )
+            return _build_engine(database_url)
 
         _ENGINE_FACTORY = _factory
     else:
