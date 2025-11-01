@@ -911,6 +911,11 @@ button.danger {
   margin-top: 1rem;
 }
 
+.pos-total.server {
+  font-weight: 600;
+  color: #0f172a;
+}
+
 .pos-cart-list {
   list-style: none;
   padding: 0;
@@ -973,6 +978,12 @@ button.danger {
 .status-inactive {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.protected-route-loading {
+  padding: 2rem;
+  text-align: center;
+  color: #334155;
 }
 
 .user-form {

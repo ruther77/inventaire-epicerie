@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Iterable, List
 import hashlib
@@ -19,6 +19,7 @@ import re
 
 import jwt
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from data_repository import (
@@ -58,7 +59,9 @@ from product_service import (
 
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
-AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "__inventaire_epicerie_secret_key__")
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
+if not AUTH_SECRET_KEY:
+    raise RuntimeError("AUTH_SECRET_KEY environment variable must be configured for API startup.")
 ALLOWED_ROLES = {"admin", "standard"}
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_ITERATIONS = int(os.getenv("AUTH_PBKDF2_ITERATIONS", "390000"))
@@ -128,6 +131,8 @@ class CheckoutResponse(BaseModel):
     message: str | None = None
     receipt_filename: str | None = None
     receipt_base64: str | None = None
+    total_ht: float | None = None
+    total_ttc: float | None = None
 
 
 class ProductUpdateRequest(BaseModel):
@@ -644,11 +649,84 @@ def _fetch_products() -> list[ProductPayload]:
     return [ProductPayload(**record) for record in df.to_dict("records")]
 
 
+def _load_active_products_map(product_ids: set[int]) -> dict[int, dict[str, object]]:
+    if not product_ids:
+        return {}
+
+    ids = list(product_ids)
+    placeholders = ", ".join(f":pid_{index}" for index, _ in enumerate(ids))
+    params = {f"pid_{index}": pid for index, pid in enumerate(ids)}
+    sql = text(
+        f"""
+        SELECT id,
+               nom,
+               COALESCE(prix_vente, 0) AS prix_vente,
+               COALESCE(tva, 0) AS tva
+        FROM produits
+        WHERE actif = TRUE AND id IN ({placeholders})
+        """
+    )
+    df = query_df(sql, params)
+    if df.empty:
+        return {}
+    return {int(record["id"]): record for record in df.to_dict("records")}
+
+
 def _as_decimal(value: float | int | str | None) -> Decimal:
     try:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return Decimal("0")
+
+
+def _quantize_currency(amount: Decimal) -> Decimal:
+    return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _prepare_checkout_payload(cart: list[POSCartLine]) -> tuple[list[dict[str, object]], Decimal, Decimal]:
+    if not cart:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le panier est vide.")
+
+    product_ids = {line.id for line in cart}
+    product_map = _load_active_products_map(product_ids)
+    missing = sorted(pid for pid in product_ids if pid not in product_map)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Produits introuvables ou inactifs: {', '.join(map(str, missing))}",
+        )
+
+    sanitized: list[dict[str, object]] = []
+    total_ht = Decimal("0")
+    total_ttc = Decimal("0")
+
+    for line in cart:
+        qty = _as_decimal(line.qty)
+        if qty <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Quantité invalide pour le produit {line.id}",
+            )
+
+        product_data = product_map[line.id]
+        unit_price = _as_decimal(product_data.get("prix_vente"))
+        tva_rate = _as_decimal(product_data.get("tva"))
+
+        sanitized.append(
+            {
+                "id": line.id,
+                "nom": product_data.get("nom") or f"Produit {line.id}",
+                "prix_vente": float(unit_price),
+                "tva": float(tva_rate),
+                "qty": float(qty),
+            }
+        )
+
+        line_ht = qty * unit_price
+        total_ht += line_ht
+        total_ttc += line_ht * (Decimal("1") + tva_rate / Decimal("100"))
+
+    return sanitized, total_ht, total_ttc
 
 
 def _compute_order_totals(lines: Iterable[OrderLinePayload]) -> tuple[Decimal, Decimal]:
@@ -1048,22 +1126,34 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/products", response_model=list[ProductPayload])
-    def list_products() -> list[ProductPayload]:
+    def list_products(_: dict = Depends(get_current_active_user)) -> list[ProductPayload]:
         return _fetch_products()
 
     @app.get("/inventory/summary")
-    def inventory_summary() -> dict[str, float]:
+    def inventory_summary(_: dict = Depends(get_current_active_user)) -> dict[str, float]:
         return _compute_inventory_value()
 
     @app.post("/pos/checkout", response_model=CheckoutResponse)
-    def checkout(payload: CheckoutRequest) -> CheckoutResponse:
+    def checkout(
+        payload: CheckoutRequest,
+        current_user: dict = Depends(get_current_active_user),
+    ) -> CheckoutResponse:
+        sanitized_cart, total_ht, total_ttc = _prepare_checkout_payload(payload.cart)
         success, message, receipt = process_sale_transaction(
-            [item.model_dump() for item in payload.cart],
-            payload.username or "api_user",
+            sanitized_cart,
+            current_user.get("username") or "api_user",
         )
 
+        total_ht_value = float(_quantize_currency(total_ht))
+        total_ttc_value = float(_quantize_currency(total_ttc))
+
         if not success:
-            return CheckoutResponse(success=False, message=message)
+            return CheckoutResponse(
+                success=False,
+                message=message,
+                total_ht=total_ht_value,
+                total_ttc=total_ttc_value,
+            )
 
         receipt_filename = None
         receipt_base64 = None
@@ -1078,10 +1168,16 @@ def create_app() -> FastAPI:
             message=message,
             receipt_filename=receipt_filename,
             receipt_base64=receipt_base64,
+            total_ht=total_ht_value,
+            total_ttc=total_ttc_value,
         )
 
     @app.patch("/products/{product_id}")
-    def update_product(product_id: int, payload: ProductUpdateRequest) -> dict[str, object]:
+    def update_product(
+        product_id: int,
+        payload: ProductUpdateRequest,
+        _: dict = Depends(require_admin),
+    ) -> dict[str, object]:
         try:
             result = update_catalog_entry(
                 product_id,

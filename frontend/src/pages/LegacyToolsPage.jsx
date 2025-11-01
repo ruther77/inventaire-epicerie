@@ -1,4 +1,7 @@
 export default function LegacyToolsPage() {
+  const legacyUrl = import.meta.env.VITE_LEGACY_TOOLS_URL ?? '';
+  const isEnabled = legacyUrl.trim().length > 0;
+
   return (
     <div className="page">
       <header className="page-header">
@@ -12,17 +15,28 @@ export default function LegacyToolsPage() {
       </header>
       <section className="card">
         <h2>Accès direct</h2>
-        <p>
-          Certaines fonctionnalités (extraction de facture, audit d&apos;inventaire…) restent gérées par
-          l&apos;ancienne interface Streamlit pendant la période de migration. Accédez-y directement via l&apos;iframe
-          ci-dessous.
-        </p>
-        <iframe
-          className="legacy-app"
-          title="Application Streamlit historique"
-          src="http://localhost:8501"
-          allow="camera; microphone"
-        />
+        {!isEnabled && (
+          <p>
+            Les outils historiques sont désactivés. Configurez <code>VITE_LEGACY_TOOLS_URL</code> pour les
+            rendre accessibles dans un environnement sécurisé.
+          </p>
+        )}
+        {isEnabled && (
+          <>
+            <p>
+              Certaines fonctionnalités (extraction de facture, audit d&apos;inventaire…) restent gérées par
+              l&apos;ancienne interface Streamlit pendant la période de migration. Accédez-y directement via
+              l&apos;iframe sécurisée ci-dessous.
+            </p>
+            <iframe
+              className="legacy-app"
+              title="Application Streamlit historique"
+              src={legacyUrl}
+              allow="camera; microphone"
+              sandbox="allow-same-origin allow-scripts allow-forms"
+            />
+          </>
+        )}
       </section>
     </div>
   );
