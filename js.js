@@ -227,23 +227,77 @@
            09. Product Quantity
         -----------------------------------*/
         var proQty = $(".pro-qty");
-        proQty.append('<a href="#" class="inc qty-btn">+</a>');
-        proQty.append('<a href="#" class= "dec qty-btn">-</a>');
-        $('.qty-btn').on('click', function(e) {
-            e.preventDefault();
-            var $button = $(this);
-            var oldValue = $button.parent().find('input').val();
-            if ($button.hasClass('inc')) {
-                var newVal = parseFloat(oldValue) + 1;
-            } else {
-                // Don't allow decrementing below zero
-                if (oldValue > 0) {
-                    var newVal = parseFloat(oldValue) - 1;
-                } else {
-                    newVal = 0;
+        if (proQty.length) {
+            proQty.append('<a href="#" class="inc qty-btn">+</a>');
+            proQty.append('<a href="#" class= "dec qty-btn">-</a>');
+            $('.qty-btn').on('click', function(e) {
+                e.preventDefault();
+                var $button = $(this);
+                var oldValue = parseFloat($button.parent().find('input').val());
+                if (isNaN(oldValue)) {
+                    oldValue = 0;
                 }
+                var newVal;
+                if ($button.hasClass('inc')) {
+                    newVal = oldValue + 1;
+                } else {
+                    newVal = oldValue > 0 ? oldValue - 1 : 0;
+                }
+                $button.parent().find('input').val(newVal);
+            });
+        }
+
+        var quantityControls = $(".product-quantity-control");
+        quantityControls.each(function() {
+            var $control = $(this);
+            var $input = $control.find('input[type="number"], input').first();
+            if (!$input.length) {
+                return;
             }
-            $button.parent().find('input').val(newVal);
+
+            var min = parseFloat($input.attr('min'));
+            if (isNaN(min)) {
+                min = 0;
+            }
+
+            var max = parseFloat($input.attr('max'));
+            if (isNaN(max)) {
+                max = Infinity;
+            }
+
+            var step = parseFloat($input.attr('step'));
+            if (isNaN(step) || step <= 0) {
+                step = 1;
+            }
+
+            $control.on('click', '[data-qty-action]', function(event) {
+                event.preventDefault();
+                var action = $(this).data('qty-action');
+                var currentValue = parseFloat($input.val());
+
+                if (isNaN(currentValue)) {
+                    currentValue = min || 0;
+                }
+
+                if (action === 'increment') {
+                    currentValue += step;
+                } else if (action === 'decrement') {
+                    currentValue -= step;
+                }
+
+                if (!isFinite(max)) {
+                    max = Infinity;
+                }
+
+                currentValue = Math.max(currentValue, min);
+                currentValue = Math.min(currentValue, max);
+
+                // Normalize potential floating point precision issues.
+                currentValue = parseFloat(currentValue.toFixed(5));
+
+                $input.val(currentValue);
+                $input.trigger('change');
+            });
         });
 
         /*--------------------------------------
