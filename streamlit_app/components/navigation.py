@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Dict, Final, List, Sequence
+from typing import Any, Dict, Final, Iterable, List, Sequence
 
 import streamlit as st
 
@@ -77,7 +77,7 @@ _MEGA_MENU_SECTIONS: Final[Sequence[Dict[str, Any]]] = (
             },
             {
                 "label": "Audit & écarts",
-                "description": "Suivi des écarts d\'inventaire et plans d\'actions.",
+                "description": "Suivi des écarts d'inventaire et plans d'actions.",
                 "page_key": "audit",
             },
         ),
@@ -87,7 +87,7 @@ _MEGA_MENU_SECTIONS: Final[Sequence[Dict[str, Any]]] = (
         "label": "Opérations",
         "subtitle": "Achats & ventes",
         "title": "Opérations quotidiennes",
-        "description": "Accédez aux modules d\'exécution et aux outils de saisie.",
+        "description": "Accédez aux modules d'exécution et aux outils de saisie.",
         "featured": (
             {
                 "label": "Approvisionnement",
@@ -188,21 +188,33 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
 
   header.dataset.enhanced = 'true';
 
-  const toggles = header.querySelectorAll('[data-mega-trigger]');
-  const panels = header.querySelectorAll('[data-mega-panel]');
+  const megaMenu = header.querySelector('[data-mega-menu]');
+  const toggleButton = megaMenu?.querySelector('.mega-menu-trigger');
+  const brandToggle = header.querySelector('.hamburger');
+  const tabButtons = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-tab]')) : [];
+  const panels = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-panel]')) : [];
+
+  const toggleElements = [toggleButton, brandToggle].filter(Boolean);
 
   const setActiveSection = (sectionId) => {
-    toggles.forEach((toggle) => {
-      const isActive = toggle.getAttribute('data-mega-target') === sectionId;
-      toggle.classList.toggle('is-active', isActive);
-      toggle.setAttribute('aria-expanded', isActive ? 'true' : 'false');
-      toggle.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    tabButtons.forEach((tab) => {
+      const isActive = tab.dataset.megaTab === sectionId;
+      tab.classList.toggle('active', isActive);
+      tab.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
-
     panels.forEach((panel) => {
-      const isActive = panel.getAttribute('data-mega-panel') === sectionId;
-      panel.classList.toggle('is-active', isActive);
+      const isActive = panel.dataset.megaPanel === sectionId;
+      panel.classList.toggle('visible', isActive);
       panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  };
+
+  const closeMenu = () => {
+    if (!megaMenu) return;
+    megaMenu.classList.remove('mega-menu-open');
+    toggleElements.forEach((toggle) => {
+      toggle.setAttribute('aria-expanded', 'false');
     });
   };
 
@@ -249,132 +261,13 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
     }
   };
 
-  toggles.forEach((toggle) => {
-    const targetSection = toggle.getAttribute('data-mega-target');
-    if (!targetSection) {
-      return;
-    }
-
-    toggle.addEventListener('click', (event) => {
-      event.preventDefault();
-      setActiveSection(targetSection);
-    });
-
-    toggle.addEventListener('mouseenter', () => setActiveSection(targetSection));
-    toggle.addEventListener('focus', () => setActiveSection(targetSection));
-  });
-
-  const tabLinks = header.querySelectorAll('[data-tab-target]');
-  tabLinks.forEach((link) => {
-    link.addEventListener('click', (event) => {
-      const targetIndex = Number(link.getAttribute('data-tab-target'));
-      const hasTarget = Number.isFinite(targetIndex);
-      const pageKey = link.getAttribute('data-page-key');
-      if (hasTarget) {
-        event.preventDefault();
-        selectWorkspaceTab(targetIndex);
-      }
-      if (pageKey) {
-        updateActiveLinks(pageKey);
-      }
-    });
-  });
-
-  const initialSection = toggles[0]?.getAttribute('data-mega-target');
-  if (initialSection) {
-    setActiveSection(initialSection);
-  }
-
-  syncFromStreamlitTabs();
-
-  rootDocument.addEventListener('click', (event) => {
-    const target = event.target;
-    if (target && typeof target.closest === 'function') {
-      const tab = target.closest('[data-baseweb="tab"]');
-      if (tab) {
-        window.requestAnimationFrame(syncFromStreamlitTabs);
-      }
-    }
-  });
-})();
-</script>
-"""
-
-
-  const header = rootDocument.querySelector('[data-workspace-nav]');
-  if (!header || header.dataset.enhanced === 'true') {
-    return;
-  }
-
-  header.dataset.enhanced = 'true';
-
-  const megaMenu = header.querySelector('[data-mega-menu]');
-  const toggleButton = megaMenu?.querySelector('.mega-menu-trigger');
-  const brandToggle = header.querySelector('.hamburger');
-  const tabButtons = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-tab]')) : [];
-  const panels = megaMenu ? Array.from(megaMenu.querySelectorAll('[data-mega-panel]')) : [];
-
-  const toggleElements = [toggleButton, brandToggle].filter(Boolean);
-
-  const setActiveSection = (sectionId) => {
-    tabButtons.forEach((tab) => {
-      const isActive = tab.dataset.megaTab === sectionId;
-      tab.classList.toggle('active', isActive);
-      tab.setAttribute('aria-expanded', isActive ? 'true' : 'false');
-    });
-    panels.forEach((panel) => {
-      const isActive = panel.dataset.megaPanel === sectionId;
-      panel.classList.toggle('visible', isActive);
-      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
-    });
-  };
-
-  if (tabButtons.length > 0) {
-    setActiveSection(tabButtons[0].dataset.megaTab);
-  }
-
-  const closeMenu = () => {
-    if (!megaMenu) return;
-    megaMenu.classList.remove('mega-menu-open');
-    toggleElements.forEach((toggle) => {
-      toggle.setAttribute('aria-expanded', 'false');
-    });
-  };
-
-  const selectWorkspaceTab = (index) => {
-    const tabButtons = rootDocument.querySelectorAll('[data-baseweb="tab"]');
-    const target = tabButtons?.[index];
-    if (target) {
-      target.click();
-    }
-  };
-
-  const updateActiveLinks = (pageKey) => {
-    if (!pageKey) return;
-    rootDocument.body?.setAttribute('data-current-page', pageKey);
-    header.querySelectorAll('[data-page-key]').forEach((node) => {
-      node.classList.toggle('is-active', node.getAttribute('data-page-key') === pageKey);
-    });
-  };
-
-  const syncFromStreamlitTabs = () => {
-    const streamlitTabs = Array.from(rootDocument.querySelectorAll('[data-baseweb="tab"]'));
-    const activeIndex = streamlitTabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
-    if (activeIndex >= 0) {
-      const activeLink = header.querySelector(`[data-tab-target="${activeIndex}"][data-page-key]`);
-      const pageKey = activeLink?.getAttribute('data-page-key');
-      if (pageKey) {
-        updateActiveLinks(pageKey);
-      }
-    }
-  };
-
   tabButtons.forEach((tab) => {
-    tab.addEventListener('mouseenter', () => setActiveSection(tab.dataset.megaTab));
-    tab.addEventListener('focus', () => setActiveSection(tab.dataset.megaTab));
+    const targetSection = tab.dataset.megaTab;
+    tab.addEventListener('mouseenter', () => setActiveSection(targetSection));
+    tab.addEventListener('focus', () => setActiveSection(targetSection));
     tab.addEventListener('click', (event) => {
       event.preventDefault();
-      setActiveSection(tab.dataset.megaTab);
+      setActiveSection(targetSection);
     });
   });
 
@@ -444,6 +337,11 @@ _ENHANCEMENT_SCRIPT: Final[str] = """
       closeMenu();
     }
   });
+
+  const initialSection = tabButtons[0]?.dataset.megaTab;
+  if (initialSection) {
+    setActiveSection(initialSection);
+  }
 })();
 </script>
 """
@@ -466,9 +364,7 @@ def _tab_target_attrs(page_key: str | None) -> str:
     tab_index = _PAGE_KEY_TO_INDEX.get(page_key)
     if tab_index is None:
         return ""
-    return (
-        f" data-tab-target=\"{tab_index}\" data-page-key=\"{escape(page_key)}\""
-    )
+    return f" data-tab-target=\"{tab_index}\" data-page-key=\"{escape(page_key)}\""
 
 
 def _build_tabs_markup() -> str:
@@ -477,121 +373,88 @@ def _build_tabs_markup() -> str:
         section_id = escape(section["id"])
         label = escape(section["label"])
         subtitle = escape(section.get("subtitle", ""))
+        subtitle_markup = (
+            f"<span class=\"mega-menu-tab-subtitle\">{subtitle}</span>" if subtitle else ""
+        )
         buttons.append(
             "".join(
                 [
                     f"<button class=\"mega-menu-tab\" type=\"button\" data-mega-tab=\"{section_id}\" ",
-                    f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\">",
+                    f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\" role=\"tab\" aria-selected=\"false\">",
                     f"<span class=\"mega-menu-tab-label\">{label}</span>",
-                    (
-                        f"<span class=\"mega-menu-tab-subtitle\">{subtitle}</span>"
-                        if subtitle
-                        else ""
-                    ),
+                    subtitle_markup,
                     "</button>",
                 ]
             )
-        return "".join(parts)
+        )
+    return "".join(buttons)
 
-    def _build_sections() -> str:
-        section_parts: List[str] = []
-        for section in _NAV_SECTIONS:
-            section_id = escape(section["id"])
-            header = (
-                f"<button class=\"workspace-primary__toggle\" type=\"button\" "
-                f"id=\"mega-trigger-{section_id}\" data-mega-trigger data-mega-target=\"{section_id}\" "
-                f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\" "
-                "role=\"tab\" aria-selected=\"false\">"
-                f"<i class=\"bi {escape(section['icon'])}\"></i>"
-                f"<span>{escape(section['label'])}</span></button>"
+
+def _build_featured_markup(section: Dict[str, Any]) -> str:
+    actions: List[str] = []
+    for featured in section.get("featured", ()):
+        label = escape(featured.get("label", ""))
+        if not label:
+            continue
+        attrs = _tab_target_attrs(featured.get("page_key"))
+        badge_markup = _badge_markup(featured.get("badge"))
+        actions.append(
+            "".join(
+                [
+                    f"<a class=\"mega-menu-featured-link\" href=\"#\"{attrs}>",
+                    label,
+                    badge_markup,
+                    "</a>",
+                ]
             )
         )
+    return "".join(actions)
 
-            item_parts: List[str] = []
-            for item in section["items"]:
-                label = escape(item["label"])
-                description = escape(item["description"])
-                badge = escape(item.get("badge", ""))
-                tab_index = item.get("tab_index", 0)
-                page_key = item.get("page_key")
-                page_data = f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
-                href = "#"
-                badge_markup = (
-                    f"<span class=\"badge workspace-preview__badge\">{badge}</span>" if badge else ""
-                )
-                item_parts.append(
-                    "".join(
-                        [
-                            "<li class=\"workspace-preview__item\">",
-                            f"<a class=\"workspace-preview__link\" href=\"{href}\" data-tab-target=\"{tab_index}\"{page_data}>",
-                            "<span class=\"workspace-preview__icon\"><i class=\"bi bi-arrow-up-right\"></i></span>",
-                            "<span class=\"workspace-preview__content\">",
-                            f"<span class=\"workspace-preview__label\">{label}{badge_markup}</span>",
-                            f"<span class=\"workspace-preview__desc\">{description}</span>",
-                            "</span></a></li>",
-                        ]
-                    )
-                )
 
-            link_parts: List[str] = []
-            for link in section.get("links", []):
-                label = escape(link["label"])
-                icon = escape(link.get("icon", "bi-arrow-right-short"))
-                tab_index = link.get("tab_index", 0)
-                page_key = link.get("page_key")
-                page_data = f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
-                href = "#"
-                link_parts.append(
-                    "".join(
-                        [
-                            "<li><a class=\"workspace-preview__secondary-link\" href=\"",
-                            href,
-                            "\" data-tab-target=\"",
-                            str(tab_index),
-                            "\"",
-                            page_data,
-                            f"><i class=\"bi {icon}\"></i>",
-                            f"<span>{label}</span></a></li>",
-                        ]
-                    )
-                )
-
-            panel = (
-                f"<section class=\"workspace-primary__panel\" id=\"mega-panel-{section_id}\" "
-                f"data-mega-panel=\"{section_id}\" role=\"tabpanel\" "
-                f"aria-labelledby=\"mega-trigger-{section_id}\" aria-hidden=\"true\">"
-                "<header class=\"workspace-primary__panel-header\">"
-                f"<div class=\"workspace-primary__panel-title\"><span class=\"workspace-primary__panel-icon\">"
-                f"<i class=\"bi {escape(section['icon'])}\"></i></span>"
-                f"<div><h3 class=\"workspace-primary__panel-heading\">{escape(section['label'])}</h3>"
-                f"<p class=\"workspace-primary__panel-description\">{escape(section['description'])}</p>"
-                "</div></div></header>"
-                "<div class=\"workspace-primary__panel-grid\">"
-                "<div class=\"workspace-primary__panel-column\">"
-                "<ul class=\"workspace-preview__list\">"
-                + "".join(item_parts)
-                + "</ul></div><div class=\"workspace-primary__panel-column\">"
-                "<h4 class=\"workspace-preview__title\">Accès rapides</h4><ul class=\"workspace-preview__secondary\">"
-                + "".join(link_parts)
-                + "</ul></div></div></section>"
+def _build_items_markup(items: Iterable[Dict[str, Any]]) -> str:
+    entries: List[str] = []
+    for item in items:
+        label = escape(item.get("label", ""))
+        if not label:
+            continue
+        description = escape(item.get("description", ""))
+        badge_markup = _badge_markup(item.get("badge"))
+        attrs = _tab_target_attrs(item.get("page_key"))
+        description_markup = f"<p>{description}</p>" if description else ""
+        entries.append(
+            "".join(
+                [
+                    f"<a class=\"mega-menu-item\" href=\"#\"{attrs}>",
+                    "<div class=\"mega-menu-item-heading\">",
+                    f"<span>{label}</span>",
+                    badge_markup,
+                    "</div>",
+                    description_markup,
+                    "</a>",
+                ]
             )
         )
+    return "".join(entries)
 
+
+def _build_panel_markup(section: Dict[str, Any]) -> str:
+    section_id = escape(section["id"])
+    title = escape(section.get("title", section.get("label", "")))
+    description = escape(section.get("description", ""))
+    featured_markup = _build_featured_markup(section)
+    items_markup = _build_items_markup(section.get("items", ()))
+    description_markup = f"<p>{description}</p>" if description else ""
     return "".join(
         [
-            f"<div class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" ",
-            f"id=\"mega-panel-{section_id}\" aria-hidden=\"true\">",
+            f"<div class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" id=\"mega-panel-{section_id}\" role=\"tabpanel\" aria-hidden=\"true\">",
             "<div class=\"mega-menu-panel-header\">",
             "<div>",
             f"<h3>{title}</h3>",
-            (f"<p>{description}</p>" if description else ""),
+            description_markup,
             "</div>",
-            "<div class=\"mega-menu-featured-actions\">",
-            "".join(featured_markup),
-            "</div></div>",
-            "<div class=\"mega-menu-grid\">",
-            "".join(items_markup),
+            f"<div class=\"mega-menu-featured-actions\">{featured_markup}</div>",
             "</div>",
+            f"<div class=\"mega-menu-grid\">{items_markup}</div>",
             "</div>",
         ]
     )
@@ -605,13 +468,16 @@ def _build_header_actions() -> str:
     links: List[str] = []
     for action in _HEADER_ACTIONS:
         label = escape(action.get("label", ""))
+        if not label:
+            continue
         icon = escape(action.get("icon", ""))
         attrs = _tab_target_attrs(action.get("page_key"))
+        icon_markup = f"<i class=\"bi {icon}\"></i>" if icon else ""
         links.append(
             "".join(
                 [
                     f"<a class=\"quick-action\" href=\"#\"{attrs}>",
-                    (f"<i class=\"bi {icon}\"></i>" if icon else ""),
+                    icon_markup,
                     f"<span>{label}</span>",
                     "</a>",
                 ]
@@ -636,7 +502,7 @@ def render_workspace_navigation() -> None:
         "<nav class=\"mega-menu\" data-mega-menu>",
         "<button class=\"mega-menu-trigger\" type=\"button\" aria-expanded=\"false\">Menu</button>",
         "<div class=\"mega-menu-content\">",
-        "<div class=\"mega-menu-tabs\">",
+        "<div class=\"mega-menu-tabs\" role=\"tablist\">",
         _build_tabs_markup(),
         "</div>",
         "<div class=\"mega-menu-panels\">",
@@ -647,8 +513,7 @@ def render_workspace_navigation() -> None:
         "<div class=\"header-actions\">",
         _build_header_actions(),
         "</div>",
-        f"<div class=\"workspace-primary\">{_build_sections()}</div>",
-        "</section>",
+        "</header>",
         _ENHANCEMENT_SCRIPT,
     ]
 
