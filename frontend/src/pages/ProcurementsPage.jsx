@@ -1,49 +1,46 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  createOrder,
-  fetchClients,
-  fetchOrders,
+  createProcurement,
+  fetchProcurements,
   fetchProducts,
-  updateOrder,
+  fetchSuppliers,
+  updateProcurement,
 } from '../api/client.js';
 
-const STATUSES = ['Brouillon', 'Préparation', 'Expédiée'];
+const STATUSES = ['Reçu', 'En attente', 'Planifié'];
 
-export default function OrdersPage() {
+export default function ProcurementsPage() {
   const queryClient = useQueryClient();
-  const { data: orders = [], isLoading, isError } = useQuery({
-    queryKey: ['orders'],
-    queryFn: fetchOrders,
+  const { data: procurements = [], isLoading, isError } = useQuery({
+    queryKey: ['procurements'],
+    queryFn: fetchProcurements,
   });
-  const { data: clients = [] } = useQuery({ queryKey: ['clients'], queryFn: fetchClients });
+  const { data: suppliers = [] } = useQuery({ queryKey: ['suppliers'], queryFn: fetchSuppliers });
   const { data: products = [] } = useQuery({ queryKey: ['products'], queryFn: fetchProducts });
 
   const [numero, setNumero] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [date, setDate] = useState('');
+  const [fournisseurId, setFournisseurId] = useState('');
   const [statut, setStatut] = useState(STATUSES[0]);
-  const [query, setQuery] = useState('');
-  const [lineForm, setLineForm] = useState({ produitId: '', quantite: 1, prixUnitaire: '', tva: '' });
+  const [lineForm, setLineForm] = useState({ produitId: '', quantite: 1, prixUnitaire: '' });
   const [lines, setLines] = useState([]);
 
   const createMutation = useMutation({
-    mutationFn: createOrder,
+    mutationFn: createProcurement,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['procurements'] });
       setNumero('');
-      setClientId('');
-      setDate('');
+      setFournisseurId('');
       setStatut(STATUSES[0]);
       setLines([]);
-      setLineForm({ produitId: '', quantite: 1, prixUnitaire: '', tva: '' });
+      setLineForm({ produitId: '', quantite: 1, prixUnitaire: '' });
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, payload }) => updateOrder(id, payload),
+    mutationFn: ({ id, payload }) => updateProcurement(id, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['procurements'] });
     },
   });
 
@@ -54,7 +51,6 @@ export default function OrdersPage() {
     const product = products.find((item) => String(item.id) === lineForm.produitId);
     const quantity = Number(lineForm.quantite) || 0;
     const unitPrice = Number(lineForm.prixUnitaire) || 0;
-    const tva = Number(lineForm.tva) || 0;
     if (quantity <= 0) {
       return;
     }
@@ -65,39 +61,19 @@ export default function OrdersPage() {
         produitNom: product?.nom ?? `Produit ${lineForm.produitId}`,
         quantite: quantity,
         prixUnitaire: unitPrice,
-        tva,
       },
     ]);
-    setLineForm({ produitId: '', quantite: 1, prixUnitaire: '', tva: '' });
+    setLineForm({ produitId: '', quantite: 1, prixUnitaire: '' });
   };
 
   const handleRemoveLine = (index) => {
     setLines((prev) => prev.filter((_, idx) => idx !== index));
   };
 
-  const totals = useMemo(() => {
-    return lines.reduce(
-      (acc, line) => {
-        const total = line.quantite * line.prixUnitaire;
-        return {
-          ht: acc.ht + total,
-          ttc: acc.ttc + total * (1 + line.tva / 100),
-        };
-      },
-      { ht: 0, ttc: 0 },
-    );
-  }, [lines]);
-
-  const filteredOrders = useMemo(() => {
-    const value = query.trim().toLowerCase();
-    if (!value) {
-      return orders;
-    }
-    return orders.filter((order) => {
-      const fields = [order.numero, order.client_nom ?? '', order.statut];
-      return fields.some((field) => field.toLowerCase().includes(value));
-    });
-  }, [orders, query]);
+  const estimatedTotal = useMemo(
+    () => lines.reduce((sum, line) => sum + line.quantite * line.prixUnitaire, 0),
+    [lines],
+  );
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -106,58 +82,62 @@ export default function OrdersPage() {
     }
     const payload = {
       numero: numero.trim(),
-      client_id: clientId ? Number(clientId) : undefined,
+      fournisseur_id: fournisseurId ? Number(fournisseurId) : undefined,
       statut,
-      date_commande: date ? new Date(`${date}T00:00:00`) : undefined,
       lignes: lines.map((line) => ({
         produit_id: line.produitId,
         quantite: line.quantite,
         prix_unitaire: line.prixUnitaire,
-        tva: line.tva,
       })),
     };
     createMutation.mutate(payload);
   };
 
-  const handleStatusChange = (order, nextStatus) => {
-    updateMutation.mutate({ id: order.id, payload: { statut: nextStatus } });
+  const handleStatusChange = (procurement, nextStatus) => {
+    updateMutation.mutate({ id: procurement.id, payload: { statut: nextStatus } });
   };
 
   return (
     <div className="page">
       <header className="page-header">
         <div>
-          <p className="page-eyebrow">Commandes</p>
-          <h1>Commandes clients</h1>
+          <p className="page-eyebrow">Achats</p>
+          <h1>Approvisionnements</h1>
           <p className="page-description">
-            Suivez les ventes, préparez les documents de livraison et gardez une trace des montants facturés.
+            Tracez les livraisons fournisseurs, anticipez les réceptions et conservez vos preuves d&apos;achat.
           </p>
         </div>
       </header>
       <section className="card">
-        <h2>Créer une commande</h2>
+        <h2>Enregistrer un approvisionnement</h2>
         <form className="grid two-columns" onSubmit={handleSubmit}>
-          <label htmlFor="order-number">Numéro</label>
+          <label htmlFor="procurement-number">Numéro</label>
           <input
-            id="order-number"
+            id="procurement-number"
             type="text"
             value={numero}
             onChange={(event) => setNumero(event.target.value)}
             required
           />
-          <label htmlFor="order-client">Client</label>
-          <select id="order-client" value={clientId} onChange={(event) => setClientId(event.target.value)}>
-            <option value="">Sans client</option>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.nom}
+          <label htmlFor="procurement-supplier">Fournisseur</label>
+          <select
+            id="procurement-supplier"
+            value={fournisseurId}
+            onChange={(event) => setFournisseurId(event.target.value)}
+          >
+            <option value="">Sans fournisseur</option>
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.nom}
               </option>
             ))}
           </select>
-          <label htmlFor="order-date">Date</label>
-          <input id="order-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-          <label htmlFor="order-status">Statut</label>
-          <select id="order-status" value={statut} onChange={(event) => setStatut(event.target.value)}>
+          <label htmlFor="procurement-status">Statut</label>
+          <select
+            id="procurement-status"
+            value={statut}
+            onChange={(event) => setStatut(event.target.value)}
+          >
             {STATUSES.map((status) => (
               <option key={status} value={status}>
                 {status}
@@ -175,10 +155,9 @@ export default function OrdersPage() {
                   ...prev,
                   produitId: value,
                   prixUnitaire:
-                    product && product.prix_vente != null
-                      ? String(product.prix_vente)
+                    product && product.prix_achat != null
+                      ? String(product.prix_achat)
                       : prev.prixUnitaire,
-                  tva: product && product.tva != null ? String(product.tva) : prev.tva,
                 }));
               }}
             >
@@ -200,17 +179,9 @@ export default function OrdersPage() {
               type="number"
               min="0"
               step="0.01"
-              placeholder="Prix"
+              placeholder="Prix unitaire"
               value={lineForm.prixUnitaire}
               onChange={(event) => setLineForm((prev) => ({ ...prev, prixUnitaire: event.target.value }))}
-            />
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="TVA %"
-              value={lineForm.tva}
-              onChange={(event) => setLineForm((prev) => ({ ...prev, tva: event.target.value }))}
             />
             <button type="button" onClick={handleAddLine}>
               Ajouter
@@ -225,7 +196,7 @@ export default function OrdersPage() {
                       <strong>{line.produitNom}</strong>
                       <span>
                         {' '}
-                        × {line.quantite} · {line.prixUnitaire.toFixed(2)} € (TVA {line.tva}%)
+                        × {line.quantite} · {line.prixUnitaire.toFixed(2)} €
                       </span>
                     </div>
                     <button type="button" className="secondary" onClick={() => handleRemoveLine(index)}>
@@ -234,56 +205,43 @@ export default function OrdersPage() {
                   </li>
                 ))}
               </ul>
-              <p>
-                Total HT : {totals.ht.toFixed(2)} € — Total TTC : {totals.ttc.toFixed(2)} €
-              </p>
+              <p>Total estimé : {estimatedTotal.toFixed(2)} €</p>
             </div>
           )}
           <div className="form-actions">
             <button type="submit" disabled={createMutation.isLoading || lines.length === 0}>
-              Enregistrer la commande
+              Enregistrer l&apos;approvisionnement
             </button>
           </div>
         </form>
       </section>
       <section className="card">
-        <div className="orders-toolbar">
-          <label htmlFor="orders-search" className="visually-hidden">
-            Rechercher une commande
-          </label>
-          <input
-            id="orders-search"
-            type="search"
-            placeholder="Rechercher par client, numéro ou statut"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
-        {isLoading && <p>Chargement des commandes…</p>}
-        {isError && <p>Impossible de récupérer les commandes.</p>}
+        <h2>Historique des approvisionnements</h2>
+        {isLoading && <p>Chargement des approvisionnements…</p>}
+        {isError && <p>Impossible de récupérer les approvisionnements.</p>}
         {!isLoading && !isError && (
           <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Commande</th>
-                  <th>Client</th>
+                  <th>Numéro</th>
+                  <th>Fournisseur</th>
                   <th>Date</th>
-                  <th>Total TTC</th>
+                  <th>Montant</th>
                   <th>Statut</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredOrders.map((order) => (
-                  <tr key={order.id}>
-                    <td>{order.numero}</td>
-                    <td>{order.client_nom ?? '—'}</td>
-                    <td>{new Date(order.date_commande).toLocaleDateString()}</td>
-                    <td>{order.total_ttc.toFixed(2)} €</td>
+                {procurements.map((procurement) => (
+                  <tr key={procurement.id}>
+                    <td>{procurement.numero}</td>
+                    <td>{procurement.fournisseur_nom ?? '—'}</td>
+                    <td>{new Date(procurement.date_appro).toLocaleDateString()}</td>
+                    <td>{procurement.total_ht.toFixed(2)} €</td>
                     <td>
                       <select
-                        value={order.statut}
-                        onChange={(event) => handleStatusChange(order, event.target.value)}
+                        value={procurement.statut}
+                        onChange={(event) => handleStatusChange(procurement, event.target.value)}
                       >
                         {STATUSES.map((status) => (
                           <option key={status} value={status}>
@@ -294,9 +252,9 @@ export default function OrdersPage() {
                     </td>
                   </tr>
                 ))}
-                {filteredOrders.length === 0 && (
+                {procurements.length === 0 && (
                   <tr>
-                    <td colSpan={5}>Aucune commande correspondant à votre recherche.</td>
+                    <td colSpan={5}>Aucun approvisionnement enregistré pour le moment.</td>
                   </tr>
                 )}
               </tbody>

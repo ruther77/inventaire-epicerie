@@ -321,3 +321,470 @@ def count_active_admins(exclude_user_id: int | None = None) -> int:
         result = conn.execute(text(base_sql), params)
         scalar = result.scalar()  # type: ignore[assignment]
     return int(scalar or 0)
+
+
+# --- Gestion des catégories ---------------------------------------------------
+
+
+def list_categories() -> list[dict]:
+    sql = text(
+        """
+        SELECT
+            c.id,
+            c.nom,
+            c.description,
+            c.created_at,
+            c.updated_at,
+            COUNT(p.id) AS produits_count
+        FROM categories c
+        LEFT JOIN produits p ON p.categorie = c.nom
+        GROUP BY c.id, c.nom, c.description, c.created_at, c.updated_at
+        ORDER BY c.nom ASC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def fetch_category(category_id: int) -> dict | None:
+    sql = text(
+        """
+        SELECT id, nom, description, created_at, updated_at
+        FROM categories
+        WHERE id = :category_id
+        LIMIT 1
+        """
+    )
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql, {"category_id": category_id})
+        row = result.fetchone()
+        return dict(row) if row else None
+
+
+def create_category_record(payload: dict) -> dict:
+    sql = text(
+        """
+        INSERT INTO categories (nom, description)
+        VALUES (:nom, :description)
+        RETURNING id, nom, description, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(sql, payload).mappings().one()
+    return dict(row)
+
+
+def update_category_record(category_id: int, payload: dict) -> dict | None:
+    allowed = {"nom", "description"}
+    filtered = {key: value for key, value in payload.items() if key in allowed and value is not None}
+
+    if not filtered:
+        return fetch_category(category_id)
+
+    assignments = [f"{field} = :{field}" for field in filtered]
+    filtered["category_id"] = category_id
+
+    sql = text(
+        f"""
+        UPDATE categories
+        SET {', '.join(assignments)}, updated_at = now()
+        WHERE id = :category_id
+        RETURNING id, nom, description, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, filtered)
+        row = result.fetchone()
+    return dict(row) if row else None
+
+
+def delete_category_record(category_id: int) -> bool:
+    sql = text("DELETE FROM categories WHERE id = :category_id")
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, {"category_id": category_id})
+        return result.rowcount > 0
+
+
+# --- Gestion des clients ------------------------------------------------------
+
+
+def list_clients() -> list[dict]:
+    sql = text(
+        """
+        SELECT id, nom, telephone, email, adresse, created_at, updated_at
+        FROM clients
+        ORDER BY nom ASC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def fetch_client(client_id: int) -> dict | None:
+    sql = text(
+        """
+        SELECT id, nom, telephone, email, adresse, created_at, updated_at
+        FROM clients
+        WHERE id = :client_id
+        LIMIT 1
+        """
+    )
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql, {"client_id": client_id})
+        row = result.fetchone()
+        return dict(row) if row else None
+
+
+def create_client_record(payload: dict) -> dict:
+    sql = text(
+        """
+        INSERT INTO clients (nom, telephone, email, adresse)
+        VALUES (:nom, :telephone, :email, :adresse)
+        RETURNING id, nom, telephone, email, adresse, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(sql, payload).mappings().one()
+    return dict(row)
+
+
+def update_client_record(client_id: int, payload: dict) -> dict | None:
+    allowed = {"nom", "telephone", "email", "adresse"}
+    filtered = {key: value for key, value in payload.items() if key in allowed}
+
+    if not filtered:
+        return fetch_client(client_id)
+
+    assignments = [f"{field} = :{field}" for field in filtered]
+    filtered["client_id"] = client_id
+
+    sql = text(
+        f"""
+        UPDATE clients
+        SET {', '.join(assignments)}, updated_at = now()
+        WHERE id = :client_id
+        RETURNING id, nom, telephone, email, adresse, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, filtered)
+        row = result.fetchone()
+    return dict(row) if row else None
+
+
+def delete_client_record(client_id: int) -> bool:
+    sql = text("DELETE FROM clients WHERE id = :client_id")
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, {"client_id": client_id})
+        return result.rowcount > 0
+
+
+# --- Gestion des fournisseurs -------------------------------------------------
+
+
+def list_suppliers() -> list[dict]:
+    sql = text(
+        """
+        SELECT id, nom, telephone, email, adresse, created_at, updated_at
+        FROM fournisseurs
+        ORDER BY nom ASC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def fetch_supplier(supplier_id: int) -> dict | None:
+    sql = text(
+        """
+        SELECT id, nom, telephone, email, adresse, created_at, updated_at
+        FROM fournisseurs
+        WHERE id = :supplier_id
+        LIMIT 1
+        """
+    )
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql, {"supplier_id": supplier_id})
+        row = result.fetchone()
+        return dict(row) if row else None
+
+
+def create_supplier_record(payload: dict) -> dict:
+    sql = text(
+        """
+        INSERT INTO fournisseurs (nom, telephone, email, adresse)
+        VALUES (:nom, :telephone, :email, :adresse)
+        RETURNING id, nom, telephone, email, adresse, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(sql, payload).mappings().one()
+    return dict(row)
+
+
+def update_supplier_record(supplier_id: int, payload: dict) -> dict | None:
+    allowed = {"nom", "telephone", "email", "adresse"}
+    filtered = {key: value for key, value in payload.items() if key in allowed}
+
+    if not filtered:
+        return fetch_supplier(supplier_id)
+
+    assignments = [f"{field} = :{field}" for field in filtered]
+    filtered["supplier_id"] = supplier_id
+
+    sql = text(
+        f"""
+        UPDATE fournisseurs
+        SET {', '.join(assignments)}, updated_at = now()
+        WHERE id = :supplier_id
+        RETURNING id, nom, telephone, email, adresse, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, filtered)
+        row = result.fetchone()
+    return dict(row) if row else None
+
+
+def delete_supplier_record(supplier_id: int) -> bool:
+    sql = text("DELETE FROM fournisseurs WHERE id = :supplier_id")
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, {"supplier_id": supplier_id})
+        return result.rowcount > 0
+
+
+# --- Gestion des commandes ----------------------------------------------------
+
+
+def list_orders() -> list[dict]:
+    sql = text(
+        """
+        SELECT
+            o.id,
+            o.numero,
+            o.date_commande,
+            o.client_id,
+            o.statut,
+            o.total_ht,
+            o.total_ttc,
+            o.created_at,
+            o.updated_at,
+            c.nom AS client_nom,
+            COUNT(l.id) AS lignes_count
+        FROM commandes o
+        LEFT JOIN clients c ON c.id = o.client_id
+        LEFT JOIN commandes_lignes l ON l.commande_id = o.id
+        GROUP BY o.id, c.nom
+        ORDER BY o.date_commande DESC, o.id DESC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def create_order_record(order_payload: dict, line_items: list[dict]) -> dict:
+    sql = text(
+        """
+        INSERT INTO commandes (numero, date_commande, client_id, statut, total_ht, total_ttc)
+        VALUES (:numero, :date_commande, :client_id, :statut, :total_ht, :total_ttc)
+        RETURNING id, numero, date_commande, client_id, statut, total_ht, total_ttc, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        order_row = conn.execute(sql, order_payload).mappings().one()
+
+        if line_items:
+            payload = [
+                {
+                    "commande_id": order_row["id"],
+                    "produit_id": item.get("produit_id"),
+                    "quantite": item.get("quantite"),
+                    "prix_unitaire": item.get("prix_unitaire"),
+                    "tva": item.get("tva", 0),
+                }
+                for item in line_items
+            ]
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO commandes_lignes (commande_id, produit_id, quantite, prix_unitaire, tva)
+                    VALUES (:commande_id, :produit_id, :quantite, :prix_unitaire, :tva)
+                    """
+                ),
+                payload,
+            )
+
+    return dict(order_row)
+
+
+def update_order_record(order_id: int, updates: dict) -> dict | None:
+    allowed = {"statut", "client_id", "date_commande"}
+    filtered = {key: value for key, value in updates.items() if key in allowed}
+
+    if not filtered:
+        sql_fetch = text(
+            """
+            SELECT id, numero, date_commande, client_id, statut, total_ht, total_ttc, created_at, updated_at
+            FROM commandes
+            WHERE id = :order_id
+            LIMIT 1
+            """
+        )
+        eng = get_engine()
+        with eng.connect() as conn:
+            row = conn.execute(sql_fetch, {"order_id": order_id}).fetchone()
+            return dict(row) if row else None
+
+    assignments = [f"{field} = :{field}" for field in filtered]
+    filtered["order_id"] = order_id
+
+    sql = text(
+        f"""
+        UPDATE commandes
+        SET {', '.join(assignments)}, updated_at = now()
+        WHERE id = :order_id
+        RETURNING id, numero, date_commande, client_id, statut, total_ht, total_ttc, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, filtered)
+        row = result.fetchone()
+    return dict(row) if row else None
+
+
+# --- Gestion des approvisionnements ------------------------------------------
+
+
+def list_procurements() -> list[dict]:
+    sql = text(
+        """
+        SELECT
+            a.id,
+            a.numero,
+            a.date_appro,
+            a.fournisseur_id,
+            a.statut,
+            a.total_ht,
+            a.created_at,
+            a.updated_at,
+            f.nom AS fournisseur_nom,
+            COUNT(l.id) AS lignes_count
+        FROM approvisionnements a
+        LEFT JOIN fournisseurs f ON f.id = a.fournisseur_id
+        LEFT JOIN approvisionnements_lignes l ON l.approvisionnement_id = a.id
+        GROUP BY a.id, f.nom
+        ORDER BY a.date_appro DESC, a.id DESC
+        """
+    )
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        result = conn.execute(sql)
+        return [dict(row) for row in result.mappings().all()]
+
+
+def create_procurement_record(procurement_payload: dict, line_items: list[dict]) -> dict:
+    sql = text(
+        """
+        INSERT INTO approvisionnements (numero, date_appro, fournisseur_id, statut, total_ht)
+        VALUES (:numero, :date_appro, :fournisseur_id, :statut, :total_ht)
+        RETURNING id, numero, date_appro, fournisseur_id, statut, total_ht, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        row = conn.execute(sql, procurement_payload).mappings().one()
+
+        if line_items:
+            payload = [
+                {
+                    "approvisionnement_id": row["id"],
+                    "produit_id": item.get("produit_id"),
+                    "quantite": item.get("quantite"),
+                    "prix_unitaire": item.get("prix_unitaire"),
+                }
+                for item in line_items
+            ]
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO approvisionnements_lignes (approvisionnement_id, produit_id, quantite, prix_unitaire)
+                    VALUES (:approvisionnement_id, :produit_id, :quantite, :prix_unitaire)
+                    """
+                ),
+                payload,
+            )
+
+    return dict(row)
+
+
+def update_procurement_record(procurement_id: int, updates: dict) -> dict | None:
+    allowed = {"statut", "fournisseur_id", "date_appro"}
+    filtered = {key: value for key, value in updates.items() if key in allowed}
+
+    if not filtered:
+        sql_fetch = text(
+            """
+            SELECT id, numero, date_appro, fournisseur_id, statut, total_ht, created_at, updated_at
+            FROM approvisionnements
+            WHERE id = :procurement_id
+            LIMIT 1
+            """
+        )
+        eng = get_engine()
+        with eng.connect() as conn:
+            row = conn.execute(sql_fetch, {"procurement_id": procurement_id}).fetchone()
+            return dict(row) if row else None
+
+    assignments = [f"{field} = :{field}" for field in filtered]
+    filtered["procurement_id"] = procurement_id
+
+    sql = text(
+        f"""
+        UPDATE approvisionnements
+        SET {', '.join(assignments)}, updated_at = now()
+        WHERE id = :procurement_id
+        RETURNING id, numero, date_appro, fournisseur_id, statut, total_ht, created_at, updated_at
+        """
+    )
+
+    eng = get_engine()
+    with eng.begin() as conn:
+        result = conn.execute(sql, filtered)
+        row = result.fetchone()
+    return dict(row) if row else None

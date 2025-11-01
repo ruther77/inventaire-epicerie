@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Iterable, List
 import hashlib
@@ -22,13 +23,31 @@ from sqlalchemy.exc import IntegrityError
 
 from data_repository import (
     count_active_admins,
+    create_category_record,
+    create_client_record,
+    create_order_record,
+    create_procurement_record,
+    create_supplier_record,
     create_user_record,
+    delete_category_record,
+    delete_client_record,
+    delete_supplier_record,
+    delete_user_record,
     fetch_user_by_id,
     fetch_user_by_username,
+    list_categories,
+    list_clients,
+    list_orders as repository_list_orders,
+    list_procurements,
+    list_suppliers,
     list_users as repository_list_users,
     query_df,
+    update_category_record,
+    update_client_record,
+    update_order_record,
+    update_procurement_record,
+    update_supplier_record,
     update_user_record,
-    delete_user_record,
 )
 from inventory_service import process_sale_transaction
 from product_service import (
@@ -215,6 +234,293 @@ class UserUpdate(BaseModel):
         return email
 
 
+class CategoryBase(BaseModel):
+    nom: str = Field(..., min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_nom(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom de la catégorie ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def _strip_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class CategoryCreate(CategoryBase):
+    pass
+
+
+class CategoryUpdate(BaseModel):
+    nom: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_optional_nom(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom de la catégorie ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def _strip_optional_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class CategoryRead(CategoryBase):
+    id: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    produits_count: int = 0
+
+
+class ClientBase(BaseModel):
+    nom: str = Field(..., min_length=2, max_length=200)
+    telephone: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=200)
+    adresse: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_nom(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("telephone", "email", "adresse")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ClientCreate(ClientBase):
+    pass
+
+
+class ClientUpdate(BaseModel):
+    nom: str | None = Field(default=None, min_length=2, max_length=200)
+    telephone: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=200)
+    adresse: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_optional_nom(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("telephone", "email", "adresse")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ClientRead(ClientBase):
+    id: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SupplierBase(BaseModel):
+    nom: str = Field(..., min_length=2, max_length=200)
+    telephone: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=200)
+    adresse: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_nom(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("telephone", "email", "adresse")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class SupplierCreate(SupplierBase):
+    pass
+
+
+class SupplierUpdate(BaseModel):
+    nom: str | None = Field(default=None, min_length=2, max_length=200)
+    telephone: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=200)
+    adresse: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nom")
+    @classmethod
+    def _strip_optional_nom(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le nom ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("telephone", "email", "adresse")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class SupplierRead(SupplierBase):
+    id: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class OrderLinePayload(BaseModel):
+    produit_id: int | None = Field(default=None, description="Identifiant produit")
+    quantite: float = Field(..., gt=0)
+    prix_unitaire: float = Field(..., ge=0)
+    tva: float = Field(default=0, ge=0)
+
+
+class OrderCreate(BaseModel):
+    numero: str = Field(..., min_length=3, max_length=60)
+    date_commande: datetime | None = None
+    client_id: int | None = None
+    statut: str | None = Field(default="Brouillon", max_length=60)
+    lignes: List[OrderLinePayload] = Field(default_factory=list)
+
+    @field_validator("numero")
+    @classmethod
+    def _strip_numero(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le numéro de commande ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("statut")
+    @classmethod
+    def _strip_statut(cls, value: str | None) -> str:
+        if value is None:
+            return "Brouillon"
+        cleaned = value.strip()
+        return cleaned or "Brouillon"
+
+
+class OrderRead(BaseModel):
+    id: int
+    numero: str
+    date_commande: datetime
+    client_id: int | None = None
+    client_nom: str | None = None
+    statut: str
+    total_ht: float
+    total_ttc: float
+    lignes_count: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class OrderUpdate(BaseModel):
+    client_id: int | None = None
+    statut: str | None = Field(default=None, max_length=60)
+    date_commande: datetime | None = None
+
+    @field_validator("statut")
+    @classmethod
+    def _strip_optional_statut(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ProcurementLinePayload(BaseModel):
+    produit_id: int | None = Field(default=None)
+    quantite: float = Field(..., gt=0)
+    prix_unitaire: float = Field(..., ge=0)
+
+
+class ProcurementCreate(BaseModel):
+    numero: str = Field(..., min_length=3, max_length=60)
+    date_appro: datetime | None = None
+    fournisseur_id: int | None = None
+    statut: str | None = Field(default="Reçu", max_length=60)
+    lignes: List[ProcurementLinePayload] = Field(default_factory=list)
+
+    @field_validator("numero")
+    @classmethod
+    def _strip_numero(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Le numéro d'approvisionnement ne peut pas être vide.")
+        return cleaned
+
+    @field_validator("statut")
+    @classmethod
+    def _strip_statut(cls, value: str | None) -> str:
+        if value is None:
+            return "Reçu"
+        cleaned = value.strip()
+        return cleaned or "Reçu"
+
+
+class ProcurementRead(BaseModel):
+    id: int
+    numero: str
+    date_appro: datetime
+    fournisseur_id: int | None = None
+    fournisseur_nom: str | None = None
+    statut: str
+    total_ht: float
+    lignes_count: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ProcurementUpdate(BaseModel):
+    fournisseur_id: int | None = None
+    statut: str | None = Field(default=None, max_length=60)
+    date_appro: datetime | None = None
+
+    @field_validator("statut")
+    @classmethod
+    def _strip_optional_statut(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         scheme, iterations_text, salt_segment, hash_segment = hashed_password.split("$", 3)
@@ -336,6 +642,119 @@ def _fetch_products() -> list[ProductPayload]:
     if df.empty:
         return []
     return [ProductPayload(**record) for record in df.to_dict("records")]
+
+
+def _as_decimal(value: float | int | str | None) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def _compute_order_totals(lines: Iterable[OrderLinePayload]) -> tuple[Decimal, Decimal]:
+    total_ht = Decimal("0")
+    total_ttc = Decimal("0")
+
+    for line in lines:
+        qty = _as_decimal(line.quantite)
+        unit_price = _as_decimal(line.prix_unitaire)
+        if qty <= 0 or unit_price < 0:
+            continue
+
+        line_ht = qty * unit_price
+        total_ht += line_ht
+
+        tva_rate = _as_decimal(line.tva)
+        if tva_rate < 0:
+            tva_rate = Decimal("0")
+        total_ttc += line_ht * (Decimal("1") + tva_rate / Decimal("100"))
+
+    return total_ht, total_ttc
+
+
+def _compute_procurement_total(lines: Iterable[ProcurementLinePayload]) -> Decimal:
+    total = Decimal("0")
+    for line in lines:
+        qty = _as_decimal(line.quantite)
+        unit = _as_decimal(line.prix_unitaire)
+        if qty <= 0 or unit < 0:
+            continue
+        total += qty * unit
+    return total
+
+
+def _ensure_datetime(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _category_to_model(row: dict) -> CategoryRead:
+    return CategoryRead(
+        id=row["id"],
+        nom=row["nom"],
+        description=row.get("description"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+        produits_count=int(row.get("produits_count") or 0),
+    )
+
+
+def _client_to_model(row: dict) -> ClientRead:
+    return ClientRead(
+        id=row["id"],
+        nom=row["nom"],
+        telephone=row.get("telephone"),
+        email=row.get("email"),
+        adresse=row.get("adresse"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _supplier_to_model(row: dict) -> SupplierRead:
+    return SupplierRead(
+        id=row["id"],
+        nom=row["nom"],
+        telephone=row.get("telephone"),
+        email=row.get("email"),
+        adresse=row.get("adresse"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _order_to_model(row: dict) -> OrderRead:
+    return OrderRead(
+        id=row["id"],
+        numero=row["numero"],
+        date_commande=row["date_commande"],
+        client_id=row.get("client_id"),
+        client_nom=row.get("client_nom"),
+        statut=row["statut"],
+        total_ht=float(row.get("total_ht") or 0),
+        total_ttc=float(row.get("total_ttc") or 0),
+        lignes_count=int(row.get("lignes_count") or 0),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _procurement_to_model(row: dict) -> ProcurementRead:
+    return ProcurementRead(
+        id=row["id"],
+        numero=row["numero"],
+        date_appro=row["date_appro"],
+        fournisseur_id=row.get("fournisseur_id"),
+        fournisseur_nom=row.get("fournisseur_nom"),
+        statut=row["statut"],
+        total_ht=float(row.get("total_ht") or 0),
+        lignes_count=int(row.get("lignes_count") or 0),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
 
 
 def _compute_inventory_value() -> dict[str, float]:
@@ -463,6 +882,166 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/categories", response_model=list[CategoryRead])
+    def list_categories_endpoint(_: dict = Depends(get_current_active_user)) -> list[CategoryRead]:
+        rows = list_categories()
+        return [_category_to_model(row) for row in rows]
+
+    @app.post("/categories", response_model=CategoryRead, status_code=status.HTTP_201_CREATED)
+    def create_category(payload: CategoryCreate, _: dict = Depends(require_admin)) -> CategoryRead:
+        record = create_category_record(payload.model_dump())
+        enriched = next((row for row in list_categories() if row["id"] == record["id"]), None)
+        data = enriched or {**record, "produits_count": 0}
+        return _category_to_model(data)
+
+    @app.patch("/categories/{category_id}", response_model=CategoryRead)
+    def update_category(category_id: int, payload: CategoryUpdate, _: dict = Depends(require_admin)) -> CategoryRead:
+        updates = payload.model_dump(exclude_unset=True)
+        record = update_category_record(category_id, updates)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie introuvable")
+        enriched = next((row for row in list_categories() if row["id"] == record["id"]), None)
+        data = enriched or {**record, "produits_count": 0}
+        return _category_to_model(data)
+
+    @app.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_category(category_id: int, _: dict = Depends(require_admin)) -> Response:
+        if not delete_category_record(category_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Catégorie introuvable")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/clients", response_model=list[ClientRead])
+    def list_clients_endpoint(_: dict = Depends(get_current_active_user)) -> list[ClientRead]:
+        return [_client_to_model(row) for row in list_clients()]
+
+    @app.post("/clients", response_model=ClientRead, status_code=status.HTTP_201_CREATED)
+    def create_client(payload: ClientCreate, _: dict = Depends(get_current_active_user)) -> ClientRead:
+        record = create_client_record(payload.model_dump())
+        return _client_to_model(record)
+
+    @app.patch("/clients/{client_id}", response_model=ClientRead)
+    def update_client(client_id: int, payload: ClientUpdate, _: dict = Depends(get_current_active_user)) -> ClientRead:
+        updates = payload.model_dump(exclude_unset=True)
+        record = update_client_record(client_id, updates)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client introuvable")
+        return _client_to_model(record)
+
+    @app.delete("/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_client(client_id: int, _: dict = Depends(get_current_active_user)) -> Response:
+        if not delete_client_record(client_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client introuvable")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/suppliers", response_model=list[SupplierRead])
+    def list_suppliers_endpoint(_: dict = Depends(get_current_active_user)) -> list[SupplierRead]:
+        return [_supplier_to_model(row) for row in list_suppliers()]
+
+    @app.post("/suppliers", response_model=SupplierRead, status_code=status.HTTP_201_CREATED)
+    def create_supplier(payload: SupplierCreate, _: dict = Depends(get_current_active_user)) -> SupplierRead:
+        record = create_supplier_record(payload.model_dump())
+        return _supplier_to_model(record)
+
+    @app.patch("/suppliers/{supplier_id}", response_model=SupplierRead)
+    def update_supplier(supplier_id: int, payload: SupplierUpdate, _: dict = Depends(get_current_active_user)) -> SupplierRead:
+        updates = payload.model_dump(exclude_unset=True)
+        record = update_supplier_record(supplier_id, updates)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fournisseur introuvable")
+        return _supplier_to_model(record)
+
+    @app.delete("/suppliers/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_supplier(supplier_id: int, _: dict = Depends(get_current_active_user)) -> Response:
+        if not delete_supplier_record(supplier_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fournisseur introuvable")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/orders", response_model=list[OrderRead])
+    def list_orders(_: dict = Depends(get_current_active_user)) -> list[OrderRead]:
+        rows = repository_list_orders()
+        return [_order_to_model(row) for row in rows]
+
+    @app.post("/orders", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
+    def create_order(payload: OrderCreate, _: dict = Depends(get_current_active_user)) -> OrderRead:
+        total_ht, total_ttc = _compute_order_totals(payload.lignes)
+        order_payload = {
+            "numero": payload.numero,
+            "date_commande": _ensure_datetime(payload.date_commande),
+            "client_id": payload.client_id,
+            "statut": payload.statut or "Brouillon",
+            "total_ht": float(total_ht),
+            "total_ttc": float(total_ttc),
+        }
+        line_items = [
+            {
+                "produit_id": line.produit_id,
+                "quantite": line.quantite,
+                "prix_unitaire": line.prix_unitaire,
+                "tva": line.tva,
+            }
+            for line in payload.lignes
+        ]
+        created = create_order_record(order_payload, line_items)
+        enriched = next((row for row in repository_list_orders() if row["id"] == created["id"]), None)
+        data = enriched or {**created, "client_nom": None, "lignes_count": len(line_items)}
+        return _order_to_model(data)
+
+    @app.patch("/orders/{order_id}", response_model=OrderRead)
+    def update_order(order_id: int, payload: OrderUpdate, _: dict = Depends(get_current_active_user)) -> OrderRead:
+        updates = payload.model_dump(exclude_unset=True)
+        if "date_commande" in updates and updates["date_commande"] is not None:
+            updates["date_commande"] = _ensure_datetime(updates["date_commande"])
+        record = update_order_record(order_id, updates)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Commande introuvable")
+        enriched = next((row for row in repository_list_orders() if row["id"] == record["id"]), None)
+        data = enriched or {**record, "client_nom": None, "lignes_count": 0}
+        return _order_to_model(data)
+
+    @app.get("/procurements", response_model=list[ProcurementRead])
+    def list_procurements_endpoint(_: dict = Depends(get_current_active_user)) -> list[ProcurementRead]:
+        rows = list_procurements()
+        return [_procurement_to_model(row) for row in rows]
+
+    @app.post("/procurements", response_model=ProcurementRead, status_code=status.HTTP_201_CREATED)
+    def create_procurement(payload: ProcurementCreate, _: dict = Depends(get_current_active_user)) -> ProcurementRead:
+        total_ht = _compute_procurement_total(payload.lignes)
+        procurement_payload = {
+            "numero": payload.numero,
+            "date_appro": _ensure_datetime(payload.date_appro),
+            "fournisseur_id": payload.fournisseur_id,
+            "statut": payload.statut or "Reçu",
+            "total_ht": float(total_ht),
+        }
+        line_items = [
+            {
+                "produit_id": line.produit_id,
+                "quantite": line.quantite,
+                "prix_unitaire": line.prix_unitaire,
+            }
+            for line in payload.lignes
+        ]
+        created = create_procurement_record(procurement_payload, line_items)
+        enriched = next((row for row in list_procurements() if row["id"] == created["id"]), None)
+        data = enriched or {**created, "fournisseur_nom": None, "lignes_count": len(line_items)}
+        return _procurement_to_model(data)
+
+    @app.patch("/procurements/{procurement_id}", response_model=ProcurementRead)
+    def update_procurement(
+        procurement_id: int,
+        payload: ProcurementUpdate,
+        _: dict = Depends(get_current_active_user),
+    ) -> ProcurementRead:
+        updates = payload.model_dump(exclude_unset=True)
+        if "date_appro" in updates and updates["date_appro"] is not None:
+            updates["date_appro"] = _ensure_datetime(updates["date_appro"])
+        record = update_procurement_record(procurement_id, updates)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approvisionnement introuvable")
+        enriched = next((row for row in list_procurements() if row["id"] == record["id"]), None)
+        data = enriched or {**record, "fournisseur_nom": None, "lignes_count": 0}
+        return _procurement_to_model(data)
 
     @app.get("/health")
     def healthcheck() -> dict[str, str]:

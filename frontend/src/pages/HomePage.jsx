@@ -17,6 +17,12 @@ const JOURNEYS = [
     to: '/commandes',
   },
   {
+    id: 'approvisionnements',
+    label: 'Gérer les approvisionnements',
+    description: 'Consignez les réceptions et préparez vos achats fournisseurs.',
+    to: '/approvisionnements',
+  },
+  {
     id: 'promotions',
     label: 'Explorer les promotions',
     description: 'Repérez les offres en cours et préparez vos campagnes commerciales.',
@@ -28,6 +34,12 @@ const JOURNEYS = [
     label: 'Besoin d\'aide ?',
     description: 'Accédez aux guides express et contactez l\'équipe support.',
     to: '/aide',
+  },
+  {
+    id: 'clients',
+    label: 'Clients et fournisseurs',
+    description: 'Centralisez les coordonnées de vos interlocuteurs commerciaux.',
+    to: '/clients',
   },
 ];
 
