@@ -356,48 +356,54 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand-area">
-          <button
-            type="button"
-            className="hamburger"
-            aria-expanded={isMobileMenuOpen}
-            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
-          >
-            <span className="visually-hidden">Ouvrir le menu</span>
-            <span />
-            <span />
-            <span />
-          </button>
-          <Link to="/" className="brand-title">
-            Inventaire Épicerie
-          </Link>
-        </div>
-        <MegaMenu
-          sections={MEGA_MENU_SECTIONS}
-          isMobileOpen={isMobileMenuOpen}
-          onToggleMobile={setIsMobileMenuOpen}
-          onNavigate={closeMobileMenu}
-        />
-        <div className="header-actions">
-          <Link to="/dashboard" className="quick-action">
-            Tableau de bord
-          </Link>
-          <Link to="/commandes" className="quick-action">
-            Nouvelle commande
-          </Link>
-          <UserMenu onNavigate={closeMobileMenu} />
+        <div className="app-header-inner layout-container">
+          <div className="brand-area">
+            <button
+              type="button"
+              className="hamburger"
+              aria-expanded={isMobileMenuOpen}
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            >
+              <span className="visually-hidden">Ouvrir le menu</span>
+              <span />
+              <span />
+              <span />
+            </button>
+            <Link to="/" className="brand-title">
+              Inventaire Épicerie
+            </Link>
+          </div>
+          <MegaMenu
+            sections={MEGA_MENU_SECTIONS}
+            isMobileOpen={isMobileMenuOpen}
+            onToggleMobile={setIsMobileMenuOpen}
+            onNavigate={closeMobileMenu}
+          />
+          <div className="header-actions">
+            <Link to="/dashboard" className="quick-action">
+              Tableau de bord
+            </Link>
+            <Link to="/commandes" className="quick-action">
+              Nouvelle commande
+            </Link>
+            <UserMenu onNavigate={closeMobileMenu} />
+          </div>
         </div>
       </header>
-      <Breadcrumbs routes={availableRoutes} />
-      <main>
-        <Suspense fallback={<div className="app-loading">Chargement…</div>}>
-          <Routes>
-            {availableRoutes.map(({ path, Component }) => (
-              <Route key={path} path={path} element={<Component />} />
-            ))}
-          </Routes>
-        </Suspense>
-      </main>
+      <div className="app-main-wrapper">
+        <div className="breadcrumbs-wrapper layout-container">
+          <Breadcrumbs routes={availableRoutes} />
+        </div>
+        <main className="app-main layout-container">
+          <Suspense fallback={<div className="app-loading">Chargement…</div>}>
+            <Routes>
+              {availableRoutes.map(({ path, Component }) => (
+                <Route key={path} path={path} element={<Component />} />
+              ))}
+            </Routes>
+          </Suspense>
+        </main>
+      </div>
       <LoginModal />
     </div>
   );
