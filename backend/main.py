@@ -982,7 +982,13 @@ def create_app() -> FastAPI:
             }
             for line in payload.lignes
         ]
-        created = create_order_record(order_payload, line_items)
+        try:
+            created = create_order_record(order_payload, line_items)
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Client ou produit introuvable",
+            ) from exc
         enriched = next((row for row in repository_list_orders() if row["id"] == created["id"]), None)
         data = enriched or {**created, "client_nom": None, "lignes_count": len(line_items)}
         return _order_to_model(data)
@@ -1022,7 +1028,13 @@ def create_app() -> FastAPI:
             }
             for line in payload.lignes
         ]
-        created = create_procurement_record(procurement_payload, line_items)
+        try:
+            created = create_procurement_record(procurement_payload, line_items)
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Fournisseur ou produit introuvable",
+            ) from exc
         enriched = next((row for row in list_procurements() if row["id"] == created["id"]), None)
         data = enriched or {**created, "fournisseur_nom": None, "lignes_count": len(line_items)}
         return _procurement_to_model(data)
