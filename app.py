@@ -269,7 +269,10 @@ def render_workspace_navigation() -> None:
             data_page = (
                 f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
             )
-            href = f"?page={escape(page_key)}" if page_key else "#"
+            # Les liens de navigation ne doivent jamais provoquer un rechargement complet
+            # de la page Streamlit. On utilise donc une ancre neutre et on délègue la mise
+            # à jour de l'URL à notre script côté client.
+            href = "#"
             parts.append(
                 "".join(
                     [
@@ -308,7 +311,7 @@ def render_workspace_navigation() -> None:
                 page_data = (
                     f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
                 )
-                href = f"?page={escape(page_key)}" if page_key else "#"
+                href = "#"
                 badge_markup = (
                     f"<span class=\"badge workspace-preview__badge\">{badge}</span>" if badge else ""
                 )
@@ -335,7 +338,7 @@ def render_workspace_navigation() -> None:
                 page_data = (
                     f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
                 )
-                href = f"?page={escape(page_key)}" if page_key else "#"
+                href = "#"
                 link_parts.append(
                     "".join(
                         [
@@ -601,8 +604,13 @@ def render_workspace_navigation() -> None:
             element.addEventListener('click', (event) => {
                 event.preventDefault();
                 const target = Number(element.getAttribute('data-tab-target'));
+                const pageKey = element.getAttribute('data-page-key');
                 if (!Number.isNaN(target)) {
                     skipHistoryUpdate = false;
+                    if (pageKey) {
+                        updateHistory(pageKey, false);
+                        currentPageKey = pageKey;
+                    }
                     activateTab(target);
                 }
             });
@@ -1361,10 +1369,32 @@ credentials = {
 
 authenticator = stauth.Authenticate(
     credentials,
-    'inventaire_cookie', 
-    SECRET_KEY,          
+    'inventaire_cookie',
+    SECRET_KEY,
     cookie_expiry_days=30
 )
+
+# --- Gestion de la persistance d'authentification ---
+
+def authenticate_user() -> tuple[str | None, bool | None, str | None]:
+    """Récupère l'état d'authentification en évitant de redemander inutilement."""
+
+    stored_status = st.session_state.get("authentication_status")
+    stored_name = st.session_state.get("name")
+    stored_username = st.session_state.get("username")
+
+    if stored_status and stored_name and stored_username and not st.session_state.get("logout"):
+        return stored_name, True, stored_username
+
+    name, authentication_status, username = authenticator.login('Connexion à l\'Inventaire', 'main')
+
+    if authentication_status:
+        st.session_state["authentication_status"] = True
+        st.session_state["name"] = name
+        st.session_state["username"] = username
+        st.session_state["logout"] = False
+
+    return name, authentication_status, username
 
 # --- Fonctions Utilitaires et Caching ---
 
@@ -1691,7 +1721,7 @@ class BarcodeDetector(VideoTransformerBase):
 # --- DÉBUT DU FLUX PRINCIPAL (CONTRÔLE D'ACCÈS) ---
 # ==============================================================================
 
-name, authentication_status, username = authenticator.login('Connexion à l\'Inventaire', 'main')
+name, authentication_status, username = authenticate_user()
 
 if authentication_status:
 
