@@ -94,8 +94,354 @@ def apply_ui_theme(theme_key: str) -> None:
         """,
         unsafe_allow_html=True,
     )
-        
-        
+
+
+# --- NAVIGATION MEGA MENU (Streamlit) ---
+_NAV_SHORTCUTS = [
+    {"label": "Approvisionnement", "icon": "bi-truck", "tab_index": 1},
+    {"label": "Vente (PoS)", "icon": "bi-bag", "tab_index": 2},
+    {"label": "Dashboard", "icon": "bi-speedometer2", "tab_index": 6},
+]
+
+_NAV_SECTIONS = [
+    {
+        "id": "catalogue",
+        "label": "Catalogue",
+        "icon": "bi-grid",
+        "description": "Suivez vos rayons, vos stocks et vos contrôles qualité.",
+        "items": [
+            {
+                "label": "Vitrine produits",
+                "description": "Aperçu client, ventes et mises en avant.",
+                "badge": "Rayons",
+                "tab_index": 0,
+            },
+            {
+                "label": "Catalogue",
+                "description": "Gestion détaillée des fiches et options produits.",
+                "badge": "Catalogue",
+                "tab_index": 3,
+            },
+            {
+                "label": "Stock & mouvements",
+                "description": "Flux, projections et alertes de ruptures.",
+                "badge": "Stock",
+                "tab_index": 4,
+            },
+            {
+                "label": "Audit & écarts",
+                "description": "Suivi des écarts inventaires et plans d'actions.",
+                "badge": "Audit",
+                "tab_index": 5,
+            },
+        ],
+        "links": [
+            {"label": "Top ventes", "icon": "bi-graph-up", "tab_index": 0},
+            {"label": "Produits critiques", "icon": "bi-exclamation-octagon", "tab_index": 4},
+            {"label": "Plans d'audit", "icon": "bi-clipboard-check", "tab_index": 5},
+        ],
+    },
+    {
+        "id": "explorer",
+        "label": "Explorer",
+        "icon": "bi-compass",
+        "description": "Accédez directement aux opérations et outils spécialisés.",
+        "items": [
+            {
+                "label": "Approvisionnement",
+                "description": "Commandes fournisseurs et réassorts.",
+                "badge": "Achats",
+                "tab_index": 1,
+            },
+            {
+                "label": "Vente (PoS)",
+                "description": "Encaissement rapide et gestion panier.",
+                "badge": "Caisse",
+                "tab_index": 2,
+            },
+            {
+                "label": "Dashboard",
+                "description": "Pilotage global et indicateurs clés.",
+                "badge": "Pilotage",
+                "tab_index": 6,
+            },
+            {
+                "label": "Maintenance & Admin",
+                "description": "Tâches de support et outils techniques.",
+                "badge": "Admin",
+                "tab_index": 10,
+            },
+        ],
+        "links": [
+            {"label": "Scanner codes-barres", "icon": "bi-upc-scan", "tab_index": 7},
+            {"label": "Extraction facture", "icon": "bi-receipt-cutoff", "tab_index": 8},
+            {"label": "Importation catalogues", "icon": "bi-cloud-upload", "tab_index": 9},
+        ],
+    },
+]
+
+
+def render_workspace_navigation() -> None:
+    """Injecte un méga-menu compact pour piloter les onglets Streamlit."""
+
+    def _build_shortcuts() -> str:
+        parts: List[str] = []
+        for shortcut in _NAV_SHORTCUTS:
+            label = escape(shortcut["label"])
+            icon = escape(shortcut["icon"])
+            tab_index = shortcut.get("tab_index", 0)
+            parts.append(
+                f"<button class=\"workspace-shortcut\" type=\"button\" "
+                f"data-tab-target=\"{tab_index}\"><span class=\"workspace-shortcut__icon\">"
+                f"<i class=\"bi {icon}\"></i></span><span class=\"workspace-shortcut__label\">{label}</span></button>"
+            )
+        return "".join(parts)
+
+    def _build_sections() -> str:
+        section_parts: List[str] = []
+        for section in _NAV_SECTIONS:
+            section_id = escape(section["id"])
+            header = (
+                f"<button class=\"workspace-primary__toggle\" type=\"button\" "
+                f"id=\"mega-trigger-{section_id}\" data-mega-trigger data-mega-target=\"{section_id}\" "
+                f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\">"
+                f"<i class=\"bi {escape(section['icon'])}\"></i>"
+                f"<span>{escape(section['label'])}</span></button>"
+            )
+
+            item_parts: List[str] = []
+            for item in section["items"]:
+                label = escape(item["label"])
+                description = escape(item["description"])
+                badge = escape(item.get("badge", ""))
+                tab_index = item.get("tab_index", 0)
+                badge_markup = (
+                    f"<span class=\"badge workspace-preview__badge\">{badge}</span>" if badge else ""
+                )
+                item_parts.append(
+                    "".join(
+                        [
+                            "<li class=\"workspace-preview__item\">",
+                            f"<a class=\"workspace-preview__link\" href=\"#\" data-tab-target=\"{tab_index}\">",
+                            "<span class=\"workspace-preview__icon\"><i class=\"bi bi-arrow-up-right\"></i></span>",
+                            "<span class=\"workspace-preview__content\">",
+                            f"<span class=\"workspace-preview__label\">{label}{badge_markup}</span>",
+                            f"<span class=\"workspace-preview__desc\">{description}</span>",
+                            "</span></a></li>",
+                        ]
+                    )
+                )
+
+            link_parts: List[str] = []
+            for link in section.get("links", []):
+                label = escape(link["label"])
+                icon = escape(link.get("icon", "bi-arrow-right-short"))
+                tab_index = link.get("tab_index", 0)
+                link_parts.append(
+                    "".join(
+                        [
+                            "<li><a class=\"workspace-preview__secondary-link\" href=\"#\" ",
+                            f"data-tab-target=\"{tab_index}\"><i class=\"bi {icon}\"></i>",
+                            f"<span>{label}</span></a></li>",
+                        ]
+                    )
+                )
+
+            panel = (
+                f"<section class=\"workspace-primary__panel\" id=\"mega-panel-{section_id}\" "
+                "data-mega-panel role=\"tabpanel\" aria-hidden=\"true\">"
+                "<header class=\"workspace-primary__panel-header\">"
+                f"<div class=\"workspace-primary__panel-title\"><span class=\"workspace-primary__panel-icon\">"
+                f"<i class=\"bi {escape(section['icon'])}\"></i></span>"
+                f"<div><h3 class=\"workspace-primary__panel-heading\">{escape(section['label'])}</h3>"
+                f"<p class=\"workspace-primary__panel-description\">{escape(section['description'])}</p>"
+                "</div></div></header>"
+                "<div class=\"workspace-primary__panel-grid\">"
+                "<div class=\"workspace-primary__panel-column\">"
+                "<ul class=\"workspace-preview__list\">"
+                + "".join(item_parts)
+                + "</ul></div><div class=\"workspace-primary__panel-column\">"
+                "<h4 class=\"workspace-preview__title\">Accès rapides</h4><ul class=\"workspace-preview__secondary\">"
+                + "".join(link_parts)
+                + "</ul></div></div></section>"
+            )
+
+            section_parts.append(header)
+            section_parts.append(panel)
+
+        toggles = "<div class=\"workspace-primary__toggles\" role=\"tablist\" aria-label=\"Navigation principale\">"
+        panels_wrapper = "<div class=\"workspace-primary__panels\">"
+        toggle_markup: List[str] = []
+        panel_markup: List[str] = []
+        # pairwise iteration to maintain order
+        for idx in range(0, len(section_parts), 2):
+            toggle_markup.append(section_parts[idx])
+            panel_markup.append(section_parts[idx + 1])
+
+        toggles += "".join(toggle_markup) + "</div>"
+        panels_wrapper += "".join(panel_markup) + "</div>"
+        return toggles + panels_wrapper
+
+    html_parts: List[str] = [
+        "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />",
+        "<section class=\"workspace-header\" id=\"workspaceNavRoot\" data-workspace-nav>",
+        "<div class=\"workspace-header__bar\">",
+        "<div class=\"workspace-header__group workspace-header__group--left\">",
+        "<div class=\"workspace-header__brand\"><span class=\"workspace-header__brand-eyebrow\">Inventaire Épicerie</span>"
+        "<h1 class=\"workspace-header__brand-title\">Centre de navigation</h1></div>",
+        "</div>",
+        "<div class=\"workspace-header__cluster\">",
+        "<div class=\"workspace-primary\" data-mega-menu>",
+        f"<div class=\"workspace-primary__shortcuts\">{_build_shortcuts()}</div>",
+        _build_sections(),
+        "</div>",
+        "</div>",
+        "</div>",
+        "<div class=\"mega-menu__overlay\" data-mega-overlay></div>",
+        "</section>",
+    ]
+
+    script = f"""
+    <script>
+    (function() {{
+        const localDoc = window.document;
+        const rootDoc = window.parent.document || document;
+        const navRoot = localDoc.getElementById('workspaceNavRoot');
+        if (!navRoot) {{
+            return;
+        }}
+
+        const overlay = navRoot.querySelector('[data-mega-overlay]');
+        const triggers = navRoot.querySelectorAll('[data-mega-trigger]');
+        const panels = navRoot.querySelectorAll('[data-mega-panel]');
+        let activeId = null;
+        let primaryContainer = null;
+
+        function setActive(id) {{
+            activeId = id;
+            triggers.forEach((trigger) => {{
+                const targetId = trigger.getAttribute('data-mega-target');
+                const isActive = targetId === id;
+                trigger.classList.toggle('is-active', isActive);
+                trigger.setAttribute('aria-expanded', String(isActive));
+            }});
+            panels.forEach((panel) => {{
+                const isActive = panel.id === `mega-panel-${{id}}`;
+                panel.classList.toggle('is-active', isActive);
+                panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+            }});
+            navRoot.classList.toggle('has-active', Boolean(id));
+        }}
+
+        function closeMega() {{
+            setActive(null);
+        }}
+
+        triggers.forEach((trigger) => {{
+            trigger.addEventListener('click', (event) => {{
+                event.preventDefault();
+                const targetId = trigger.getAttribute('data-mega-target');
+                setActive(activeId === targetId ? null : targetId);
+            }});
+        }});
+
+        if (overlay) {{
+            overlay.addEventListener('click', closeMega);
+        }}
+
+        rootDoc.addEventListener('keydown', (event) => {{
+            if (event.key === 'Escape') {{
+                closeMega();
+            }}
+        }});
+
+        function findPrimaryContainer() {{
+            if (primaryContainer && rootDoc.body.contains(primaryContainer)) {{
+                return primaryContainer;
+            }}
+            const containers = rootDoc.querySelectorAll('div[data-testid="stTabs"]');
+            for (const container of containers) {{
+                const buttons = Array.from(container.querySelectorAll('button[role="tab"]'));
+                const labels = buttons.map((btn) => btn.textContent.trim());
+                if (labels.includes('Vitrine') && labels.includes('Maintenance (Admin)')) {{
+                    container.classList.add('workspace-tab-host');
+                    primaryContainer = container;
+                    return container;
+                }}
+            }}
+            primaryContainer = null;
+            return null;
+        }}
+
+        function getTabButtons() {{
+            const container = findPrimaryContainer();
+            if (!container) {{
+                return [];
+            }}
+            return Array.from(container.querySelectorAll('button[role="tab"]'));
+        }}
+
+        function activateTab(index) {{
+            const buttons = getTabButtons();
+            if (buttons[index]) {{
+                buttons[index].click();
+                setTimeout(syncActiveNav, 80);
+                closeMega();
+            }}
+        }}
+
+        function syncActiveNav() {{
+            const buttons = getTabButtons();
+            let activeIndex = buttons.findIndex((btn) => btn.getAttribute('aria-selected') === 'true');
+            if (activeIndex === -1) {{
+                activeIndex = buttons.findIndex((btn) => btn.classList.contains('st-emotion-cache-1v0mbdj'));
+            }}
+            navRoot.querySelectorAll('[data-tab-target]').forEach((el) => {{
+                const target = Number(el.getAttribute('data-tab-target'));
+                el.classList.toggle('is-active', target === activeIndex);
+            }});
+        }}
+
+        function setupObserver(container) {{
+            if (!container) {{
+                return;
+            }}
+            const tablist = container.querySelector('[role="tablist"]');
+            if (tablist) {{
+                tablist.classList.add('workspace-tabs--hidden');
+            }}
+            const observer = new MutationObserver(syncActiveNav);
+            observer.observe(container, {{ attributes: true, subtree: true, attributeFilter: ['aria-selected'] }});
+        }}
+
+        function init() {{
+            const container = findPrimaryContainer();
+            if (!container) {{
+                setTimeout(init, 200);
+                return;
+            }}
+            setupObserver(container);
+            syncActiveNav();
+        }}
+
+        navRoot.querySelectorAll('[data-tab-target]').forEach((element) => {{
+            element.addEventListener('click', (event) => {{
+                event.preventDefault();
+                const target = Number(element.getAttribute('data-tab-target'));
+                if (!Number.isNaN(target)) {{
+                    activateTab(target);
+                }}
+            }});
+        }});
+
+        init();
+    }})();
+    </script>
+    """
+
+    st.markdown("\n".join(html_parts) + script, unsafe_allow_html=True)
+
+
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="📦")
 
@@ -1163,6 +1509,8 @@ if authentication_status:
     # --- UI Setup et Définition des Onglets ---
     st.session_state["user_role"] = credentials["usernames"][username]["role"]
     st.session_state["username"] = username
+
+    render_workspace_navigation()
 
     st.title("📦 Inventaire — Gestion Complète")
     st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')

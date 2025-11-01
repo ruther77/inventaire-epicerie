@@ -67,6 +67,99 @@ $quickActions = [
     ],
 ];
 
+$primaryShortcuts = [
+    [
+        'label' => 'Promotions du moment',
+        'icon' => 'bi-lightning-charge',
+        'url' => url_for('Customer/shop.php?promo=1'),
+    ],
+    [
+        'label' => 'Suivi des commandes',
+        'icon' => 'bi-receipt-cutoff',
+        'url' => url_for('Customer/orders.php'),
+    ],
+    [
+        'label' => 'Navigation avancée',
+        'icon' => 'bi-layout-text-sidebar-reverse',
+        'attributes' => [
+            'data-workspace-toggle' => 'true',
+            'aria-controls' => 'workspacePanel',
+            'aria-expanded' => 'false',
+        ],
+    ],
+];
+
+$categoryIcons = [
+    'bi-basket2',
+    'bi-egg-fried',
+    'bi-cup-hot',
+    'bi-bag-check',
+    'bi-box-seam',
+    'bi-star',
+];
+
+$cataloguePreview = [];
+foreach (array_slice($categoryList, 0, 6) as $index => $cat) {
+    $categoryName = $cat->get('n');
+    $cataloguePreview[] = [
+        'label' => $categoryName,
+        'description' => 'Nouveautés, promotions et top ventes de la catégorie.',
+        'url' => url_for('Customer/shop.php?id=' . urlencode($categoryName)),
+        'icon' => $categoryIcons[$index % count($categoryIcons)],
+        'badge' => $badgeCycle[$index % count($badgeCycle)],
+    ];
+}
+
+$catalogueAccents = array_map(static function ($filter) {
+    return [
+        'label' => $filter['label'],
+        'url' => $filter['url'],
+    ];
+}, array_slice($quickFilters, 0, 4));
+
+$explorerPreview = array_map(static function ($action) {
+    return [
+        'label' => $action['label'],
+        'description' => $action['description'],
+        'url' => $action['url'],
+        'icon' => $action['icon'],
+        'badge' => $action['badge'],
+    ];
+}, array_slice($quickActions, 0, 4));
+
+$explorerUtilities = array_map(static function ($link) {
+    return [
+        'label' => $link['label'],
+        'url' => $link['url'],
+        'icon' => $link['icon'],
+    ];
+}, array_slice($utilityLinks, 0, 4));
+
+$megaSections = [
+    [
+        'id' => 'catalogue',
+        'label' => 'Catalogue',
+        'icon' => 'bi-grid',
+        'description' => 'Parcourez les familles de produits et trouvez vos favoris en un coup d\'œil.',
+        'cta_label' => 'Voir le catalogue',
+        'cta_url' => url_for('Customer/shop.php'),
+        'primary' => $cataloguePreview,
+        'secondary_title' => 'Accès directs',
+        'secondary_links' => $catalogueAccents,
+    ],
+    [
+        'id' => 'explorer',
+        'label' => 'Explorer',
+        'icon' => 'bi-compass',
+        'description' => 'Accédez rapidement aux parcours clients et aux outils essentiels.',
+        'cta_label' => 'Explorer les parcours',
+        'cta_url' => url_for('Customer/dashboard.php'),
+        'primary' => $explorerPreview,
+        'secondary_title' => 'Outils favoris',
+        'secondary_links' => $explorerUtilities,
+    ],
+];
+
 $utilityLinks = [
     [
         'label' => 'Profil',
@@ -114,8 +207,8 @@ $utilityLinks = [
                 <div class="container">
                     <div class="workspace-header__bar">
                         <div class="workspace-header__group workspace-header__group--left">
-                            <button class="workspace-header__burger d-inline-flex d-lg-none align-items-center justify-content-center" type="button" aria-expanded="false" aria-controls="workspacePanel" data-workspace-toggle>
-                                <span class="visually-hidden">Ouvrir le menu</span>
+                            <button class="workspace-header__burger d-inline-flex d-lg-none align-items-center justify-content-center" type="button" aria-expanded="false" aria-controls="megaMenu" data-mega-mobile-toggle>
+                                <span class="visually-hidden">Ouvrir la navigation</span>
                                 <i class="bi bi-list"></i>
                             </button>
                             <a class="workspace-header__logo" href="<?= url_for('Customer/home.php') ?>">
@@ -126,11 +219,124 @@ $utilityLinks = [
                                 Espace navigation
                             </button>
                         </div>
-                        <button class="workspace-command" type="button" data-search-toggle aria-expanded="false" aria-controls="globalSearch">
-                            <i class="bi bi-search me-2"></i>
-                            <span>Rechercher un produit, une action ou une page</span>
-                            <span class="workspace-command__shortcut">Ctrl + K</span>
-                        </button>
+                        <div class="workspace-header__cluster">
+                            <div class="workspace-primary" data-mega-menu id="megaMenu">
+                                <div class="workspace-primary__shortcuts" role="group" aria-label="Actions clés">
+                                    <?php foreach ($primaryShortcuts as $shortcut): ?>
+                                        <?php
+                                            $isLink = isset($shortcut['url']);
+                                            $tag = $isLink ? 'a' : 'button';
+                                            $attributes = $shortcut['attributes'] ?? [];
+                                            if ($isLink) {
+                                                $attributes['href'] = $shortcut['url'];
+                                            } else {
+                                                $attributes['type'] = $attributes['type'] ?? 'button';
+                                            }
+                                            $attributeString = '';
+                                            foreach ($attributes as $name => $value) {
+                                                if ($value === true) {
+                                                    $attributeString .= ' ' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+                                                    continue;
+                                                }
+                                                if ($value === false) {
+                                                    continue;
+                                                }
+                                                $attributeString .= ' ' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"';
+                                            }
+                                        ?>
+                                        <<?= $tag ?> class="workspace-shortcut"<?= $attributeString ?>>
+                                            <span class="workspace-shortcut__icon"><i class="bi <?= htmlspecialchars($shortcut['icon'], ENT_QUOTES, 'UTF-8') ?>"></i></span>
+                                            <span class="workspace-shortcut__label"><?= htmlspecialchars($shortcut['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                        </<?= $tag ?>>
+                                    <?php endforeach; ?>
+                                </div>
+                                <div class="workspace-primary__toggles" role="tablist" aria-label="Navigation principale">
+                                    <?php foreach ($megaSections as $section): ?>
+                                        <button class="workspace-primary__toggle" id="mega-trigger-<?= htmlspecialchars($section['id'], ENT_QUOTES, 'UTF-8') ?>" type="button" data-mega-trigger data-mega-target="<?= htmlspecialchars($section['id'], ENT_QUOTES, 'UTF-8') ?>" aria-controls="mega-panel-<?= htmlspecialchars($section['id'], ENT_QUOTES, 'UTF-8') ?>" aria-expanded="false" role="tab">
+                                            <i class="bi <?= htmlspecialchars($section['icon'], ENT_QUOTES, 'UTF-8') ?>"></i>
+                                            <span><?= htmlspecialchars($section['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                                <div class="workspace-primary__panels">
+                                    <?php foreach ($megaSections as $section): ?>
+                                        <section class="workspace-primary__panel" id="mega-panel-<?= htmlspecialchars($section['id'], ENT_QUOTES, 'UTF-8') ?>" data-mega-panel role="tabpanel" aria-labelledby="mega-trigger-<?= htmlspecialchars($section['id'], ENT_QUOTES, 'UTF-8') ?>" aria-hidden="true">
+                                            <header class="workspace-primary__panel-header">
+                                                <div class="workspace-primary__panel-title">
+                                                    <span class="workspace-primary__panel-icon"><i class="bi <?= htmlspecialchars($section['icon'], ENT_QUOTES, 'UTF-8') ?>"></i></span>
+                                                    <div>
+                                                        <h3 class="workspace-primary__panel-heading mb-1"><?= htmlspecialchars($section['label'], ENT_QUOTES, 'UTF-8') ?></h3>
+                                                        <p class="workspace-primary__panel-description mb-0"><?= htmlspecialchars($section['description'], ENT_QUOTES, 'UTF-8') ?></p>
+                                                    </div>
+                                                </div>
+                                                <a class="workspace-primary__panel-cta" href="<?= htmlspecialchars($section['cta_url'], ENT_QUOTES, 'UTF-8') ?>">
+                                                    <?= htmlspecialchars($section['cta_label'], ENT_QUOTES, 'UTF-8') ?>
+                                                    <i class="bi bi-arrow-up-right ms-1"></i>
+                                                </a>
+                                            </header>
+                                            <div class="workspace-primary__panel-grid">
+                                                <div class="workspace-primary__panel-column">
+                                                    <h4 class="workspace-preview__title">Sélection</h4>
+                                                    <ul class="workspace-preview__list">
+                                                        <?php foreach ($section['primary'] as $item): ?>
+                                                            <li class="workspace-preview__item">
+                                                                <a class="workspace-preview__link" href="<?= htmlspecialchars($item['url'], ENT_QUOTES, 'UTF-8') ?>">
+                                                                    <span class="workspace-preview__icon"><i class="bi <?= htmlspecialchars($item['icon'], ENT_QUOTES, 'UTF-8') ?>"></i></span>
+                                                                    <span class="workspace-preview__content">
+                                                                        <span class="workspace-preview__label">
+                                                                            <?= htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8') ?>
+                                                                            <?php if (!empty($item['badge'])): ?>
+                                                                                <span class="badge <?= htmlspecialchars($item['badge']['class'], ENT_QUOTES, 'UTF-8') ?> ms-2"><?= htmlspecialchars($item['badge']['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                                            <?php endif; ?>
+                                                                        </span>
+                                                                        <?php if (!empty($item['description'])): ?>
+                                                                            <span class="workspace-preview__desc"><?= htmlspecialchars($item['description'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                                        <?php endif; ?>
+                                                                    </span>
+                                                                </a>
+                                                            </li>
+                                                        <?php endforeach; ?>
+                                                    </ul>
+                                                </div>
+                                                <div class="workspace-primary__panel-column">
+                                                    <h4 class="workspace-preview__title"><?= htmlspecialchars($section['secondary_title'], ENT_QUOTES, 'UTF-8') ?></h4>
+                                                    <ul class="workspace-preview__secondary">
+                                                        <?php foreach ($section['secondary_links'] as $link): ?>
+                                                            <?php
+                                                                $secondaryAttributes = $link['attributes'] ?? [];
+                                                                $secondaryAttributes['href'] = $link['url'];
+                                                                $secondaryString = '';
+                                                                foreach ($secondaryAttributes as $attr => $value) {
+                                                                    if ($value === true) {
+                                                                        $secondaryString .= ' ' . htmlspecialchars($attr, ENT_QUOTES, 'UTF-8');
+                                                                        continue;
+                                                                    }
+                                                                    if ($value === false) {
+                                                                        continue;
+                                                                    }
+                                                                    $secondaryString .= ' ' . htmlspecialchars($attr, ENT_QUOTES, 'UTF-8') . '="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"';
+                                                                }
+                                                            ?>
+                                                            <li>
+                                                                <a class="workspace-preview__secondary-link"<?= $secondaryString ?>>
+                                                                    <i class="bi <?= htmlspecialchars($link['icon'] ?? 'bi-arrow-right-short', ENT_QUOTES, 'UTF-8') ?>"></i>
+                                                                    <span><?= htmlspecialchars($link['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                                                                </a>
+                                                            </li>
+                                                        <?php endforeach; ?>
+                                                    </ul>
+                                                </div>
+                                            </div>
+                                        </section>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            <button class="workspace-command" type="button" data-search-toggle aria-expanded="false" aria-controls="globalSearch">
+                                <i class="bi bi-search me-2"></i>
+                                <span>Rechercher un produit, une action ou une page</span>
+                                <span class="workspace-command__shortcut">Ctrl + K</span>
+                            </button>
+                        </div>
                         <div class="workspace-header__group workspace-header__group--right">
                             <nav class="workspace-status d-none d-md-flex" aria-label="Accès rapides">
                                 <a class="status-chip" href="<?= url_for('Customer/cart.php') ?>">
@@ -190,6 +396,7 @@ $utilityLinks = [
                         </div>
                     </div>
                 </div>
+                <div class="mega-menu__overlay" data-mega-overlay></div>
                 <div class="workspace-header__summary">
                     <div class="container">
                         <div class="workspace-summary" data-pinned-summary></div>
