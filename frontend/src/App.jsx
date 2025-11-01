@@ -28,6 +28,8 @@ const CategoriesPage = lazy(() => import('./pages/CategoriesPage.jsx'));
 const ClientsPage = lazy(() => import('./pages/ClientsPage.jsx'));
 const SuppliersPage = lazy(() => import('./pages/SuppliersPage.jsx'));
 const ProcurementsPage = lazy(() => import('./pages/ProcurementsPage.jsx'));
+const CustomerJourneyPage = lazy(() => import('./pages/CustomerJourneyPage.jsx'));
+const ContentHubPage = lazy(() => import('./pages/ContentHubPage.jsx'));
 
 const ROUTES = [
   { path: '/', Component: HomePage, breadcrumb: 'Accueil', section: 'home' },
@@ -73,6 +75,21 @@ const ROUTES = [
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
+    requiresAuth: true,
+  },
+  {
+    path: '/parcours/commerce',
+    Component: CustomerJourneyPage,
+    breadcrumb: 'Parcours e-commerce',
+    section: 'scenarios',
+    badge: { label: 'Nouveau', variant: 'new' },
+    requiresAuth: true,
+  },
+  {
+    path: '/parcours/contenus',
+    Component: ContentHubPage,
+    breadcrumb: 'Studio contenus',
+    section: 'scenarios',
     requiresAuth: true,
   },
   {
@@ -281,6 +298,36 @@ const MEGA_MENU_SECTIONS = [
         to: '/aide',
         label: 'Centre d’aide',
         description: 'Guides, FAQ et contact support.',
+      },
+    ],
+  },
+  {
+    id: 'scenarios',
+    label: 'Parcours',
+    subtitle: 'Inspirations Amazon & YouTube',
+    title: 'Parcours utilisateurs',
+    description:
+      'Démontrez l\'expérience client de bout en bout grâce à des parcours scénarisés directement dans la SPA.',
+    featuredActions: [
+      { to: '/parcours/commerce', label: 'Scénario commerce', badge: { label: 'Nouveau', variant: 'new' } },
+      { to: '/parcours/contenus', label: 'Scénario contenus' },
+    ],
+    items: [
+      {
+        to: '/parcours/commerce',
+        label: 'Parcours e-commerce',
+        description: 'Rejouez le parcours Amazon : catalogue, panier, commande et fidélisation.',
+        badge: { label: 'Nouveau', variant: 'new' },
+      },
+      {
+        to: '/parcours/contenus',
+        label: 'Studio contenus',
+        description: 'Un hub vidéo inspiré de YouTube avec recommandations et analytics.',
+      },
+      {
+        to: '/dashboard',
+        label: 'Tableau de bord personnalisé',
+        description: 'Point d’entrée commun pour activer les différents parcours.',
       },
     ],
   },

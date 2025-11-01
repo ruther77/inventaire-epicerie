@@ -30,6 +30,19 @@ const JOURNEYS = [
     badge: { label: 'Promo', variant: 'promo' },
   },
   {
+    id: 'parcours-commerce',
+    label: 'Parcours e-commerce',
+    description: "Démonstration inspirée d'Amazon : catalogue, panier et suivi de commande connectés.",
+    to: '/parcours/commerce',
+    badge: { label: 'Nouveau', variant: 'new' },
+  },
+  {
+    id: 'parcours-contenus',
+    label: 'Studio de contenus',
+    description: "Découvrez le flux personnalisé façon YouTube et ses rapports d'engagement.",
+    to: '/parcours/contenus',
+  },
+  {
     id: 'aide',
     label: 'Besoin d\'aide ?',
     description: 'Accédez aux guides express et contactez l\'équipe support.',
