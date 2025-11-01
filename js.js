@@ -226,77 +226,42 @@
         /*-----------------------------------
            09. Product Quantity
         -----------------------------------*/
-        var proQty = $(".pro-qty");
-        if (proQty.length) {
-            proQty.append('<a href="#" class="inc qty-btn">+</a>');
-            proQty.append('<a href="#" class= "dec qty-btn">-</a>');
-            $('.qty-btn').on('click', function(e) {
-                e.preventDefault();
-                var $button = $(this);
-                var oldValue = parseFloat($button.parent().find('input').val());
-                if (isNaN(oldValue)) {
-                    oldValue = 0;
-                }
-                var newVal;
-                if ($button.hasClass('inc')) {
-                    newVal = oldValue + 1;
-                } else {
-                    newVal = oldValue > 0 ? oldValue - 1 : 0;
-                }
-                $button.parent().find('input').val(newVal);
-            });
-        }
-
-        var quantityControls = $(".product-quantity-control");
-        quantityControls.each(function() {
+        var qtyControls = $(".product-quantity-control");
+        qtyControls.each(function() {
             var $control = $(this);
-            var $input = $control.find('input[type="number"], input').first();
-            if (!$input.length) {
-                return;
-            }
+            var $input = $control.find('input[type="number"]');
 
-            var min = parseFloat($input.attr('min'));
-            if (isNaN(min)) {
-                min = 0;
-            }
+            $control.find('[data-qty-action]').on('click', function(e) {
+                e.preventDefault();
 
-            var max = parseFloat($input.attr('max'));
-            if (isNaN(max)) {
-                max = Infinity;
-            }
-
-            var step = parseFloat($input.attr('step'));
-            if (isNaN(step) || step <= 0) {
-                step = 1;
-            }
-
-            $control.on('click', '[data-qty-action]', function(event) {
-                event.preventDefault();
-                var action = $(this).data('qty-action');
+                var $button = $(this);
+                var action = $button.data('qty-action');
+                var step = parseFloat($input.attr('step')) || 1;
+                var min = parseFloat($input.attr('min'));
+                var max = parseFloat($input.attr('max'));
                 var currentValue = parseFloat($input.val());
 
                 if (isNaN(currentValue)) {
                     currentValue = min || 0;
                 }
 
+                var newValue = currentValue;
+
                 if (action === 'increment') {
-                    currentValue += step;
+                    newValue = currentValue + step;
+                    if (!isNaN(max)) {
+                        newValue = Math.min(newValue, max);
+                    }
                 } else if (action === 'decrement') {
-                    currentValue -= step;
+                    newValue = currentValue - step;
+                    if (!isNaN(min)) {
+                        newValue = Math.max(newValue, min);
+                    } else {
+                        newValue = Math.max(newValue, 0);
+                    }
                 }
 
-                if (!isFinite(max)) {
-                    max = Infinity;
-                }
-
-                currentValue = Math.max(currentValue, min);
-                currentValue = Math.min(currentValue, max);
-
-                // Normalize potential floating point precision issues.
-                currentValue = parseFloat(currentValue.toFixed(5));
-
-                $input.val(currentValue);
-                $input.trigger('change');
+                $input.val(newValue).trigger('change');
             });
         });
 
