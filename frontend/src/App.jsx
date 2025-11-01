@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext.jsx';
+import RequireAuth from './auth/RequireAuth.jsx';
 import LoginModal from './components/LoginModal.jsx';
 import MegaMenu from './components/MegaMenu.jsx';
 import Breadcrumbs from './components/Breadcrumbs.jsx';
@@ -35,6 +36,7 @@ const ROUTES = [
     Component: DashboardPage,
     breadcrumb: 'Tableau de bord',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/catalogue',
@@ -42,24 +44,28 @@ const ROUTES = [
     breadcrumb: 'Catalogue',
     section: 'catalogue',
     badge: { label: 'Nouveau', variant: 'new' },
+    requiresAuth: true,
   },
   {
     path: '/commandes',
     Component: OrdersPage,
     breadcrumb: 'Commandes',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/categories',
     Component: CategoriesPage,
     breadcrumb: 'Catégories',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/approvisionnements',
     Component: ProcurementsPage,
     breadcrumb: 'Approvisionnements',
     section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/promotions',
@@ -67,24 +73,28 @@ const ROUTES = [
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
+    requiresAuth: true,
   },
   {
     path: '/clients',
     Component: ClientsPage,
     breadcrumb: 'Clients',
     section: 'relations',
+    requiresAuth: true,
   },
   {
     path: '/fournisseurs',
     Component: SuppliersPage,
     breadcrumb: 'Fournisseurs',
     section: 'relations',
+    requiresAuth: true,
   },
   {
     path: '/pos',
     Component: PosPage,
     breadcrumb: 'Point de vente',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/explorer/rapports',
@@ -92,48 +102,56 @@ const ROUTES = [
     breadcrumb: 'Analyses',
     section: 'explorer',
     badge: { label: 'Bêta', variant: 'beta' },
+    requiresAuth: true,
   },
   {
     path: '/explorer/outils',
     Component: LegacyToolsPage,
     breadcrumb: 'Outils Streamlit',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/aide',
     Component: SupportPage,
     breadcrumb: 'Aide',
     section: 'support',
+    requiresAuth: true,
   },
   {
     path: '/compte',
     Component: AccountPage,
     breadcrumb: 'Espace personnel',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/panier',
     Component: CartPage,
     breadcrumb: 'Panier',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/favoris',
     Component: FavoritesPage,
     breadcrumb: 'Favoris',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/notifications',
     Component: NotificationsPage,
     breadcrumb: 'Notifications',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/parametres',
     Component: SettingsPage,
     breadcrumb: 'Paramètres',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/auth/login',
@@ -157,6 +175,7 @@ const ADMIN_ROUTES = [
     breadcrumb: 'Comptes utilisateurs',
     section: 'administration',
     adminOnly: true,
+    requiresAuth: true,
   },
 ];
 

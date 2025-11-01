@@ -1,21 +1,30 @@
 import logging
 import os
+from functools import lru_cache
+from typing import Callable
 
 import pandas as pd
-from sqlalchemy import create_engine, text, TextClause
-from sqlalchemy.sql.elements import ClauseElement
+from sqlalchemy import TextClause, create_engine, text
 from sqlalchemy.engine import Engine
-import streamlit as st
+from sqlalchemy.sql.elements import ClauseElement
 
-# Utilisation d'une variable d'environnement ou d'une valeur par défaut
-_DEFAULT_DB_HOST = os.getenv("DB_HOST", "localhost")
-DATABASE_URL = (
-    os.getenv("DATABASE_URL")
-    or f"postgresql+psycopg2://postgres:postgres@{_DEFAULT_DB_HOST}:5432/epicerie"
-)
+
+DATABASE_URL_ENV = "DATABASE_URL"
 
 
 logger = logging.getLogger(__name__)
+
+
+def _require_database_url() -> str:
+    url = os.getenv(DATABASE_URL_ENV)
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL environment variable must be configured before accessing the database."
+        )
+    return url
+
+
+_require_database_url()
 
 
 def _get_pool_setting(env_var: str, default: int) -> int:
@@ -45,18 +54,62 @@ def _get_pool_setting(env_var: str, default: int) -> int:
 
     return parsed
 
-@st.cache_resource
-def get_engine() -> Engine:
-    """Retourne le moteur SQLAlchemy, mis en cache par Streamlit."""
+_ENGINE_FACTORY: Callable[[], Engine] | None = None
+
+
+def _default_engine_factory() -> Engine:
+    database_url = _require_database_url()
     pool_size = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
     max_overflow = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
 
     return create_engine(
-        DATABASE_URL,
+        database_url,
         pool_pre_ping=True,
         pool_size=pool_size,
         max_overflow=max_overflow,
     )
+
+
+def _resolve_engine_factory() -> Callable[[], Engine]:
+    return _ENGINE_FACTORY or _default_engine_factory
+
+
+@lru_cache(maxsize=1)
+def _cached_engine() -> Engine:
+    engine = _resolve_engine_factory()()
+    if not isinstance(engine, Engine):
+        raise TypeError("Engine factory must return a SQLAlchemy Engine instance.")
+    return engine
+
+
+def configure_engine(*, engine_factory: Callable[[], Engine] | None = None, database_url: str | None = None) -> None:
+    """Allow applications to override the engine factory and keep a unified configuration."""
+
+    global _ENGINE_FACTORY  # noqa: PLW0603 - runtime configuration hook
+
+    if engine_factory and database_url:
+        raise ValueError("Provide either engine_factory or database_url, not both.")
+
+    if database_url is not None:
+        def _factory() -> Engine:
+            return create_engine(
+                database_url,
+                pool_pre_ping=True,
+                pool_size=_get_pool_setting("SQLALCHEMY_POOL_SIZE", 10),
+                max_overflow=_get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20),
+            )
+
+        _ENGINE_FACTORY = _factory
+    else:
+        _ENGINE_FACTORY = engine_factory
+
+    _cached_engine.cache_clear()
+
+
+def get_engine() -> Engine:
+    """Retourne le moteur SQLAlchemy, mis en cache via un LRU interne."""
+
+    return _cached_engine()
 
 def _normalize_statement(sql: str | ClauseElement) -> ClauseElement:
     if isinstance(sql, str):
