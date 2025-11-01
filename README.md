@@ -104,6 +104,23 @@ Cela garantit que le conteneur dispose bien des utilitaires comme
 `invoice_extractor.py` ou `cart_normalizer.py`, et évite tout décalage entre
 l'affichage local et l'image exécutée en production.
 
+### Pré-requis Streamlit
+
+Avant d'exécuter `streamlit run app.py`, assurez-vous que l'environnement
+dispose des éléments suivants :
+
+* **Variables d'environnement** :
+  * `DATABASE_URL` doit pointer vers l'instance PostgreSQL utilisée par
+    l'application (format `postgresql+psycopg2://USER:PASSWORD@HOST:PORT/DB`).
+  * `AUTH_SECRET_KEY` doit contenir au minimum 32 caractères afin que
+    l'authentification via `streamlit-authenticator` et l'API FastAPI puissent
+    signer / vérifier les jetons.
+* **Bibliothèques natives** : certaines dépendances Python requièrent des
+  bibliothèques système au moment de l'import. Vérifiez notamment la présence
+  de `libgl1`, `libglib2.0-0` (utilisées par OpenCV / `cv2`), `libzbar0`
+  (lecture de codes-barres via `pyzbar`) et `ffmpeg` (capture vidéo WebRTC).
+  Sans elles, Streamlit lèvera des erreurs au démarrage de `app.py`.
+
 ### En local (hors Docker)
 
 1. Créez et activez un environnement virtuel Python 3.11. Sur Debian/Ubuntu
