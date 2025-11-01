@@ -5,7 +5,7 @@ import io
 import math
 from datetime import datetime
 from contextlib import contextmanager
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import numpy as np
 import pandas as pd
@@ -334,6 +334,102 @@ def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
     cart_df["tva"] = pd.to_numeric(cart_df["tva"], errors="coerce").fillna(0.0)
 
     return cart_df
+
+
+def _ensure_cart_state() -> List[Dict[str, Any]]:
+    """Garantit que le panier en session est une liste de dictionnaires."""
+
+    raw_cart = st.session_state.get("cart", [])
+
+    if isinstance(raw_cart, pd.DataFrame):
+        cart_items: List[Dict[str, Any]] = raw_cart.to_dict(orient="records")
+    elif isinstance(raw_cart, Mapping):
+        cart_items = [dict(raw_cart)]
+    elif isinstance(raw_cart, Iterable) and not isinstance(raw_cart, (str, bytes, bytearray)):
+        cart_items = []
+        for item in raw_cart:
+            if isinstance(item, Mapping):
+                cart_items.append(dict(item))
+    else:
+        cart_items = []
+
+    st.session_state["cart"] = cart_items
+    return cart_items
+
+
+def _clear_cart() -> None:
+    """Réinitialise complètement le panier courant."""
+
+    st.session_state["cart"] = []
+
+
+def _reset_pos_inputs() -> None:
+    """Replace les champs du formulaire PoS dans leur état initial."""
+
+    st.session_state["pos_product_selectbox"] = "-- Sélectionner un produit --"
+    st.session_state["pos_qty_input"] = 1
+
+
+def _add_product_to_cart(
+    product_id: int,
+    quantity: int,
+    products_df: pd.DataFrame,
+) -> Tuple[bool, str]:
+    """Ajoute un produit au panier ou met à jour sa quantité."""
+
+    if products_df is None or products_df.empty:
+        return False, "Catalogue produits indisponible."
+
+    try:
+        product_id = int(product_id)
+    except (TypeError, ValueError):
+        return False, "Identifiant produit invalide."
+
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        return False, "Quantité invalide."
+
+    if quantity <= 0:
+        return False, "La quantité doit être supérieure à zéro."
+
+    product_row = products_df.loc[products_df["id"] == product_id]
+    if product_row.empty:
+        return False, "Produit introuvable dans le catalogue."
+
+    product = product_row.iloc[0]
+    product_name = str(product.get("nom", "")).strip() or f"Produit {product_id}"
+    prix_vente = float(product.get("prix_vente", 0.0) or 0.0)
+    tva = float(product.get("tva", 0.0) or 0.0)
+
+    cart_items = _ensure_cart_state()
+
+    for item in cart_items:
+        try:
+            item_id = int(item.get("id")) if item.get("id") is not None else None
+        except (TypeError, ValueError):
+            item_id = None
+
+        if item_id == product_id:
+            existing_qty = int(item.get("qty", 0) or 0)
+            item["qty"] = existing_qty + quantity
+            item["nom"] = product_name
+            item["prix_vente"] = prix_vente
+            item["tva"] = tva
+            st.session_state["cart"] = cart_items
+            return True, f"Quantité mise à jour pour {product_name} ({item['qty']})"
+
+    new_item = {
+        "id": product_id,
+        "nom": product_name,
+        "qty": quantity,
+        "prix_vente": prix_vente,
+        "tva": tva,
+    }
+    cart_items.append(new_item)
+    st.session_state["cart"] = cart_items
+
+    return True, f"{product_name} ajouté au panier ({quantity})"
 
 
 def _reset_invoice_session_state() -> None:
