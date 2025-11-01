@@ -176,10 +176,130 @@ _MEGA_MENU_SECTIONS: Final[Sequence[Dict[str, Any]]] = (
 _ENHANCEMENT_SCRIPT: Final[str] = """
 <script>
 (function () {
-  const rootDocument = window.parent?.document;
+  const rootDocument = window.parent?.document ?? document;
   if (!rootDocument) {
     return;
   }
+
+  const header = rootDocument.querySelector('[data-workspace-nav]');
+  if (!header || header.dataset.enhanced === 'true') {
+    return;
+  }
+
+  header.dataset.enhanced = 'true';
+
+  const toggles = header.querySelectorAll('[data-mega-trigger]');
+  const panels = header.querySelectorAll('[data-mega-panel]');
+
+  const setActiveSection = (sectionId) => {
+    toggles.forEach((toggle) => {
+      const isActive = toggle.getAttribute('data-mega-target') === sectionId;
+      toggle.classList.toggle('is-active', isActive);
+      toggle.setAttribute('aria-expanded', isActive ? 'true' : 'false');
+      toggle.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    panels.forEach((panel) => {
+      const isActive = panel.getAttribute('data-mega-panel') === sectionId;
+      panel.classList.toggle('is-active', isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+    });
+  };
+
+  const selectWorkspaceTab = (index) => {
+    const tabButtons = rootDocument.querySelectorAll('[data-baseweb="tab"]');
+    const target = tabButtons?.[index];
+    if (target instanceof HTMLElement) {
+      target.click();
+    }
+  };
+
+  const updateActiveLinks = (pageKey) => {
+    if (!pageKey) {
+      return;
+    }
+
+    rootDocument.body?.setAttribute('data-current-page', pageKey);
+    header.querySelectorAll('[data-page-key]').forEach((node) => {
+      const isActive = node.getAttribute('data-page-key') === pageKey;
+      node.classList.toggle('is-active', isActive);
+      if (isActive) {
+        node.setAttribute('aria-current', 'page');
+      } else {
+        node.removeAttribute('aria-current');
+      }
+    });
+  };
+
+  const syncFromStreamlitTabs = () => {
+    const streamlitTabs = Array.from(
+      rootDocument.querySelectorAll('[data-baseweb="tab"]')
+    );
+    const activeIndex = streamlitTabs.findIndex(
+      (tab) => tab.getAttribute('aria-selected') === 'true'
+    );
+    if (activeIndex >= 0) {
+      const activeLink = header.querySelector(
+        `[data-tab-target="${activeIndex}"][data-page-key]`
+      );
+      const pageKey = activeLink?.getAttribute('data-page-key');
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+    }
+  };
+
+  toggles.forEach((toggle) => {
+    const targetSection = toggle.getAttribute('data-mega-target');
+    if (!targetSection) {
+      return;
+    }
+
+    toggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      setActiveSection(targetSection);
+    });
+
+    toggle.addEventListener('mouseenter', () => setActiveSection(targetSection));
+    toggle.addEventListener('focus', () => setActiveSection(targetSection));
+  });
+
+  const tabLinks = header.querySelectorAll('[data-tab-target]');
+  tabLinks.forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const targetIndex = Number(link.getAttribute('data-tab-target'));
+      const hasTarget = Number.isFinite(targetIndex);
+      const pageKey = link.getAttribute('data-page-key');
+      if (hasTarget) {
+        event.preventDefault();
+        selectWorkspaceTab(targetIndex);
+      }
+      if (pageKey) {
+        updateActiveLinks(pageKey);
+      }
+    });
+  });
+
+  const initialSection = toggles[0]?.getAttribute('data-mega-target');
+  if (initialSection) {
+    setActiveSection(initialSection);
+  }
+
+  syncFromStreamlitTabs();
+
+  rootDocument.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && typeof target.closest === 'function') {
+      const tab = target.closest('[data-baseweb="tab"]');
+      if (tab) {
+        window.requestAnimationFrame(syncFromStreamlitTabs);
+      }
+    }
+  });
+})();
+</script>
+"""
+
 
   const header = rootDocument.querySelector('[data-workspace-nav]');
   if (!header || header.dataset.enhanced === 'true') {
@@ -371,49 +491,89 @@ def _build_tabs_markup() -> str:
                     "</button>",
                 ]
             )
-        )
-    return "".join(buttons)
+        return "".join(parts)
 
-
-def _build_panel_markup(section: Dict[str, Any]) -> str:
-    section_id = escape(section["id"])
-    title = escape(section.get("title", ""))
-    description = escape(section.get("description", ""))
-    featured_markup: List[str] = []
-    for action in section.get("featured", ()):  # type: ignore[arg-type]
-        label = escape(action.get("label", ""))
-        attrs = _tab_target_attrs(action.get("page_key"))
-        badge_markup = _badge_markup(action.get("badge"))
-        featured_markup.append(
-            "".join(
-                [
-                    f"<a class=\"mega-menu-featured-link\" href=\"#\"{attrs}>",
-                    f"<span>{label}</span>",
-                    badge_markup,
-                    "</a>",
-                ]
+    def _build_sections() -> str:
+        section_parts: List[str] = []
+        for section in _NAV_SECTIONS:
+            section_id = escape(section["id"])
+            header = (
+                f"<button class=\"workspace-primary__toggle\" type=\"button\" "
+                f"id=\"mega-trigger-{section_id}\" data-mega-trigger data-mega-target=\"{section_id}\" "
+                f"aria-controls=\"mega-panel-{section_id}\" aria-expanded=\"false\" "
+                "role=\"tab\" aria-selected=\"false\">"
+                f"<i class=\"bi {escape(section['icon'])}\"></i>"
+                f"<span>{escape(section['label'])}</span></button>"
             )
         )
 
-    items_markup: List[str] = []
-    for item in section.get("items", ()):  # type: ignore[arg-type]
-        label = escape(item.get("label", ""))
-        description_text = escape(item.get("description", ""))
-        attrs = _tab_target_attrs(item.get("page_key"))
-        badge_markup = _badge_markup(item.get("badge"))
-        items_markup.append(
-            "".join(
-                [
-                    f"<a class=\"mega-menu-item\" href=\"#\"{attrs}>",
-                    "<div class=\"mega-menu-item-heading\">",
-                    f"<span>{label}</span>",
-                    badge_markup,
-                    "</div>",
-                    (
-                        f"<p>{description_text}</p>" if description_text else ""
-                    ),
-                    "</a>",
-                ]
+            item_parts: List[str] = []
+            for item in section["items"]:
+                label = escape(item["label"])
+                description = escape(item["description"])
+                badge = escape(item.get("badge", ""))
+                tab_index = item.get("tab_index", 0)
+                page_key = item.get("page_key")
+                page_data = f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
+                href = "#"
+                badge_markup = (
+                    f"<span class=\"badge workspace-preview__badge\">{badge}</span>" if badge else ""
+                )
+                item_parts.append(
+                    "".join(
+                        [
+                            "<li class=\"workspace-preview__item\">",
+                            f"<a class=\"workspace-preview__link\" href=\"{href}\" data-tab-target=\"{tab_index}\"{page_data}>",
+                            "<span class=\"workspace-preview__icon\"><i class=\"bi bi-arrow-up-right\"></i></span>",
+                            "<span class=\"workspace-preview__content\">",
+                            f"<span class=\"workspace-preview__label\">{label}{badge_markup}</span>",
+                            f"<span class=\"workspace-preview__desc\">{description}</span>",
+                            "</span></a></li>",
+                        ]
+                    )
+                )
+
+            link_parts: List[str] = []
+            for link in section.get("links", []):
+                label = escape(link["label"])
+                icon = escape(link.get("icon", "bi-arrow-right-short"))
+                tab_index = link.get("tab_index", 0)
+                page_key = link.get("page_key")
+                page_data = f" data-page-key=\"{escape(page_key)}\"" if page_key else ""
+                href = "#"
+                link_parts.append(
+                    "".join(
+                        [
+                            "<li><a class=\"workspace-preview__secondary-link\" href=\"",
+                            href,
+                            "\" data-tab-target=\"",
+                            str(tab_index),
+                            "\"",
+                            page_data,
+                            f"><i class=\"bi {icon}\"></i>",
+                            f"<span>{label}</span></a></li>",
+                        ]
+                    )
+                )
+
+            panel = (
+                f"<section class=\"workspace-primary__panel\" id=\"mega-panel-{section_id}\" "
+                f"data-mega-panel=\"{section_id}\" role=\"tabpanel\" "
+                f"aria-labelledby=\"mega-trigger-{section_id}\" aria-hidden=\"true\">"
+                "<header class=\"workspace-primary__panel-header\">"
+                f"<div class=\"workspace-primary__panel-title\"><span class=\"workspace-primary__panel-icon\">"
+                f"<i class=\"bi {escape(section['icon'])}\"></i></span>"
+                f"<div><h3 class=\"workspace-primary__panel-heading\">{escape(section['label'])}</h3>"
+                f"<p class=\"workspace-primary__panel-description\">{escape(section['description'])}</p>"
+                "</div></div></header>"
+                "<div class=\"workspace-primary__panel-grid\">"
+                "<div class=\"workspace-primary__panel-column\">"
+                "<ul class=\"workspace-preview__list\">"
+                + "".join(item_parts)
+                + "</ul></div><div class=\"workspace-primary__panel-column\">"
+                "<h4 class=\"workspace-preview__title\">Accès rapides</h4><ul class=\"workspace-preview__secondary\">"
+                + "".join(link_parts)
+                + "</ul></div></div></section>"
             )
         )
 
@@ -487,7 +647,8 @@ def render_workspace_navigation() -> None:
         "<div class=\"header-actions\">",
         _build_header_actions(),
         "</div>",
-        "</header>",
+        f"<div class=\"workspace-primary\">{_build_sections()}</div>",
+        "</section>",
         _ENHANCEMENT_SCRIPT,
     ]
 
