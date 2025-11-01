@@ -69,6 +69,7 @@ from streamlit_app.services.catalog import (
     load_recent_suppliers,
     load_trending_products,
     lookup_product_name,
+    _fetch_product_image_url,
 )
 from streamlit_app.services.dashboard import (
     load_stock_kpis,
@@ -97,6 +98,133 @@ def _format_human_number(value: float | int, decimals: int = 0) -> str:
 
     return f"{value:,.{decimals}f}".replace(",", " ")
 
+
+def _render_product_cards(
+    dataframe: pd.DataFrame,
+    *,
+    columns: int = 3,
+    coverage_target: float | None = None,
+    alert_threshold: float | None = None,
+) -> None:
+    """Affiche une grille de cartes produits avec les informations clés."""
+
+    if dataframe is None or dataframe.empty:
+        st.caption("Aucun produit à afficher pour l'instant.")
+        return
+
+    try:
+        per_row = max(1, int(columns))
+    except (TypeError, ValueError):
+        per_row = 3
+
+    def _coerce_number(value: Any) -> float | None:
+        """Convertit une valeur en float lorsque c'est pertinent."""
+
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            if isinstance(value, float) and math.isnan(value):
+                return None
+            return float(value)
+        if isinstance(value, str):
+            sanitized = value.strip()
+            if not sanitized:
+                return None
+            try:
+                parsed = float(sanitized.replace(",", "."))
+            except ValueError:
+                return None
+            if math.isnan(parsed):
+                return None
+            return parsed
+        return None
+
+    records = dataframe.to_dict(orient="records")
+    effective_target = _coerce_number(coverage_target)
+    effective_alert = _coerce_number(alert_threshold)
+
+    for start in range(0, len(records), per_row):
+        row_records = records[start : start + per_row]
+        cols = st.columns(len(row_records))
+
+        for col, record in zip(cols, row_records):
+            with col:
+                name = str(record.get("nom", "Produit")).strip() or "Produit"
+                category = str(record.get("categorie", "")).strip()
+                ean = str(record.get("ean", "")).strip()
+                price = _coerce_number(record.get("prix_vente"))
+                stock = _coerce_number(record.get("stock_actuel"))
+                ventes_30j = _coerce_number(record.get("ventes_30j"))
+                ventes_jour = _coerce_number(record.get("ventes_jour"))
+                coverage_days = _coerce_number(record.get("couverture_jours"))
+                reorder_qty = _coerce_number(record.get("quantite_a_commander"))
+                margin_pct = _coerce_number(record.get("marge_pct"))
+                supplier = str(record.get("fournisseur", "")).strip()
+                priority = str(record.get("niveau_priorite", "")).strip()
+
+                image_url = record.get("image_url")
+                if not image_url and ean:
+                    image_url = _fetch_product_image_url(ean)
+
+                if isinstance(image_url, str) and image_url.strip():
+                    st.image(image_url, use_column_width=True)
+
+                title_parts = [f"**{name}**"]
+                if priority:
+                    priority_lower = priority.lower()
+                    badge_color = "blue"
+                    if priority_lower == "critique":
+                        badge_color = "red"
+                    elif priority_lower == "tendue":
+                        badge_color = "orange"
+                    elif priority_lower == "surveillance":
+                        badge_color = "violet"
+                    title_parts.append(f":{badge_color}[{priority}]")
+                st.markdown(" ".join(title_parts))
+
+                if category:
+                    st.caption(category)
+
+                info_lines: List[str] = []
+                if price is not None:
+                    info_lines.append(f"Prix : {_format_human_number(price, 2)} €")
+                if stock is not None:
+                    info_lines.append(f"Stock : {_format_human_number(stock, 0)} u")
+                if ventes_30j is not None:
+                    info_lines.append(
+                        f"Ventes (30 j) : {_format_human_number(ventes_30j, 0)} u"
+                    )
+                elif ventes_jour is not None:
+                    info_lines.append(
+                        f"Ventes / jour : {_format_human_number(ventes_jour, 2)} u"
+                    )
+
+                if info_lines:
+                    st.write("\n".join(info_lines))
+
+                if coverage_days is not None:
+                    coverage_text = f"Couverture : {_format_human_number(coverage_days, 1)} j"
+                    if effective_target is not None:
+                        delta = coverage_days - effective_target
+                        coverage_text += f" (Δ {delta:+.1f} j / objectif {effective_target:.0f} j)"
+                    st.write(coverage_text)
+                    if (
+                        effective_alert is not None
+                        and coverage_days <= effective_alert
+                    ):
+                        st.caption(":red[⚠️ Sous le seuil d’alerte]")
+
+                if reorder_qty is not None and reorder_qty > 0:
+                    reorder_text = f"À commander : {_format_human_number(reorder_qty, 0)} u"
+                    if margin_pct is not None:
+                        reorder_text += f" — Marge : {margin_pct:.1f} %"
+                    st.markdown(f"**{reorder_text}**")
+
+                if supplier and supplier.lower() != "non renseigné":
+                    st.caption(f"Fournisseur : {supplier}")
+
+                if ean:
+                    st.caption(f"EAN : {ean}")
 
 def render_workspace_hero(
     *,
