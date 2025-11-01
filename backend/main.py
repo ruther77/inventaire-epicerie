@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Ensure environment variables from a local .env file are available before
+# importing modules that resolve the database configuration at import time.
+load_dotenv()
 
 from data_repository import (  # re-exported for backwards compatibility in tests
     count_active_admins,

@@ -18,3 +18,4 @@ PyJWT>=2.9.0
 opentelemetry-sdk>=1.25.0
 opentelemetry-exporter-otlp>=1.25.0
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
+python-dotenv>=1.0.1
