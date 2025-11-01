@@ -397,6 +397,11 @@ authenticator = stauth.Authenticate(
 def authenticate_user() -> tuple[str | None, bool | None, str | None]:
     """Récupère l'état d'authentification en évitant de redemander inutilement."""
 
+    if "authentication_status" not in st.session_state:
+        st.session_state["authentication_status"] = None
+    if "logout" not in st.session_state:
+        st.session_state["logout"] = False
+
     stored_status = st.session_state.get("authentication_status")
     stored_name = st.session_state.get("name")
     stored_username = st.session_state.get("username")
