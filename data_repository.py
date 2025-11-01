@@ -1,4 +1,6 @@
+import logging
 import os
+
 import pandas as pd
 from sqlalchemy import create_engine, text, TextClause
 from sqlalchemy.sql.elements import ClauseElement
@@ -12,14 +14,48 @@ DATABASE_URL = (
     or f"postgresql+psycopg2://postgres:postgres@{_DEFAULT_DB_HOST}:5432/epicerie"
 )
 
+
+logger = logging.getLogger(__name__)
+
+
+def _get_pool_setting(env_var: str, default: int) -> int:
+    value = os.getenv(env_var)
+    if value in (None, ""):
+        return default
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid integer for %s: %r. Falling back to default %d.",
+            env_var,
+            value,
+            default,
+        )
+        return default
+
+    if parsed < 0:
+        logger.warning(
+            "Negative value for %s: %r. Falling back to default %d.",
+            env_var,
+            value,
+            default,
+        )
+        return default
+
+    return parsed
+
 @st.cache_resource
 def get_engine() -> Engine:
     """Retourne le moteur SQLAlchemy, mis en cache par Streamlit."""
+    pool_size = _get_pool_setting("SQLALCHEMY_POOL_SIZE", 10)
+    max_overflow = _get_pool_setting("SQLALCHEMY_MAX_OVERFLOW", 20)
+
     return create_engine(
-        DATABASE_URL, 
-        pool_pre_ping=True, 
-        pool_size=10,        # Taille du pool de connexions (10 par défaut)
-        max_overflow=20      # Permet 20 connexions temporaires en cas de pic
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
     )
 
 def _normalize_statement(sql: str | ClauseElement) -> ClauseElement:
