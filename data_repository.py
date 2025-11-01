@@ -24,7 +24,9 @@ def _require_database_url() -> str:
     return url
 
 
-_require_database_url()
+# Re-export the resolved URL for legacy callers (e.g. Streamlit dashboard).
+# This mirrors the previous module level constant while keeping validation.
+DATABASE_URL = _require_database_url()
 
 
 def _get_pool_setting(env_var: str, default: int) -> int:
@@ -86,6 +88,7 @@ def configure_engine(*, engine_factory: Callable[[], Engine] | None = None, data
     """Allow applications to override the engine factory and keep a unified configuration."""
 
     global _ENGINE_FACTORY  # noqa: PLW0603 - runtime configuration hook
+    global DATABASE_URL
 
     if engine_factory and database_url:
         raise ValueError("Provide either engine_factory or database_url, not both.")
@@ -100,8 +103,15 @@ def configure_engine(*, engine_factory: Callable[[], Engine] | None = None, data
             )
 
         _ENGINE_FACTORY = _factory
+        DATABASE_URL = database_url
     else:
         _ENGINE_FACTORY = engine_factory
+        # When relying on environment variables, refresh the exported constant.
+        # If the variable is missing we keep the previous (validated) value.
+        try:
+            DATABASE_URL = _require_database_url()
+        except RuntimeError:
+            logger.debug("DATABASE_URL environment variable missing when configuring custom engine factory.")
 
     _cached_engine.cache_clear()
 
