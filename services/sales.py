@@ -296,7 +296,16 @@ class SaleService:
             logger.exception("Unable to create engine for sale service", exc_info=exc)
             return self._default_db_profile("unknown")
 
-        dialect = (engine.dialect.name or "unknown").lower()
+        raw_dialect = getattr(engine, "dialect", None)
+        if raw_dialect is None:
+            logger.debug(
+                "Engine %r has no dialect attribute; using default SaleService profile.",
+                engine,
+            )
+            return self._default_db_profile("unknown")
+
+        dialect_name = getattr(raw_dialect, "name", "unknown")
+        dialect = str(dialect_name or "unknown").lower()
         feature_flag = os.getenv("SALE_DISABLE_STOCK_TRIGGER", "").lower() in {
             "1",
             "true",
@@ -356,7 +365,8 @@ class SaleService:
             return False
 
     def _determine_stock_lock_sql(self, engine: Engine) -> str:
-        supports_for_update = bool(getattr(engine.dialect, "supports_for_update", False))
+        dialect = getattr(engine, "dialect", None)
+        supports_for_update = bool(getattr(dialect, "supports_for_update", False))
         if supports_for_update:
             return "SELECT stock_actuel FROM produits WHERE id = :pid FOR UPDATE"
         return "SELECT stock_actuel FROM produits WHERE id = :pid"

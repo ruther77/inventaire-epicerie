@@ -1,9 +1,11 @@
 import logging
 import os
 from functools import lru_cache
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:  # pragma: no cover - typing support only
+    import pandas as pd
+
 from sqlalchemy import TextClause, create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.sql.elements import ClauseElement
@@ -55,7 +57,15 @@ def _resolve_database_url() -> str:
 
 # Re-export the resolved URL for legacy callers (e.g. Streamlit dashboard).
 # This mirrors the previous module level constant while keeping validation.
-DATABASE_URL = _require_database_url()
+try:
+    DATABASE_URL = _require_database_url()
+except RuntimeError:
+    logger.debug(
+        "%s is not set at import time. Using fallback %s intended for tests/local runs.",
+        DATABASE_URL_ENV,
+        _FALLBACK_DATABASE_URL,
+    )
+    DATABASE_URL = _FALLBACK_DATABASE_URL
 
 
 def _get_pool_setting(env_var: str, default: int) -> int:
@@ -194,7 +204,21 @@ def _normalize_statement(sql: str | ClauseElement) -> ClauseElement:
     raise TypeError("sql must be a string or SQLAlchemy ClauseElement")
 
 
-def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
+def _require_pandas():
+    try:
+        import pandas as pd  # type: ignore
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
+        message = (
+            "pandas is required to use query_df. "
+            "Install it with `pip install pandas` or include it as a dependency."
+        )
+        logger.error(message)
+        raise ModuleNotFoundError(message) from exc
+
+    return pd
+
+
+def query_df(sql: str | ClauseElement, params=None) -> "pd.DataFrame":
     """Exécute une requête SELECT et retourne le résultat sous forme de DataFrame Pandas."""
     statement = _normalize_statement(sql)
     if params is not None and not isinstance(params, dict):
@@ -203,6 +227,7 @@ def query_df(sql: str | ClauseElement, params=None) -> pd.DataFrame:
     # Pré-lie les paramètres pour simplifier les tentatives de repli en cas d'erreur
     bound_statement = statement.bindparams(**params) if params is not None else statement
 
+    pd = _require_pandas()
     eng = get_engine()
     with eng.begin() as conn:
         try:

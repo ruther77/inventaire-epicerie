@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 
-import pandas as pd
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import pandas as pd
 
 from data_repository import get_engine, query_df
 from sqlalchemy import exc as sa_exc, text
@@ -53,7 +54,23 @@ def process_sale_transaction(cart: list, username: str) -> tuple[bool, str | Non
 # ---------------------------------------------------------------------------
 
 
-def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
+def _require_pandas():
+    """Import pandas on demand so that optional features degrade gracefully."""
+
+    try:
+        import pandas as pd  # type: ignore
+    except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
+        message = (
+            "pandas is required for invoice import features. "
+            "Install it with `pip install pandas` or include it in your environment."
+        )
+        logger.error(message)
+        raise ModuleNotFoundError(message) from exc
+
+    return pd
+
+
+def match_invoice_products(invoice_df: "pd.DataFrame") -> "pd.DataFrame":
     """Associe les lignes d'une facture aux produits du catalogue via code-barres."""
 
     empty_columns = [
@@ -64,6 +81,8 @@ def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
         "prix_achat_catalogue",
         "prix_vente_catalogue",
     ]
+
+    pd = _require_pandas()
 
     with tracer.start_as_current_span("imports.match_invoice_products") as span:
         row_count = int(len(invoice_df)) if isinstance(invoice_df, pd.DataFrame) else 0
@@ -133,7 +152,7 @@ def match_invoice_products(invoice_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def register_invoice_reception(
-    invoice_df: pd.DataFrame,
+    invoice_df: "pd.DataFrame",
     *,
     username: str,
     supplier: str | None = None,
@@ -141,6 +160,8 @@ def register_invoice_reception(
     reception_date: datetime | None = None,
 ) -> dict[str, object]:
     """Crée des mouvements d'entrée à partir d'une réception de facture."""
+
+    pd = _require_pandas()
 
     with tracer.start_as_current_span("imports.register_invoice_reception") as span:
         summary = {
