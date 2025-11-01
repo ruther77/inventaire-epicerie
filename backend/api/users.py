@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from .._fastapi_compat import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 

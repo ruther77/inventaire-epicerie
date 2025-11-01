@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+
+from ._fastapi_compat import CORSMiddleware, FastAPI
 
 # Ensure environment variables from a local .env file are available before
 # importing modules that resolve the database configuration at import time.

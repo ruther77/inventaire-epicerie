@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from .._fastapi_compat import APIRouter, Depends, HTTPException, status
 
 from domain.catalogue import load_active_products_map
 from domain.sales import process_sale_transaction

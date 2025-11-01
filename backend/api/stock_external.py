@@ -6,8 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Sequence
 
-from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import JSONResponse
+from .._fastapi_compat import APIRouter, HTTPException, JSONResponse, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import text

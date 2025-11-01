@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from .._fastapi_compat import APIRouter, Depends, HTTPException, status
 
 from domain.catalogue import (
     InvalidBarcodeError,
