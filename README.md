@@ -5,6 +5,38 @@ chargement des produits depuis des fichiers CSV, suivi des ventes et tableau de
 bord interactif. Une API FastAPI et une interface React monopage complètent
 désormais l'application historique pour amorcer la migration vers une SPA.
 
+## Nouvelle couche PHP full-stack
+
+Le dossier `php-app/` introduit une architecture inspirée de Laravel pour la
+partie PHP historique :
+
+* **Routing structuré :** `routes/web.php` centralise toutes les routes web et
+  les associe à des contrôleurs (`App\Http\Controllers`).
+* **Vues Blade-like :** les gabarits `.blade.php` placés dans
+  `resources/views/` sont compilés avec un moteur maison qui gère sections,
+  composants et directives usuelles (`@extends`, `@component`, `@error`, etc.).
+* **Formulaires et validation :** `Framework\Validation\Validator` fournit des
+  règles simples (`required`, `email`, `min`) et les contrôleurs renvoient les
+  messages d'erreur localisés ainsi que les anciennes valeurs (`old()`).
+* **Livewire/Stimulus :** un contrôleur Stimulus (`product-filter`) apporte un
+  filtrage dynamique des produits via la route `POST /livewire/products/filter`
+  alimentée par `App\Http\Livewire\ProductFilter`.
+* **Internationalisation :** `resources/lang/{fr,en}/messages.php` contient les
+  traductions et l'utilisateur peut changer la langue via `/locale/{locale}`.
+
+### Lancer le serveur PHP
+
+```bash
+php -S 0.0.0.0:8080 -t php-app/public php-app/public/index.php
+```
+
+Vous obtenez alors :
+
+* Une page d'accueil SEO-friendly avec sections catalogue et CTA.
+* Un catalogue filtrable dynamiquement (Stimulus + requêtes AJAX).
+* Des fiches produits détaillées, un panier server-rendered et un formulaire de
+  contact validé côté serveur.
+
 ## État du projet
 
 * **Tests automatisés :** `pytest` couvre les services d'accès aux données, le
