@@ -4,6 +4,7 @@ import os
 import io
 import math
 from datetime import datetime
+from html import escape as html_escape
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
@@ -59,7 +60,10 @@ from domain import (
     process_sale_transaction,
     update_catalog_entry,
 )
-from streamlit_app.components.navigation import render_workspace_navigation
+from streamlit_app.components.navigation import (
+    render_workspace_navigation,
+    _PAGE_KEY_TO_INDEX,
+)
 from streamlit_app.components.theme import THEME_LABELS, apply_ui_theme, local_css
 from streamlit_app.services.cache import invalidate_data_caches
 from streamlit_app.services.catalog import (
@@ -98,6 +102,188 @@ def _format_human_number(value: float | int, decimals: int = 0) -> str:
 
     return f"{value:,.{decimals}f}".replace(",", " ")
 
+
+def _table_count_value(table_counts: pd.DataFrame | None, table_name: str) -> int | None:
+    """Extract an integer count for the requested table if available."""
+
+    if table_counts is None or table_counts.empty:
+        return None
+    try:
+        matching = table_counts.loc[table_counts["table"] == table_name, "lignes"]
+    except KeyError:
+        return None
+    if matching.empty:
+        return None
+    try:
+        return int(matching.iloc[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_overview_stat(raw_value: int | None) -> str:
+    """Return a nicely formatted string for the overview statistics."""
+
+    if raw_value is None:
+        return "—"
+    return _format_human_number(raw_value, 0)
+
+
+def _tab_target_attr(page_key: str | None) -> str:
+    """Return the data attributes allowing HTML buttons to switch Streamlit tabs."""
+
+    if not page_key:
+        return ""
+    index = _PAGE_KEY_TO_INDEX.get(page_key)
+    if index is None:
+        return ""
+    safe_key = html_escape(str(page_key))
+    return f' data-tab-target="{index}" data-page-key="{safe_key}"'
+
+
+def render_workspace_overview(
+    *, user_name: str, user_role: str | None, table_counts: pd.DataFrame | None
+) -> None:
+    """Render the hero section aligning the workspace with the SPA design."""
+
+    stats: List[Tuple[str, int | None]] = [
+        ("Références catalogue", _table_count_value(table_counts, "produits")),
+        ("Codes associés", _table_count_value(table_counts, "produits_barcodes")),
+        ("Mouvements suivis", _table_count_value(table_counts, "mouvements_stock")),
+    ]
+
+    stats_markup = "".join(
+        (
+            "<div><dt>{label}</dt><dd>{value}</dd></div>".format(
+                label=html_escape(label),
+                value=_format_overview_stat(raw),
+            )
+            for label, raw in stats
+        )
+    )
+
+    metrics_alert = ""
+    if all(raw is None for _, raw in stats):
+        metrics_alert = (
+            "<p class=\"workspace-overview-card__subtitle workspace-overview-card__subtitle--warning\">"
+            "Impossible de récupérer les métriques du catalogue pour le moment."
+            "</p>"
+        )
+
+    name_fragment = html_escape(user_name.strip()) if user_name else "Invité"
+    role_fragment = f" · {html_escape(user_role.strip())}" if user_role else ""
+
+    dashboard_attrs = _tab_target_attr("dashboard")
+    reports_attrs = _tab_target_attr("movements")
+    supply_attrs = _tab_target_attr("supply")
+    catalog_attrs = _tab_target_attr("catalog")
+    pos_attrs = _tab_target_attr("pos")
+    scanner_attrs = _tab_target_attr("scanner")
+    extract_attrs = _tab_target_attr("extract")
+    admin_attrs = _tab_target_attr("admin")
+
+    hero_html = f"""
+        <section class="workspace-header">
+            <div class="mega-menu__overlay" aria-hidden="true"></div>
+            <div class="workspace-header__bar">
+                <div class="workspace-header__group">
+                    <span class="workspace-header__brand-eyebrow">Catalogue</span>
+                    <h1 class="workspace-header__brand-title">Explorer & analyser</h1>
+                    <p class="workspace-header__lead">Consolidez les indicateurs clés et ouvrez vos métiers à la donnée.</p>
+                    <p class="workspace-header__welcome">Bonjour {name_fragment}{role_fragment}, vos raccourcis métiers vous attendent.</p>
+                    <div class="workspace-primary__shortcuts">
+                        <a class="workspace-shortcut is-active" href="#"{dashboard_attrs}>
+                            <span class="workspace-shortcut__icon"><i class="bi bi-speedometer2"></i></span>
+                            <span>Ouvrir le tableau de bord</span>
+                        </a>
+                        <a class="workspace-shortcut" href="#"{reports_attrs}>
+                            <span class="workspace-shortcut__icon"><i class="bi bi-graph-up"></i></span>
+                            <span>Consulter les rapports</span>
+                        </a>
+                        <a class="workspace-shortcut" href="#"{supply_attrs}>
+                            <span class="workspace-shortcut__icon"><i class="bi bi-truck"></i></span>
+                            <span>Nouvelle commande</span>
+                        </a>
+                    </div>
+                </div>
+                <div class="workspace-header__cluster">
+                    <div class="workspace-primary">
+                        <div class="workspace-primary__panels">
+                            <div class="workspace-primary__panel is-active">
+                                <div class="workspace-primary__panel-header">
+                                    <div class="workspace-primary__panel-icon"><i class="bi bi-kanban"></i></div>
+                                    <div class="workspace-primary__panel-title">
+                                        <p class="workspace-primary__panel-heading">Explorer & analyser</p>
+                                        <p class="workspace-primary__panel-description">Cartes d'accès rapide aux modules d'analyse et de pilotage.</p>
+                                    </div>
+                                </div>
+                                <div class="workspace-primary__panel-grid">
+                                    <div class="workspace-primary__panel-column">
+                                        <article class="workspace-overview-card workspace-overview-card--primary">
+                                            <header class="workspace-overview-card__header">
+                                                <div>
+                                                    <h3 class="workspace-overview-card__title">Tableau de bord</h3>
+                                                    <p class="workspace-overview-card__subtitle">Synthèse immédiate de vos indicateurs commerce.</p>
+                                                </div>
+                                            </header>
+                                            <dl class="workspace-overview-card__stats">
+                                                {stats_markup}
+                                            </dl>
+                                            {metrics_alert}
+                                            <a class="workspace-overview-card__cta" href="#"{dashboard_attrs}>Voir le tableau de bord</a>
+                                        </article>
+                                        <article class="workspace-overview-card workspace-overview-card--secondary">
+                                            <header class="workspace-overview-card__header">
+                                                <div>
+                                                    <h3 class="workspace-overview-card__title">Centre de contrôle</h3>
+                                                    <p class="workspace-overview-card__subtitle">Guides, FAQ et paramétrages essentiels.</p>
+                                                </div>
+                                            </header>
+                                            <ul class="workspace-overview-card__links">
+                                                <li><a href="#"{admin_attrs}>Maintenance & sauvegardes</a></li>
+                                                <li><a href="#"{extract_attrs}>Extraction des factures fournisseurs</a></li>
+                                            </ul>
+                                        </article>
+                                    </div>
+                                    <div class="workspace-primary__panel-column">
+                                        <aside class="workspace-preview">
+                                            <p class="workspace-preview__title">Outils Streamlit</p>
+                                            <ul class="workspace-preview__list">
+                                                <li class="workspace-preview__item">
+                                                    <a class="workspace-preview__link" href="#"{catalog_attrs}>
+                                                        <span class="workspace-preview__icon"><i class="bi bi-collection"></i></span>
+                                                        <span class="workspace-preview__content">
+                                                            <span class="workspace-preview__label">Gestion catalogue</span>
+                                                            <span class="workspace-preview__desc">Ajoutez, modifiez et archivez vos fiches produits.</span>
+                                                        </span>
+                                                    </a>
+                                                </li>
+                                                <li class="workspace-preview__item">
+                                                    <a class="workspace-preview__link" href="#"{supply_attrs}>
+                                                        <span class="workspace-preview__icon"><i class="bi bi-truck"></i></span>
+                                                        <span class="workspace-preview__content">
+                                                            <span class="workspace-preview__label">Approvisionnements</span>
+                                                            <span class="workspace-preview__desc">Visualisez les commandes, réceptions et ruptures critiques.</span>
+                                                        </span>
+                                                    </a>
+                                                </li>
+                                            </ul>
+                                            <ul class="workspace-preview__secondary">
+                                                <li><a class="workspace-preview__secondary-link" href="#"{pos_attrs}><i class="bi bi-cash-coin"></i><span>Encaissement PoS</span></a></li>
+                                                <li><a class="workspace-preview__secondary-link" href="#"{scanner_attrs}><i class="bi bi-upc-scan"></i><span>Scanner codes-barres</span></a></li>
+                                                <li><a class="workspace-preview__secondary-link" href="#"{reports_attrs}><i class="bi bi-graph-up-arrow"></i><span>Diagnostic stock</span></a></li>
+                                            </ul>
+                                        </aside>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    """
+
+    st.markdown(hero_html, unsafe_allow_html=True)
 
 def _render_product_cards(
     dataframe: pd.DataFrame,
@@ -753,7 +939,16 @@ def render_app() -> None:
 
         render_workspace_navigation()
 
-        st.title("📦 Inventaire — Gestion Complète")
+        try:
+            table_counts_df = load_table_counts()
+        except Exception:
+            table_counts_df = None
+
+        render_workspace_overview(
+            user_name=name,
+            user_role=st.session_state.get("user_role"),
+            table_counts=table_counts_df,
+        )
         st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')
         theme_labels = list(THEME_LABELS.keys())
         current_theme_label = {

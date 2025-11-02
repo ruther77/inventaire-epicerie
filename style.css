@@ -615,9 +615,27 @@ a:focus {
 
 .workspace-header__cluster {
     flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    display: grid;
+    gap: 1.5rem;
+}
+
+@media (min-width: 992px) {
+    .workspace-header__cluster {
+        grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+        align-items: stretch;
+    }
+}
+
+.workspace-header__lead {
+    color: var(--workspace-muted);
+    font-size: 0.95rem;
+    margin: 0 0 0.5rem;
+}
+
+.workspace-header__welcome {
+    color: var(--workspace-text);
+    font-weight: 500;
+    margin: 0 0 1.5rem;
 }
 
 .workspace-primary {
@@ -775,6 +793,131 @@ a:focus {
     .workspace-primary__panel-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+}
+
+.workspace-overview-card {
+    background: #fff;
+    border: 1px solid var(--workspace-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-border);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+}
+
+.workspace-overview-card--primary {
+    background: linear-gradient(150deg, rgba(37, 99, 235, 0.12), rgba(14, 165, 233, 0.08));
+}
+
+.workspace-overview-card--secondary {
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.workspace-overview-card__header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.workspace-overview-card__title {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--workspace-text);
+}
+
+.workspace-overview-card__subtitle {
+    margin: 0.25rem 0 0 0;
+    color: var(--workspace-muted);
+    font-size: 0.9rem;
+}
+
+.workspace-overview-card__subtitle--warning {
+    color: var(--color-danger);
+    font-weight: 600;
+}
+
+.workspace-overview-card__stats {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.workspace-overview-card__stats div {
+    background: rgba(255, 255, 255, 0.65);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.85rem;
+    border: 1px solid rgba(37, 99, 235, 0.12);
+}
+
+.workspace-overview-card__stats dt {
+    color: var(--workspace-muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    margin: 0 0 0.25rem;
+    text-transform: uppercase;
+}
+
+.workspace-overview-card__stats dd {
+    color: var(--workspace-text);
+    font-family: "Poppins", sans-serif;
+    font-size: 1.45rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.workspace-overview-card__cta {
+    align-self: flex-start;
+    background: var(--color-primary);
+    border-radius: 999px;
+    color: #fff;
+    font-weight: 600;
+    padding: 0.5rem 1.2rem;
+    text-decoration: none;
+    box-shadow: var(--shadow-border);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.workspace-overview-card__cta:hover,
+.workspace-overview-card__cta:focus {
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-soft);
+}
+
+.workspace-overview-card__links {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.workspace-overview-card__links a {
+    color: var(--workspace-text);
+    font-weight: 500;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.workspace-overview-card__links a:hover,
+.workspace-overview-card__links a:focus {
+    color: var(--color-primary);
+}
+
+.workspace-preview {
+    background: #fff;
+    border: 1px solid var(--workspace-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-border);
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
 .workspace-preview__title {
