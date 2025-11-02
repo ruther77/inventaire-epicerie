@@ -103,10 +103,7 @@ def decode_access_token(token: str, settings: APISettings | None = None) -> dict
     return payload
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(token_bearer)) -> dict:
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentification requise")
-
+def _resolve_user_from_credentials(credentials: HTTPAuthorizationCredentials) -> dict:
     token = credentials.credentials
     try:
         payload = decode_access_token(token)
@@ -124,6 +121,22 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Compte utilisateur inactif")
 
     return public_user(user)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Security(token_bearer)) -> dict:
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentification requise")
+
+    return _resolve_user_from_credentials(credentials)
+
+
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Security(token_bearer),
+) -> dict | None:
+    if credentials is None:
+        return None
+
+    return _resolve_user_from_credentials(credentials)
 
 
 def get_current_active_user(current_user: dict = Depends(get_current_user)) -> dict:

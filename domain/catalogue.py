@@ -14,25 +14,55 @@ from product_service import (
 from sqlalchemy import text
 
 
-def fetch_products() -> list[dict[str, Any]]:
-    """Return the full product catalogue ordered by name."""
+def fetch_products(include_inactive: bool = False, search: str | None = None) -> list[dict[str, Any]]:
+    """Return the product catalogue optionally filtered by activity or search term."""
 
-    sql = """
-        SELECT
-            p.id,
-            p.nom,
-            p.categorie,
-            COALESCE(p.prix_vente, 0) AS prix_vente,
-            p.prix_achat,
-            p.stock_actuel,
-            p.tva
-        FROM produits p
-        ORDER BY p.nom ASC
-    """
-    df = query_df(sql)
+    segments = [
+        "SELECT",
+        "    p.id,",
+        "    p.nom,",
+        "    p.categorie,",
+        "    COALESCE(p.prix_vente, 0) AS prix_vente,",
+        "    p.prix_achat,",
+        "    COALESCE(p.stock_actuel, 0) AS stock_actuel,",
+        "    COALESCE(p.tva, 0) AS tva,",
+        "    COALESCE(p.actif, 1) AS actif",
+        "FROM produits p",
+    ]
+
+    params: dict[str, Any] = {}
+    conditions: list[str] = []
+
+    if not include_inactive:
+        conditions.append("(p.actif IS NULL OR p.actif = 1)")
+
+    if search:
+        term = search.strip()
+        if term:
+            params["search_name"] = f"%{term.lower()}%"
+            params["search_barcode"] = f"%{term}%"
+            conditions.append(
+                "(LOWER(p.nom) LIKE :search_name OR EXISTS ("
+                "    SELECT 1 FROM produits_barcodes pb"
+                "    WHERE pb.produit_id = p.id AND pb.code LIKE :search_barcode"
+                "))"
+            )
+
+    if conditions:
+        segments.append("WHERE " + " AND ".join(conditions))
+
+    segments.append("ORDER BY p.nom ASC")
+    sql = "\n".join(segments)
+
+    df = query_df(sql, params)
     if df.empty:
         return []
-    return [dict(record) for record in df.to_dict("records")]
+    records = []
+    for record in df.to_dict("records"):
+        entry = dict(record)
+        entry.pop("actif", None)
+        records.append(entry)
+    return records
 
 
 def load_active_products_map(product_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
