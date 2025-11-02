@@ -1150,6 +1150,7 @@ body[data-theme='dark'] .workspace-tab-shell .stTabs [role="tablist"] {
     color: var(--workspace-muted);
     transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease,
         box-shadow 0.2s ease, transform 0.2s ease;
+    scroll-snap-align: start;
 }
 
 .stTabs [data-baseweb="tab"]:hover,
@@ -1286,3 +1287,30 @@ body[data-theme='dark'] .stTabs [aria-selected="true"] {
         font-size: 15px;
     }
 }
+.stMainBlockContainer > div:nth-child(1) > div:nth-child(4) > div:nth-child(1) > div:nth-child(1) {
+    display: none !important;
+}
+
+.stTabs:nth-of-type(7) > div:nth-child(1) > div:nth-child(1) {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+}
+
+.stTabs:nth-of-type(7) > div:nth-child(1) > div:nth-child(1)::-webkit-scrollbar {
+    height: 6px;
+}
+
+.stTabs:nth-of-type(7) > div:nth-child(1) > div:nth-child(1)::-webkit-scrollbar-thumb {
+    background: rgba(37, 99, 235, 0.35);
+    border-radius: 999px;
+}
+
+.stTabs:nth-of-type(7) > div:nth-child(1) > div:nth-child(1)::-webkit-scrollbar-track {
+    background: rgba(148, 163, 184, 0.15);
+}
+
