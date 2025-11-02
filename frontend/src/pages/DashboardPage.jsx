@@ -17,27 +17,29 @@ const DASHBOARD_CARDS = [
     to: '/commandes',
   },
   {
+    id: 'approvisionnements',
+    label: 'Approvisionnements',
+    description: 'Consignez vos réceptions fournisseurs en quelques clics.',
+    to: '/approvisionnements',
+  },
+  {
+    id: 'clients',
+    label: 'Clients',
+    description: 'Retrouvez les coordonnées et l’historique de vos clients.',
+    to: '/clients',
+  },
+  {
+    id: 'fournisseurs',
+    label: 'Fournisseurs',
+    description: 'Gardez vos partenaires commerciaux à portée de main.',
+    to: '/fournisseurs',
+  },
+  {
     id: 'analyses',
     label: 'Analyses',
     description: 'Consultez les rapports de performance et les tendances de ventes.',
     to: '/explorer/rapports',
     badge: { label: 'Bêta', variant: 'beta' },
-  },
-];
-
-const PERSISTENT_VIEWS = [
-  {
-    id: 'custom-layout',
-    label: 'Disposition personnalisée',
-    description: 'Votre configuration enregistrée pour le suivi hebdomadaire.',
-    to: '/dashboard?layout=custom',
-  },
-  {
-    id: 'alerts',
-    label: 'Alertes critiques',
-    description: 'Derniers seuils d\'alerte configurés sur l\'inventaire.',
-    to: '/notifications',
-    badge: { label: '3', variant: 'count' },
   },
 ];
 
@@ -60,7 +62,8 @@ export default function DashboardPage() {
         <SavedViewsPanel
           title="Vos configurations"
           description="Les cartes que vous avez épinglées pour retrouver votre contexte en un clin d'œil."
-          views={PERSISTENT_VIEWS}
+          slot="dashboard"
+          allowManage
         />
       </header>
       <section className="card metric-grid">

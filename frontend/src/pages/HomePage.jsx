@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import SavedViewsPanel from '../components/SavedViewsPanel.jsx';
+import { useSavedViews } from '../contexts/SavedViewsContext.jsx';
 
 const JOURNEYS = [
   {
@@ -16,6 +17,12 @@ const JOURNEYS = [
     to: '/commandes',
   },
   {
+    id: 'approvisionnements',
+    label: 'Gérer les approvisionnements',
+    description: 'Consignez les réceptions et préparez vos achats fournisseurs.',
+    to: '/approvisionnements',
+  },
+  {
     id: 'promotions',
     label: 'Explorer les promotions',
     description: 'Repérez les offres en cours et préparez vos campagnes commerciales.',
@@ -23,44 +30,76 @@ const JOURNEYS = [
     badge: { label: 'Promo', variant: 'promo' },
   },
   {
+    id: 'parcours-commerce',
+    label: 'Parcours e-commerce',
+    description: "Démonstration inspirée d'Amazon : catalogue, panier et suivi de commande connectés.",
+    to: '/parcours/commerce',
+    badge: { label: 'Nouveau', variant: 'new' },
+  },
+  {
+    id: 'parcours-contenus',
+    label: 'Studio de contenus',
+    description: "Découvrez le flux personnalisé façon YouTube et ses rapports d'engagement.",
+    to: '/parcours/contenus',
+  },
+  {
     id: 'aide',
     label: 'Besoin d\'aide ?',
     description: 'Accédez aux guides express et contactez l\'équipe support.',
     to: '/aide',
   },
-];
-
-const SAVED_VIEWS = [
   {
-    id: 'low-stock',
-    label: 'Stock faible',
-    description: 'Produits à recharger en priorité cette semaine.',
-    to: '/catalogue?filter=low-stock',
-    badge: { label: 'A surveiller', variant: 'warning' },
-  },
-  {
-    id: 'week-orders',
-    label: 'Commandes de la semaine',
-    description: 'Suivi des ventes réalisées sur les 7 derniers jours.',
-    to: '/commandes?range=7d',
-  },
-  {
-    id: 'promo-basket',
-    label: 'Panier promo',
-    description: 'Sélection produits saisonniers pour mise en avant.',
-    to: '/promotions',
-    badge: { label: 'Nouveau', variant: 'new' },
+    id: 'clients',
+    label: 'Clients et fournisseurs',
+    description: 'Centralisez les coordonnées de vos interlocuteurs commerciaux.',
+    to: '/clients',
   },
 ];
 
 export default function HomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
+  const [feedback, setFeedback] = useState(null);
+  const dismissTimeout = useRef(null);
+  const { saveView } = useSavedViews();
 
   const handleSubmit = (event) => {
     event.preventDefault();
     navigate(`/catalogue?search=${encodeURIComponent(query.trim())}`);
   };
+
+  const handlePinJourney = (journey) => {
+    saveView('home', {
+      id: `journey-${journey.id}`,
+      label: journey.label,
+      description: journey.description,
+      to: journey.to,
+      badge: journey.badge,
+    });
+    setFeedback(`« ${journey.label} » ajouté à vos raccourcis.`);
+  };
+
+  useEffect(() => {
+    if (!feedback || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    if (dismissTimeout.current) {
+      window.clearTimeout(dismissTimeout.current);
+    }
+
+    dismissTimeout.current = window.setTimeout(() => {
+      setFeedback(null);
+      dismissTimeout.current = null;
+    }, 3000);
+
+    return () => {
+      if (dismissTimeout.current) {
+        window.clearTimeout(dismissTimeout.current);
+        dismissTimeout.current = null;
+      }
+    };
+  }, [feedback]);
 
   return (
     <div className="landing">
@@ -89,20 +128,29 @@ export default function HomePage() {
         <SavedViewsPanel
           title="Vos accès rapides"
           description="Retrouvez vos vues sauvegardées, épinglées sur tous vos appareils."
-          views={SAVED_VIEWS}
+          slot="home"
+          allowManage
         />
       </section>
       <section className="landing-journeys">
         <h2>Choisissez un parcours</h2>
+        {feedback && <p className="journey-feedback">{feedback}</p>}
         <div className="journey-grid">
           {JOURNEYS.map((journey) => (
-            <Link key={journey.id} to={journey.to} className="journey-card">
-              <div className="journey-heading">
-                <span>{journey.label}</span>
-                {journey.badge && <span className={`badge badge-${journey.badge.variant}`}>{journey.badge.label}</span>}
-              </div>
-              <p>{journey.description}</p>
-            </Link>
+            <article key={journey.id} className="journey-card">
+              <Link to={journey.to} className="journey-card-link">
+                <div className="journey-heading">
+                  <span>{journey.label}</span>
+                  {journey.badge && (
+                    <span className={`badge badge-${journey.badge.variant}`}>{journey.badge.label}</span>
+                  )}
+                </div>
+                <p>{journey.description}</p>
+              </Link>
+              <button type="button" className="journey-pin" onClick={() => handlePinJourney(journey)}>
+                Épingler ce parcours
+              </button>
+            </article>
           ))}
         </div>
       </section>

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link, NavLink } from 'react-router-dom';
 
+import { Badge } from '../design-system/index.js';
+
 export default function MegaMenu({ sections, isMobileOpen, onToggleMobile, onNavigate }) {
   const [activeSection, setActiveSection] = useState(sections[0]?.id ?? null);
 
@@ -61,7 +63,7 @@ export default function MegaMenu({ sections, isMobileOpen, onToggleMobile, onNav
                     onClick={handleNavigate}
                   >
                     {action.label}
-                    {action.badge && <span className={`badge badge-${action.badge.variant}`}>{action.badge.label}</span>}
+                    {action.badge && <Badge variant={action.badge.variant} label={action.badge.label} />}
                   </NavLink>
                 ))}
               </div>
@@ -76,7 +78,7 @@ export default function MegaMenu({ sections, isMobileOpen, onToggleMobile, onNav
                 >
                   <div className="mega-menu-item-heading">
                     <span>{item.label}</span>
-                    {item.badge && <span className={`badge badge-${item.badge.variant}`}>{item.badge.label}</span>}
+                    {item.badge && <Badge variant={item.badge.variant} label={item.badge.label} />}
                   </div>
                   {item.description && <p>{item.description}</p>}
                 </Link>

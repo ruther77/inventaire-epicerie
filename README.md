@@ -66,11 +66,13 @@ shell ouvert via `make shell`.
 
 ### Avec Docker (recommandé)
 
-1. Créez un fichier `.env` à partir de `env.prod.example` en adaptant les
+1. Créez un fichier `.env` à partir de `.env.example` (ou `env.prod.example` pour
+   une configuration prête pour la production) en adaptant les
    valeurs si nécessaire.
 2. Lancez la stack :
 
    ```bash
+   cp .env.example .env  # si vous ne l'avez pas encore fait
    make up
    ```
 
@@ -85,6 +87,25 @@ shell ouvert via `make shell`.
    ```bash
    make down
    ```
+
+#### Déployer l'ensemble hébergeable
+
+Le fichier `docker-compose.prod.yml` décrit la stack complète (PostgreSQL,
+API FastAPI, interface Streamlit et SPA React). Les images utilisent le même
+Dockerfile avec un point d'entrée multi-process (`docker/entrypoint.sh`) qui
+sélectionne automatiquement le service à lancer via la variable `APP_PROCESS`.
+
+```bash
+cp env.prod.example .env  # personnalisez ensuite les valeurs
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Les ports exposés par défaut sont :
+
+* 5432 pour PostgreSQL
+* 8000 pour l'API FastAPI
+* 8501 pour Streamlit
+* 4173 pour l'aperçu du front React (build Vite)
 
 #### Mettre à jour le conteneur `app`
 
@@ -103,6 +124,26 @@ docker compose up --build app  # alternative équivalente
 Cela garantit que le conteneur dispose bien des utilitaires comme
 `invoice_extractor.py` ou `cart_normalizer.py`, et évite tout décalage entre
 l'affichage local et l'image exécutée en production.
+
+### Pré-requis Streamlit
+
+Avant d'exécuter `streamlit run app.py`, assurez-vous que l'environnement
+dispose des éléments suivants :
+
+* **Variables d'environnement** :
+  * `DATABASE_URL` doit pointer vers l'instance PostgreSQL utilisée par
+    l'application (format `postgresql+psycopg2://USER:PASSWORD@HOST:PORT/DB`).
+  * `DATABASE_SEARCH_PATH` (optionnel) permet de forcer le `search_path`
+    PostgreSQL utilisé par l'API (`inventory,public` par exemple) lorsque les
+    tables / vues sont exposées dans un schéma dédié.
+  * `AUTH_SECRET_KEY` doit contenir au minimum 32 caractères afin que
+    l'authentification via `streamlit-authenticator` et l'API FastAPI puissent
+    signer / vérifier les jetons.
+* **Bibliothèques natives** : certaines dépendances Python requièrent des
+  bibliothèques système au moment de l'import. Vérifiez notamment la présence
+  de `libgl1`, `libglib2.0-0` (utilisées par OpenCV / `cv2`), `libzbar0`
+  (lecture de codes-barres via `pyzbar`) et `ffmpeg` (capture vidéo WebRTC).
+  Sans elles, Streamlit lèvera des erreurs au démarrage de `app.py`.
 
 ### En local (hors Docker)
 
@@ -126,7 +167,9 @@ l'affichage local et l'image exécutée en production.
    `pytest`.)
 
 3. Exportez les variables d'environnement nécessaires (voir `env.prod.example`
-   pour la liste complète) ou créez un fichier `.streamlit/secrets.toml`.
+   pour la liste complète) — en particulier `DATABASE_URL` et un
+   `AUTH_SECRET_KEY` d'au moins 32 caractères — ou créez un fichier
+   `.streamlit/secrets.toml`.
 4. Démarrez l'application puis ouvrez votre navigateur sur
    <http://localhost:8501> :
 
@@ -144,6 +187,10 @@ l'affichage local et l'image exécutée en production.
    La SPA est disponible sur <http://localhost:5173> et communique avec
    l'ancienne application via l'iframe « Outils Streamlit » tant que certaines
    fonctionnalités n'ont pas été portées.
+
+   > ℹ️ Si `uvicorn` signale l'absence du module `fastapi`, (ré)exécutez
+   > `pip install -r requirements.txt` ou `pip install -r requirements-dev.txt`
+   > dans l'environnement virtuel actif avant de relancer le serveur.
 
 ### Importer des produits
 

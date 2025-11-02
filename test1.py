@@ -19,7 +19,11 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, 
 
 # Importation des fonctions de gestion de la BDD et du chargeur 
 from data_repository import query_df, exec_sql, exec_sql_return_id, get_engine # NOUVEAU: exec_sql n'est plus appelé ici
-from inventory_service import * # NOUVEAU: Import du service 
+from inventory_service import (  # NOUVEAU: Import du service
+    match_invoice_products,
+    process_sale_transaction,
+    register_invoice_reception,
+)
 import products_loader
 
 # --- FONCTION POUR CHARGER LE CSS EXTERNE (style.css) ---

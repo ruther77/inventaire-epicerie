@@ -1,120 +1,184 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
-import HomePage from './pages/HomePage.jsx';
-import CatalogPage from './pages/CatalogPage.jsx';
-import PosPage from './pages/PosPage.jsx';
-import ReportsPage from './pages/ReportsPage.jsx';
-import LegacyToolsPage from './pages/LegacyToolsPage.jsx';
-import UserManagementPage from './pages/UserManagementPage.jsx';
-import OrdersPage from './pages/OrdersPage.jsx';
-import PromotionsPage from './pages/PromotionsPage.jsx';
-import DashboardPage from './pages/DashboardPage.jsx';
-import SupportPage from './pages/SupportPage.jsx';
-import AccountPage from './pages/AccountPage.jsx';
-import CartPage from './pages/CartPage.jsx';
-import FavoritesPage from './pages/FavoritesPage.jsx';
-import NotificationsPage from './pages/NotificationsPage.jsx';
-import SettingsPage from './pages/SettingsPage.jsx';
-import LoginPage from './pages/LoginPage.jsx';
-import SignupPage from './pages/SignupPage.jsx';
 import { useAuth } from './auth/AuthContext.jsx';
+import RequireAuth from './auth/RequireAuth.jsx';
 import LoginModal from './components/LoginModal.jsx';
 import MegaMenu from './components/MegaMenu.jsx';
 import Breadcrumbs from './components/Breadcrumbs.jsx';
 import UserMenu from './components/UserMenu.jsx';
 
+const HomePage = lazy(() => import('./pages/HomePage.jsx'));
+const CatalogPage = lazy(() => import('./pages/CatalogPage.jsx'));
+const PosPage = lazy(() => import('./pages/PosPage.jsx'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage.jsx'));
+const LegacyToolsPage = lazy(() => import('./pages/LegacyToolsPage.jsx'));
+const UserManagementPage = lazy(() => import('./pages/UserManagementPage.jsx'));
+const OrdersPage = lazy(() => import('./pages/OrdersPage.jsx'));
+const PromotionsPage = lazy(() => import('./pages/PromotionsPage.jsx'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage.jsx'));
+const SupportPage = lazy(() => import('./pages/SupportPage.jsx'));
+const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
+const CartPage = lazy(() => import('./pages/CartPage.jsx'));
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage.jsx'));
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage.jsx'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage.jsx'));
+const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
+const SignupPage = lazy(() => import('./pages/SignupPage.jsx'));
+const CategoriesPage = lazy(() => import('./pages/CategoriesPage.jsx'));
+const ClientsPage = lazy(() => import('./pages/ClientsPage.jsx'));
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage.jsx'));
+const ProcurementsPage = lazy(() => import('./pages/ProcurementsPage.jsx'));
+const CustomerJourneyPage = lazy(() => import('./pages/CustomerJourneyPage.jsx'));
+const ContentHubPage = lazy(() => import('./pages/ContentHubPage.jsx'));
+
 const ROUTES = [
-  { path: '/', element: <HomePage />, breadcrumb: 'Accueil', section: 'home' },
+  { path: '/', Component: HomePage, breadcrumb: 'Accueil', section: 'home' },
   {
     path: '/dashboard',
-    element: <DashboardPage />,
+    Component: DashboardPage,
     breadcrumb: 'Tableau de bord',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/catalogue',
-    element: <CatalogPage />,
+    Component: CatalogPage,
     breadcrumb: 'Catalogue',
     section: 'catalogue',
     badge: { label: 'Nouveau', variant: 'new' },
+    requiresAuth: true,
   },
   {
     path: '/commandes',
-    element: <OrdersPage />,
+    Component: OrdersPage,
     breadcrumb: 'Commandes',
     section: 'catalogue',
+    requiresAuth: true,
+  },
+  {
+    path: '/categories',
+    Component: CategoriesPage,
+    breadcrumb: 'Catégories',
+    section: 'catalogue',
+    requiresAuth: true,
+  },
+  {
+    path: '/approvisionnements',
+    Component: ProcurementsPage,
+    breadcrumb: 'Approvisionnements',
+    section: 'catalogue',
+    requiresAuth: true,
   },
   {
     path: '/promotions',
-    element: <PromotionsPage />,
+    Component: PromotionsPage,
     breadcrumb: 'Promotions',
     section: 'catalogue',
     badge: { label: 'Promo', variant: 'promo' },
+    requiresAuth: true,
+  },
+  {
+    path: '/parcours/commerce',
+    Component: CustomerJourneyPage,
+    breadcrumb: 'Parcours e-commerce',
+    section: 'scenarios',
+    badge: { label: 'Nouveau', variant: 'new' },
+    requiresAuth: true,
+  },
+  {
+    path: '/parcours/contenus',
+    Component: ContentHubPage,
+    breadcrumb: 'Studio contenus',
+    section: 'scenarios',
+    requiresAuth: true,
+  },
+  {
+    path: '/clients',
+    Component: ClientsPage,
+    breadcrumb: 'Clients',
+    section: 'relations',
+    requiresAuth: true,
+  },
+  {
+    path: '/fournisseurs',
+    Component: SuppliersPage,
+    breadcrumb: 'Fournisseurs',
+    section: 'relations',
+    requiresAuth: true,
   },
   {
     path: '/pos',
-    element: <PosPage />,
+    Component: PosPage,
     breadcrumb: 'Point de vente',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/explorer/rapports',
-    element: <ReportsPage />,
+    Component: ReportsPage,
     breadcrumb: 'Analyses',
     section: 'explorer',
     badge: { label: 'Bêta', variant: 'beta' },
+    requiresAuth: true,
   },
   {
     path: '/explorer/outils',
-    element: <LegacyToolsPage />,
+    Component: LegacyToolsPage,
     breadcrumb: 'Outils Streamlit',
     section: 'explorer',
+    requiresAuth: true,
   },
   {
     path: '/aide',
-    element: <SupportPage />,
+    Component: SupportPage,
     breadcrumb: 'Aide',
     section: 'support',
+    requiresAuth: true,
   },
   {
     path: '/compte',
-    element: <AccountPage />,
+    Component: AccountPage,
     breadcrumb: 'Espace personnel',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/panier',
-    element: <CartPage />,
+    Component: CartPage,
     breadcrumb: 'Panier',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/favoris',
-    element: <FavoritesPage />,
+    Component: FavoritesPage,
     breadcrumb: 'Favoris',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/notifications',
-    element: <NotificationsPage />,
+    Component: NotificationsPage,
     breadcrumb: 'Notifications',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/parametres',
-    element: <SettingsPage />,
+    Component: SettingsPage,
     breadcrumb: 'Paramètres',
     section: 'account',
+    requiresAuth: true,
   },
   {
     path: '/auth/login',
-    element: <LoginPage />,
+    Component: LoginPage,
     breadcrumb: 'Connexion',
     section: 'auth',
   },
   {
     path: '/auth/signup',
-    element: <SignupPage />,
+    Component: SignupPage,
     breadcrumb: 'Créer un compte',
     section: 'auth',
     badge: { label: 'Nouveau', variant: 'new' },
@@ -124,10 +188,11 @@ const ROUTES = [
 const ADMIN_ROUTES = [
   {
     path: '/users',
-    element: <UserManagementPage />,
+    Component: UserManagementPage,
     breadcrumb: 'Comptes utilisateurs',
     section: 'administration',
     adminOnly: true,
+    requiresAuth: true,
   },
 ];
 
@@ -141,6 +206,7 @@ const MEGA_MENU_SECTIONS = [
     featuredActions: [
       { to: '/catalogue', label: 'Parcourir le catalogue', badge: { label: 'Nouveau', variant: 'new' } },
       { to: '/commandes', label: 'Créer une commande' },
+      { to: '/approvisionnements', label: 'Suivre les approvisionnements' },
       { to: '/promotions', label: 'Voir les promotions', badge: { label: 'Promo', variant: 'promo' } },
     ],
     items: [
@@ -150,9 +216,19 @@ const MEGA_MENU_SECTIONS = [
         description: 'Recherchez, filtrez et sauvegardez vos vues personnalisées.',
       },
       {
+        to: '/categories',
+        label: 'Catégories',
+        description: 'Organisez vos références par familles et mettez-les à jour.',
+      },
+      {
         to: '/commandes',
         label: 'Commandes',
         description: 'Suivez vos commandes et reprenez les brouillons.',
+      },
+      {
+        to: '/approvisionnements',
+        label: 'Approvisionnements',
+        description: 'Planifiez et consignez vos réceptions fournisseurs.',
       },
       {
         to: '/promotions',
@@ -164,6 +240,29 @@ const MEGA_MENU_SECTIONS = [
         to: '/panier',
         label: 'Panier',
         description: 'Retrouvez vos sélections d’achats en attente.',
+      },
+    ],
+  },
+  {
+    id: 'relations',
+    label: 'Contacts',
+    subtitle: 'Clients & fournisseurs',
+    title: 'Relations commerciales',
+    description: 'Retrouvez rapidement les interlocuteurs clés de votre activité.',
+    featuredActions: [
+      { to: '/clients', label: 'Répertoire clients' },
+      { to: '/fournisseurs', label: 'Carnet fournisseurs' },
+    ],
+    items: [
+      {
+        to: '/clients',
+        label: 'Clients',
+        description: 'Coordonnées, préférences et suivi des commandes.',
+      },
+      {
+        to: '/fournisseurs',
+        label: 'Fournisseurs',
+        description: 'Contacts privilégiés pour vos réassorts.',
       },
     ],
   },
@@ -202,6 +301,36 @@ const MEGA_MENU_SECTIONS = [
       },
     ],
   },
+  {
+    id: 'scenarios',
+    label: 'Parcours',
+    subtitle: 'Inspirations Amazon & YouTube',
+    title: 'Parcours utilisateurs',
+    description:
+      'Démontrez l\'expérience client de bout en bout grâce à des parcours scénarisés directement dans la SPA.',
+    featuredActions: [
+      { to: '/parcours/commerce', label: 'Scénario commerce', badge: { label: 'Nouveau', variant: 'new' } },
+      { to: '/parcours/contenus', label: 'Scénario contenus' },
+    ],
+    items: [
+      {
+        to: '/parcours/commerce',
+        label: 'Parcours e-commerce',
+        description: 'Rejouez le parcours Amazon : catalogue, panier, commande et fidélisation.',
+        badge: { label: 'Nouveau', variant: 'new' },
+      },
+      {
+        to: '/parcours/contenus',
+        label: 'Studio contenus',
+        description: 'Un hub vidéo inspiré de YouTube avec recommandations et analytics.',
+      },
+      {
+        to: '/dashboard',
+        label: 'Tableau de bord personnalisé',
+        description: 'Point d’entrée commun pour activer les différents parcours.',
+      },
+    ],
+  },
 ];
 
 export default function App() {
@@ -227,46 +356,54 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand-area">
-          <button
-            type="button"
-            className="hamburger"
-            aria-expanded={isMobileMenuOpen}
-            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
-          >
-            <span className="visually-hidden">Ouvrir le menu</span>
-            <span />
-            <span />
-            <span />
-          </button>
-          <Link to="/" className="brand-title">
-            Inventaire Épicerie
-          </Link>
-        </div>
-        <MegaMenu
-          sections={MEGA_MENU_SECTIONS}
-          isMobileOpen={isMobileMenuOpen}
-          onToggleMobile={setIsMobileMenuOpen}
-          onNavigate={closeMobileMenu}
-        />
-        <div className="header-actions">
-          <Link to="/dashboard" className="quick-action">
-            Tableau de bord
-          </Link>
-          <Link to="/commandes" className="quick-action">
-            Nouvelle commande
-          </Link>
-          <UserMenu onNavigate={closeMobileMenu} />
+        <div className="app-header-inner layout-container">
+          <div className="brand-area">
+            <button
+              type="button"
+              className="hamburger"
+              aria-expanded={isMobileMenuOpen}
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            >
+              <span className="visually-hidden">Ouvrir le menu</span>
+              <span />
+              <span />
+              <span />
+            </button>
+            <Link to="/" className="brand-title">
+              Inventaire Épicerie
+            </Link>
+          </div>
+          <MegaMenu
+            sections={MEGA_MENU_SECTIONS}
+            isMobileOpen={isMobileMenuOpen}
+            onToggleMobile={setIsMobileMenuOpen}
+            onNavigate={closeMobileMenu}
+          />
+          <div className="header-actions">
+            <Link to="/dashboard" className="quick-action">
+              Tableau de bord
+            </Link>
+            <Link to="/commandes" className="quick-action">
+              Nouvelle commande
+            </Link>
+            <UserMenu onNavigate={closeMobileMenu} />
+          </div>
         </div>
       </header>
-      <Breadcrumbs routes={availableRoutes} />
-      <main>
-        <Routes>
-          {availableRoutes.map((route) => (
-            <Route key={route.path} path={route.path} element={route.element} />
-          ))}
-        </Routes>
-      </main>
+      <div className="app-main-wrapper">
+        <div className="breadcrumbs-wrapper layout-container">
+          <Breadcrumbs routes={availableRoutes} />
+        </div>
+        <main className="app-main layout-container">
+          <Suspense fallback={<div className="app-loading">Chargement…</div>}>
+            <Routes>
+              {availableRoutes.map(({ path, Component }) => (
+                <Route key={path} path={path} element={<Component />} />
+              ))}
+            </Routes>
+          </Suspense>
+        </main>
+      </div>
       <LoginModal />
     </div>
   );

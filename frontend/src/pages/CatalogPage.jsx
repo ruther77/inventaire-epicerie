@@ -2,22 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchProducts } from '../api/client.js';
 import SavedViewsPanel from '../components/SavedViewsPanel.jsx';
-
-const SAVED_SEARCHES = [
-  {
-    id: 'favorites',
-    label: 'Produits favoris',
-    description: 'Vos références épinglées, prêtes à commander.',
-    to: '/favoris',
-  },
-  {
-    id: 'promo',
-    label: 'Promotions en cours',
-    description: 'Articles remisés pour dynamiser vos ventes.',
-    to: '/promotions',
-    badge: { label: 'Promo', variant: 'promo' },
-  },
-];
+import { useSavedViews } from '../contexts/SavedViewsContext.jsx';
 
 export default function CatalogPage() {
   const { data: products = [], isLoading, isError } = useQuery({
@@ -26,6 +11,8 @@ export default function CatalogPage() {
   });
   const [search, setSearch] = useState('');
   const [onlyPromo, setOnlyPromo] = useState(false);
+  const [saveState, setSaveState] = useState(null);
+  const { saveView, getViews } = useSavedViews();
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -41,6 +28,58 @@ export default function CatalogPage() {
         .some((value) => value.toLowerCase().includes(query));
     });
   }, [products, search, onlyPromo]);
+
+  const handleSaveCurrentFilters = () => {
+    const trimmedSearch = search.trim();
+    const params = new URLSearchParams();
+    if (trimmedSearch) {
+      params.set('search', trimmedSearch);
+    }
+    if (onlyPromo) {
+      params.set('promo', '1');
+    }
+
+    const queryString = params.toString();
+    const target = `/catalogue${queryString ? `?${queryString}` : ''}`;
+
+    const labelParts = [];
+    if (trimmedSearch) {
+      labelParts.push(`« ${trimmedSearch} »`);
+    }
+    if (onlyPromo) {
+      labelParts.push('promotions');
+    }
+
+    const label = labelParts.length ? `Recherche ${labelParts.join(' + ')}` : 'Catalogue complet';
+    const description = labelParts.length
+      ? 'Filtres enregistrés pour votre prochain passage.'
+      : 'Vue par défaut enregistrée.';
+
+    const badge = onlyPromo ? { label: 'Promo', variant: 'promo' } : undefined;
+
+    saveView('catalogue', {
+      label,
+      description,
+      to: target,
+      badge,
+    });
+    setSaveState('saved');
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => setSaveState(null), 2500);
+    }
+  };
+
+  const currentViews = getViews('catalogue');
+  const trimmedSearch = search.trim();
+  const params = new URLSearchParams();
+  if (trimmedSearch) {
+    params.set('search', trimmedSearch);
+  }
+  if (onlyPromo) {
+    params.set('promo', '1');
+  }
+  const currentTarget = `/catalogue${params.toString() ? `?${params.toString()}` : ''}`;
+  const alreadySaved = currentViews.some((view) => view.to === currentTarget);
 
   return (
     <div className="page">
@@ -59,7 +98,8 @@ export default function CatalogPage() {
         <SavedViewsPanel
           title="Vues sauvegardées"
           description="Personnalisez vos filtres, nous mémorisons vos préférences."
-          views={SAVED_SEARCHES}
+          slot="catalogue"
+          allowManage
         />
       </header>
       <section className="card">
@@ -82,8 +122,19 @@ export default function CatalogPage() {
             />
             <span>Voir uniquement les promos</span>
           </label>
+          <button
+            type="button"
+            className="catalog-save-button"
+            onClick={handleSaveCurrentFilters}
+            disabled={alreadySaved}
+          >
+            {alreadySaved ? 'Recherche épinglée' : 'Épingler cette recherche'}
+          </button>
           <div className="catalog-saved-hint">Astuce : épinglez vos filtres pour les retrouver ici.</div>
         </div>
+        {saveState === 'saved' && (
+          <p className="catalog-save-feedback">Recherche ajoutée à vos vues sauvegardées.</p>
+        )}
         {isLoading && <p>Chargement du catalogue…</p>}
         {isError && <p>Impossible de récupérer le catalogue produits.</p>}
         {!isLoading && !isError && (
