@@ -215,13 +215,50 @@ _ENHANCEMENT_SCRIPT_TEMPLATE: Final[str] = """
 
   const toggles = header.querySelectorAll('[data-mega-trigger]');
   const panels = header.querySelectorAll('[data-mega-panel]');
+  const overlay = header.querySelector('[data-mega-overlay]');
+
+  const updateOverlayState = () => {
+    const hasActivePanel = Array.from(panels).some((panel) =>
+      panel.classList.contains('is-active')
+    );
+    if (overlay) {
+      overlay.classList.toggle('is-active', hasActivePanel);
+      overlay.setAttribute('aria-hidden', hasActivePanel ? 'false' : 'true');
+    }
+    header.classList.toggle('has-mega-active', hasActivePanel);
+  };
+
+  const clearActiveSection = () => {
+    toggles.forEach((toggle) => {
+      toggle.classList.remove('is-active');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-selected', 'false');
+    });
+
+    panels.forEach((panel) => {
+      panel.classList.remove('is-active');
+      panel.setAttribute('aria-hidden', 'true');
+    });
+
+    updateOverlayState();
+  };
 
   const setActiveSection = (sectionId) => {
+    if (!sectionId) {
+      clearActiveSection();
+      return;
+    }
+
+    let matched = false;
+
     toggles.forEach((toggle) => {
       const isActive = toggle.getAttribute('data-mega-target') === sectionId;
       toggle.classList.toggle('is-active', isActive);
       toggle.setAttribute('aria-expanded', isActive ? 'true' : 'false');
       toggle.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      if (isActive) {
+        matched = true;
+      }
     });
 
     panels.forEach((panel) => {
@@ -229,6 +266,13 @@ _ENHANCEMENT_SCRIPT_TEMPLATE: Final[str] = """
       panel.classList.toggle('is-active', isActive);
       panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
     });
+
+    if (!matched) {
+      clearActiveSection();
+      return;
+    }
+
+    updateOverlayState();
   };
 
   const selectWorkspaceTab = (index) => {
@@ -278,7 +322,12 @@ _ENHANCEMENT_SCRIPT_TEMPLATE: Final[str] = """
 
     toggle.addEventListener('click', (event) => {
       event.preventDefault();
-      setActiveSection(targetSection);
+      const alreadyActive = toggle.classList.contains('is-active');
+      if (alreadyActive) {
+        clearActiveSection();
+      } else {
+        setActiveSection(targetSection);
+      }
     });
 
     toggle.addEventListener('mouseenter', () => setActiveSection(targetSection));
@@ -298,13 +347,15 @@ _ENHANCEMENT_SCRIPT_TEMPLATE: Final[str] = """
       if (pageKey) {
         updateActiveLinks(pageKey);
       }
+      clearActiveSection();
     });
   });
 
-  const initialSection = toggles[0]?.getAttribute('data-mega-target');
-  if (initialSection) {
-    setActiveSection(initialSection);
+  if (overlay) {
+    overlay.addEventListener('click', () => clearActiveSection());
   }
+
+  clearActiveSection();
 
   syncFromStreamlitTabs();
 
@@ -352,22 +403,23 @@ def _build_tabs_markup() -> str:
         section_id = escape(section["id"])
         label = escape(section["label"])
         subtitle = escape(section.get("subtitle", ""))
-        subtitle_markup = (
-            f'<span class="mega-menu-tab-subtitle">{subtitle}</span>'
-            if subtitle
-            else ""
-        )
         buttons.append(
             "".join(
                 [
+                    "<li>",
                     (
-                        f'<button class="mega-menu-tab" type="button" data-mega-trigger '
+                        f'<button class="asos-header__floor" type="button" data-mega-trigger '
                         f'data-mega-target="{section_id}" aria-controls="mega-panel-{section_id}" '
-                        'aria-expanded="false" role="tab" aria-selected="false">'
+                        'aria-expanded="false" aria-selected="false" role="tab">'
                     ),
-                    f'<span class="mega-menu-tab-label">{label}</span>',
-                    subtitle_markup,
+                    f'<span class="asos-header__floor-label">{label}</span>',
+                    (
+                        f'<span class="asos-header__floor-sub">{subtitle}</span>'
+                        if subtitle
+                        else ""
+                    ),
                     "</button>",
+                    "</li>",
                 ]
             )
         )
@@ -383,8 +435,8 @@ def _build_featured_markup(featured: Sequence[Dict[str, Any]]) -> str:
         actions.append(
             "".join(
                 [
-                    f"<a class=\"mega-menu-featured-action\" href=\"#\"{attrs}>",
-                    f"<span class=\"mega-menu-featured-label\">{label}</span>",
+                    f"<a class=\"asos-mega__featured-link\" href=\"#\"{attrs}>",
+                    f"<span class=\"asos-mega__featured-text\">{label}</span>",
                     badge_markup,
                     "</a>",
                 ]
@@ -401,7 +453,7 @@ def _build_items_markup(items: Sequence[Dict[str, Any]]) -> str:
         attrs = _tab_target_attrs(item.get("page_key"))
         badge_markup = _badge_markup(item.get("badge"))
         description_markup = (
-            f"<span class=\"mega-menu-link-description\">{description}</span>"
+            f"<span class=\"asos-mega__link-desc\">{description}</span>"
             if description
             else ""
         )
@@ -409,8 +461,13 @@ def _build_items_markup(items: Sequence[Dict[str, Any]]) -> str:
             "".join(
                 [
                     "<li>",
-                    f"<a class=\"mega-menu-link\" href=\"#\"{attrs}>",
-                    f"<span class=\"mega-menu-link-label\">{label}{badge_markup}</span>",
+                    f"<a class=\"asos-mega__link\" href=\"#\"{attrs}>",
+                    (
+                        "<span class=\"asos-mega__link-title\">"
+                        f"<span>{label}</span>"
+                        f"{badge_markup}"
+                        "</span>"
+                    ),
                     description_markup,
                     "</a>",
                     "</li>",
@@ -422,6 +479,8 @@ def _build_items_markup(items: Sequence[Dict[str, Any]]) -> str:
 
 def _build_panel_markup(section: Dict[str, Any]) -> str:
     section_id = escape(section["id"])
+    label = escape(section.get("label", ""))
+    subtitle = escape(section.get("subtitle", ""))
     title = escape(section.get("title", section.get("label", "")))
     description = escape(section.get("description", ""))
     featured = section.get("featured", ())
@@ -430,26 +489,36 @@ def _build_panel_markup(section: Dict[str, Any]) -> str:
     featured_markup = _build_featured_markup(featured)
     items_markup = _build_items_markup(items)
 
-    description_markup = f"<p>{description}</p>" if description else ""
+    description_markup = (
+        f"<p class=\"asos-mega__panel-description\">{description}</p>"
+        if description
+        else ""
+    )
+    eyebrow_markup = (
+        f"<p class=\"asos-mega__panel-eyebrow\">{subtitle or label}</p>"
+        if (subtitle or label)
+        else ""
+    )
     featured_section = (
-        f"<div class=\"mega-menu-featured\">{featured_markup}</div>"
+        f"<div class=\"asos-mega__featured\">{featured_markup}</div>"
         if featured_markup
         else ""
     )
 
     return "".join(
         [
-            f"<section class=\"mega-menu-panel\" data-mega-panel=\"{section_id}\" ",
+            f"<section class=\"asos-mega__panel\" data-mega-panel=\"{section_id}\" ",
             f"id=\"mega-panel-{section_id}\" role=\"tabpanel\" aria-hidden=\"true\">",
-            "<div class=\"mega-menu-panel-header\">",
+            "<div class=\"asos-mega__panel-header\">",
             "<div>",
-            f"<h3>{title}</h3>",
+            eyebrow_markup,
+            f"<h3 class=\"asos-mega__panel-title\">{title}</h3>",
             description_markup,
             "</div>",
             featured_section,
             "</div>",
-            "<div class=\"mega-menu-panel-body\">",
-            f"<ul class=\"mega-menu-links\">{items_markup}</ul>",
+            "<div class=\"asos-mega__panel-body\">",
+            f"<ul class=\"asos-mega__links\">{items_markup}</ul>",
             "</div>",
             "</section>",
         ]
@@ -468,13 +537,17 @@ def _build_header_actions() -> str:
             continue
         icon = escape(action.get("icon", ""))
         attrs = _tab_target_attrs(action.get("page_key"))
-        icon_markup = f"<i class=\"bi {icon}\"></i>" if icon else ""
+        icon_markup = (
+            f"<span class=\"asos-header__action-icon\"><i class=\"bi {icon}\"></i></span>"
+            if icon
+            else ""
+        )
         links.append(
             "".join(
                 [
-                    f"<a class=\"quick-action\" href=\"#\"{attrs}>",
+                    f"<a class=\"asos-header__action\" href=\"#\"{attrs}>",
                     icon_markup,
-                    f"<span>{label}</span>",
+                    f"<span class=\"asos-header__action-label\">{label}</span>",
                     "</a>",
                 ]
             )
@@ -487,27 +560,33 @@ def render_workspace_navigation() -> None:
 
     html_parts: List[str] = [
         "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />",
-        "<header class=\"app-header\" data-workspace-nav>",
-        "<div class=\"brand-area\">",
-        "<button class=\"hamburger\" type=\"button\" aria-expanded=\"false\">",
-        "<span class=\"visually-hidden\">Ouvrir le menu</span>",
+        "<header class=\"app-header app-header--asos\" data-workspace-nav>",
+        "<div class=\"asos-header__top\">",
+        "<div class=\"asos-header__brand\">",
+        "<button class=\"asos-header__burger\" type=\"button\" aria-label=\"Ouvrir le menu de navigation\">",
         "<span></span><span></span><span></span>",
         "</button>",
-        "<span class=\"brand-title\">Inventaire Épicerie</span>",
+        "<a class=\"asos-header__logo\" href=\"#\" aria-label=\"Retour à l'accueil\">",
+        "<span class=\"asos-header__logo-text\">Inventaire Épicerie</span>",
+        "</a>",
         "</div>",
-        "<nav class=\"mega-menu\" data-mega-menu>",
-        "<button class=\"mega-menu-trigger\" type=\"button\" aria-expanded=\"false\">Menu</button>",
-        "<div class=\"mega-menu-content\">",
-        "<div class=\"mega-menu-tabs\" role=\"tablist\">",
+        "<ul class=\"asos-header__floors\" role=\"tablist\" aria-label=\"Sections métier\">",
         _build_tabs_markup(),
+        "</ul>",
+        "<form class=\"asos-header__search\" role=\"search\" action=\"#\" method=\"get\">",
+        "<span class=\"asos-header__search-icon\"><i class=\"bi bi-search\" aria-hidden=\"true\"></i></span>",
+        "<input type=\"search\" name=\"q\" placeholder=\"Rechercher un module ou un produit\" aria-label=\"Rechercher\" autocomplete=\"off\" spellcheck=\"false\" />",
+        "<button type=\"submit\" disabled aria-hidden=\"true\">Rechercher</button>",
+        "</form>",
+        "<div class=\"asos-header__actions\">",
+        _build_header_actions(),
         "</div>",
-        "<div class=\"mega-menu-panels\">",
+        "</div>",
+        "<div class=\"asos-mega\" data-mega-menu>",
+        "<div class=\"mega-menu__overlay\" data-mega-overlay aria-hidden=\"true\"></div>",
+        "<div class=\"asos-mega__panels\">",
         _build_panels_markup(),
         "</div>",
-        "</div>",
-        "</nav>",
-        "<div class=\"header-actions\">",
-        _build_header_actions(),
         "</div>",
         "</header>",
         _ENHANCEMENT_SCRIPT,
