@@ -968,6 +968,7 @@ def render_app() -> None:
         authenticator.logout('Déconnexion', 'sidebar')
 
         # Définition des onglets fonctionnels de l'application
+        st.markdown('<div class="workspace-tab-shell">', unsafe_allow_html=True)
         (
             showcase_tab,
             supply_tab,
@@ -4383,6 +4384,8 @@ def render_app() -> None:
                             diag_movements = diag_movements.copy()
                             diag_movements["date_mvt"] = pd.to_datetime(diag_movements["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
                             st.dataframe(diag_movements, use_container_width=True, hide_index=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # ==============================================================================
     # --- FIN DU FLUX PRINCIPAL (Contrôle d'accès) ---

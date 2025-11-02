@@ -1059,6 +1059,39 @@ a:focus {
     display: none !important;
 }
 
+.workspace-tab-shell {
+    position: relative;
+    margin-top: 1.75rem;
+    padding: 1.75rem 1.75rem 2rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(37, 99, 235, 0.08);
+    background: linear-gradient(
+            165deg,
+            rgba(37, 99, 235, 0.12) 0%,
+            rgba(124, 58, 237, 0.08) 38%,
+            rgba(255, 255, 255, 0) 100%
+        ),
+        var(--workspace-surface);
+    box-shadow: var(--shadow-soft);
+}
+
+body[data-theme='dark'] .workspace-tab-shell {
+    background: linear-gradient(
+            165deg,
+            rgba(59, 130, 246, 0.22) 0%,
+            rgba(168, 85, 247, 0.18) 42%,
+            rgba(15, 23, 42, 0.78) 100%
+        );
+    border-color: rgba(148, 163, 184, 0.28);
+    box-shadow: 0 24px 55px rgba(2, 6, 23, 0.6);
+    backdrop-filter: blur(14px);
+}
+
+.workspace-tab-shell > * {
+    position: relative;
+    z-index: 1;
+}
+
 .stForm label {
     font-weight: 600;
     color: var(--color-muted);
@@ -1086,17 +1119,57 @@ select:focus {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
 }
 
+.stTabs [role="tablist"] {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.workspace-tab-shell .stTabs [role="tablist"] {
+    width: 100%;
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(37, 99, 235, 0.12);
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: var(--shadow-border);
+}
+
+body[data-theme='dark'] .workspace-tab-shell .stTabs [role="tablist"] {
+    background: rgba(15, 23, 42, 0.72);
+    border-color: rgba(148, 163, 184, 0.32);
+    box-shadow: 0 18px 42px rgba(2, 6, 23, 0.55);
+}
+
 .stTabs [data-baseweb="tab"] {
     font-weight: 600;
     font-family: "Inter", sans-serif;
+    border-radius: 999px;
+    padding: 0.6rem 1.25rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--workspace-muted);
+    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease,
+        box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.stTabs [data-baseweb="tab"]:hover {
-    color: var(--color-primary);
+.stTabs [data-baseweb="tab"]:hover,
+.stTabs [data-baseweb="tab"]:focus-visible {
+    color: var(--workspace-accent);
+    background: rgba(37, 99, 235, 0.08);
+    border-color: rgba(37, 99, 235, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
 .stTabs [aria-selected="true"] {
-    color: var(--color-primary);
+    color: #ffffff;
+    background: linear-gradient(120deg, var(--color-primary), var(--color-secondary));
+    border-color: transparent;
+    box-shadow: 0 14px 28px rgba(37, 99, 235, 0.25);
+}
+
+body[data-theme='dark'] .stTabs [aria-selected="true"] {
+    box-shadow: 0 16px 32px rgba(59, 130, 246, 0.4);
 }
 
 [data-testid="stMetric"] {
