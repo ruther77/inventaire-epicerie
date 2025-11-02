@@ -39,7 +39,11 @@ final class Translator
         $locale = $locale ?? $this->locale;
         $this->loadLocale($locale);
 
-        $line = $this->catalogue[$locale][$key] ?? $this->catalogue[$this->fallback][$key] ?? $key;
+        $this->loadLocale($this->fallback);
+
+        $line = $this->valueForKey($this->catalogue[$locale], $key)
+            ?? $this->valueForKey($this->catalogue[$this->fallback], $key)
+            ?? $key;
 
         foreach ($replace as $search => $value) {
             $line = str_replace(':' . $search, (string) $value, $line);
@@ -48,19 +52,56 @@ final class Translator
         return $line;
     }
 
+    /**
+     * @param array<string, mixed> $catalogue
+     */
+    private function valueForKey(array $catalogue, string $key): ?string
+    {
+        if (array_key_exists($key, $catalogue) && is_string($catalogue[$key])) {
+            return $catalogue[$key];
+        }
+
+        $segments = explode('.', $key);
+        $value = $catalogue;
+
+        foreach ($segments as $segment) {
+            if (!is_array($value) || !array_key_exists($segment, $value)) {
+                return null;
+            }
+
+            $value = $value[$segment];
+        }
+
+        return is_string($value) ? $value : null;
+    }
+
     private function loadLocale(string $locale): void
     {
         if (isset($this->catalogue[$locale])) {
             return;
         }
 
-        $file = rtrim($this->langPath, '/') . '/' . $locale . '/messages.php';
-        if (is_file($file)) {
-            /** @var array<string, string> $translations */
-            $translations = require $file;
-            $this->catalogue[$locale] = $translations;
-        } else {
+        $directory = rtrim($this->langPath, '/') . '/' . $locale;
+        if (!is_dir($directory)) {
             $this->catalogue[$locale] = [];
+
+            return;
         }
+
+        $catalogue = [];
+
+        /** @var string[] $files */
+        $files = glob($directory . '/*.php') ?: [];
+        foreach ($files as $file) {
+            $name = basename($file, '.php');
+
+            /** @var array<string, mixed> $translations */
+            $translations = require $file;
+            if (is_array($translations)) {
+                $catalogue[$name] = $translations;
+            }
+        }
+
+        $this->catalogue[$locale] = $catalogue;
     }
 }

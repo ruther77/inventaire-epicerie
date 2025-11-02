@@ -165,6 +165,10 @@ final class TemplateEngine
             $value = preg_replace($pattern, $replacement, $value);
         }
 
+        $value = preg_replace_callback('/@php\s*(.*?)\s*@endphp/s', function (array $matches): string {
+            return '<?php ' . $matches[1] . ' ?>';
+        }, $value);
+
         $value = preg_replace_callback('/@include\((.+)\)/', function (array $matches): string {
             [$view, $data] = $this->splitArguments($matches[1]);
 
