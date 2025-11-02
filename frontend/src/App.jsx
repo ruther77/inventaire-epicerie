@@ -1,9 +1,8 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext.jsx';
 import RequireAuth from './auth/RequireAuth.jsx';
 import LoginModal from './components/LoginModal.jsx';
-import MegaMenu from './components/MegaMenu.jsx';
 import Breadcrumbs from './components/Breadcrumbs.jsx';
 import UserMenu from './components/UserMenu.jsx';
 
@@ -196,141 +195,13 @@ const ADMIN_ROUTES = [
   },
 ];
 
-const MEGA_MENU_SECTIONS = [
-  {
-    id: 'catalogue',
-    label: 'Catalogue',
-    subtitle: 'Gérer vos produits',
-    title: 'Catalogue & achats',
-    description: 'Filtrez, préparez vos commandes et mettez en avant vos promotions.',
-    featuredActions: [
-      { to: '/catalogue', label: 'Parcourir le catalogue', badge: { label: 'Nouveau', variant: 'new' } },
-      { to: '/commandes', label: 'Créer une commande' },
-      { to: '/approvisionnements', label: 'Suivre les approvisionnements' },
-      { to: '/promotions', label: 'Voir les promotions', badge: { label: 'Promo', variant: 'promo' } },
-    ],
-    items: [
-      {
-        to: '/catalogue',
-        label: 'Catalogue produits',
-        description: 'Recherchez, filtrez et sauvegardez vos vues personnalisées.',
-      },
-      {
-        to: '/categories',
-        label: 'Catégories',
-        description: 'Organisez vos références par familles et mettez-les à jour.',
-      },
-      {
-        to: '/commandes',
-        label: 'Commandes',
-        description: 'Suivez vos commandes et reprenez les brouillons.',
-      },
-      {
-        to: '/approvisionnements',
-        label: 'Approvisionnements',
-        description: 'Planifiez et consignez vos réceptions fournisseurs.',
-      },
-      {
-        to: '/promotions',
-        label: 'Promotions',
-        description: 'Identifiez les offres à pousser en magasin.',
-        badge: { label: 'Promo', variant: 'promo' },
-      },
-      {
-        to: '/panier',
-        label: 'Panier',
-        description: 'Retrouvez vos sélections d’achats en attente.',
-      },
-    ],
-  },
-  {
-    id: 'relations',
-    label: 'Contacts',
-    subtitle: 'Clients & fournisseurs',
-    title: 'Relations commerciales',
-    description: 'Retrouvez rapidement les interlocuteurs clés de votre activité.',
-    featuredActions: [
-      { to: '/clients', label: 'Répertoire clients' },
-      { to: '/fournisseurs', label: 'Carnet fournisseurs' },
-    ],
-    items: [
-      {
-        to: '/clients',
-        label: 'Clients',
-        description: 'Coordonnées, préférences et suivi des commandes.',
-      },
-      {
-        to: '/fournisseurs',
-        label: 'Fournisseurs',
-        description: 'Contacts privilégiés pour vos réassorts.',
-      },
-    ],
-  },
-  {
-    id: 'explorer',
-    label: 'Explorer',
-    subtitle: 'Analyser & piloter',
-    title: 'Explorer & analyser',
-    description: 'Consolidez vos indicateurs et ouvrez les vues métiers à la demande.',
-    featuredActions: [
-      { to: '/dashboard', label: 'Ouvrir le tableau de bord' },
-      { to: '/explorer/rapports', label: 'Consulter les rapports', badge: { label: 'Bêta', variant: 'beta' } },
-      { to: '/pos', label: 'Point de vente' },
-    ],
-    items: [
-      {
-        to: '/dashboard',
-        label: 'Tableau de bord',
-        description: 'Cartes d’accès aux modules Inventaire, Commandes et Analyses.',
-      },
-      {
-        to: '/explorer/rapports',
-        label: 'Analyses & rapports',
-        description: 'Visualisez la répartition des stocks par catégorie.',
-        badge: { label: 'Bêta', variant: 'beta' },
-      },
-      {
-        to: '/explorer/outils',
-        label: 'Outils Streamlit',
-        description: 'Retrouvez les applications historiques pendant la migration.',
-      },
-      {
-        to: '/aide',
-        label: 'Centre d’aide',
-        description: 'Guides, FAQ et contact support.',
-      },
-    ],
-  },
-  {
-    id: 'scenarios',
-    label: 'Parcours',
-    subtitle: 'Inspirations Amazon & YouTube',
-    title: 'Parcours utilisateurs',
-    description:
-      'Démontrez l\'expérience client de bout en bout grâce à des parcours scénarisés directement dans la SPA.',
-    featuredActions: [
-      { to: '/parcours/commerce', label: 'Scénario commerce', badge: { label: 'Nouveau', variant: 'new' } },
-      { to: '/parcours/contenus', label: 'Scénario contenus' },
-    ],
-    items: [
-      {
-        to: '/parcours/commerce',
-        label: 'Parcours e-commerce',
-        description: 'Rejouez le parcours Amazon : catalogue, panier, commande et fidélisation.',
-        badge: { label: 'Nouveau', variant: 'new' },
-      },
-      {
-        to: '/parcours/contenus',
-        label: 'Studio contenus',
-        description: 'Un hub vidéo inspiré de YouTube avec recommandations et analytics.',
-      },
-      {
-        to: '/dashboard',
-        label: 'Tableau de bord personnalisé',
-        description: 'Point d’entrée commun pour activer les différents parcours.',
-      },
-    ],
-  },
+const PRIMARY_NAV_LINKS = [
+  { to: '/', label: 'Accueil' },
+  { to: '/catalogue', label: 'Catalogue', requiresAuth: true },
+  { to: '/clients', label: 'Contacts', requiresAuth: true },
+  { to: '/dashboard', label: 'Explorer', requiresAuth: true },
+  { to: '/parcours/commerce', label: 'Parcours', requiresAuth: true },
+  { to: '/aide', label: 'Support', requiresAuth: true },
 ];
 
 export default function App() {
@@ -339,6 +210,20 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const isAdmin = user?.role === 'admin';
+
+  const primaryNavLinks = useMemo(
+    () =>
+      PRIMARY_NAV_LINKS.filter((link) => {
+        if (link.requiresAuth && !user) {
+          return false;
+        }
+        if (link.adminOnly && !isAdmin) {
+          return false;
+        }
+        return true;
+      }),
+    [isAdmin, user],
+  );
 
   const availableRoutes = useMemo(() => {
     if (isAdmin) {
@@ -373,12 +258,23 @@ export default function App() {
               Inventaire Épicerie
             </Link>
           </div>
-          <MegaMenu
-            sections={MEGA_MENU_SECTIONS}
-            isMobileOpen={isMobileMenuOpen}
-            onToggleMobile={setIsMobileMenuOpen}
-            onNavigate={closeMobileMenu}
-          />
+          <nav className={`primary-nav ${isMobileMenuOpen ? 'is-open' : ''}`}>
+            <ul className="primary-nav-list">
+              {primaryNavLinks.map((link) => (
+                <li key={link.to}>
+                  <NavLink
+                    to={link.to}
+                    className={({ isActive }) =>
+                      `primary-nav-link${isActive ? ' primary-nav-link-active' : ''}`
+                    }
+                    onClick={closeMobileMenu}
+                  >
+                    {link.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
           <div className="header-actions">
             <Link to="/dashboard" className="quick-action">
               Tableau de bord
