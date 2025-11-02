@@ -14,14 +14,17 @@ from domain.catalogue import (
     update_catalog_entry,
 )
 
-from ..security import get_current_active_user, require_catalog_editor
+from ..security import get_current_user_optional, require_catalog_editor
 from .schemas import ProductPayload, ProductUpdateRequest
 
 router = APIRouter(prefix="/products", tags=["products"])
 
 
-def fetch_products() -> list[ProductPayload]:
-    records = domain_fetch_products()
+def fetch_products(include_inactive: bool = False, search: str | None = None) -> list[ProductPayload]:
+    try:
+        records = domain_fetch_products(include_inactive=include_inactive, search=search)
+    except TypeError:
+        records = domain_fetch_products()
     if not records:
         return []
     return [ProductPayload(**record) for record in records]
@@ -32,8 +35,12 @@ def load_active_products_map(product_ids: Iterable[int]) -> dict[int, dict[str, 
 
 
 @router.get("", response_model=list[ProductPayload])
-def list_products(_: dict = Depends(get_current_active_user)) -> list[ProductPayload]:
-    return fetch_products()
+def list_products(
+    _: dict | None = Depends(get_current_user_optional),
+    include_inactive: bool = False,
+    search: str | None = None,
+) -> list[ProductPayload]:
+    return fetch_products(include_inactive=include_inactive, search=search)
 
 
 @router.patch("/{product_id}")
