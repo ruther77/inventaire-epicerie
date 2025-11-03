@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import List
 
 DEFAULT_ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _TEST_SECRET_FALLBACK = "inventaire-epicerie-test-secret-key-please-rotate"
+
+
+def _running_in_tests() -> bool:
+    """Return ``True`` when the process appears to be driven by pytest."""
+
+    return bool(os.getenv("PYTEST_CURRENT_TEST")) or "pytest" in sys.modules
 
 
 @dataclass
@@ -53,7 +60,7 @@ def _parse_allowed_origins(raw_value: str | None) -> list[str]:
 def load_settings() -> APISettings:
     secret = os.getenv("AUTH_SECRET_KEY")
     if not secret:
-        if os.getenv("PYTEST_CURRENT_TEST"):
+        if _running_in_tests():
             secret = _TEST_SECRET_FALLBACK
         else:
             raise RuntimeError(
@@ -61,7 +68,7 @@ def load_settings() -> APISettings:
             )
 
     if len(secret) < 32:
-        if os.getenv("PYTEST_CURRENT_TEST"):
+        if _running_in_tests():
             secret = _TEST_SECRET_FALLBACK
         else:
             raise RuntimeError(
