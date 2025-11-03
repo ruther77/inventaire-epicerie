@@ -179,185 +179,184 @@ def render_workspace_overview(
     admin_attrs = _tab_target_attr("admin")
 
     hero_html = f"""
-        <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />
-        <section class=\"workspace-overview workspace-overview--dropdown\" data-workspace-overview>
-            <header class=\"workspace-overview__intro\">
-                <span class=\"workspace-overview__eyebrow\">Espace de pilotage</span>
-                <h1 class=\"workspace-overview__title\">Inventaire — Gestion complète</h1>
-                <p class=\"workspace-overview__lead\">Centralisez vos actions clés et naviguez rapidement entre les modules métier.</p>
-                <p class=\"workspace-overview__welcome\">Bonjour {name_fragment}{role_fragment}, choisissez un module pour continuer.</p>
-                <dl class=\"workspace-overview__stats\">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
+        <section class="workspace-overview workspace-overview--dropdown" data-workspace-overview>
+            <header class="workspace-overview__intro">
+                <span class="workspace-overview__eyebrow">Espace de pilotage</span>
+                <h1 class="workspace-overview__title">Inventaire — Gestion complète</h1>
+                <p class="workspace-overview__lead">Centralisez vos actions clés et naviguez rapidement entre les modules métier.</p>
+                <p class="workspace-overview__welcome">Bonjour {name_fragment}{role_fragment}, choisissez un module pour continuer.</p>
+                <dl class="workspace-overview__stats">
                     {stats_markup}
                 </dl>
                 {metrics_alert}
             </header>
-            <div class=\"workspace-overview__body\">
-                <div class=\"workspace-modules\">
-                    <div class=\"workspace-modules__dropdown dropdown show\" role=\"navigation\" aria-label=\"Navigation principale\">
-                        <button class=\"workspace-modules__toggle\" type=\"button\" aria-haspopup=\"true\" aria-expanded=\"true\">
+            <div class="workspace-overview__body">
+                <div class="workspace-modules">
+                    <div class="workspace-modules__dropdown dropdown show" role="navigation" aria-label="Navigation principale">
+                        <button class="workspace-modules__toggle" type="button" aria-haspopup="true" aria-expanded="true">
                             Modules & fonctionnalités
-                            <span class=\"workspace-modules__chevron\"><i class=\"bi bi-chevron-down\" aria-hidden=\"true\"></i></span>
+                            <span class="workspace-modules__chevron"><i class="bi bi-chevron-down" aria-hidden="true"></i></span>
                         </button>
-                        <div class=\"workspace-modules__menu menu o_secondary nav\" role=\"menu\">
-                            <div class=\"workspace-modules__group\">
-                                <p class=\"workspace-modules__group-title\">Applications métier</p>
-                                <ul class=\"workspace-modules__list\">
-                                    <li><a href=\"#\"{showcase_attrs}>Vitrine produits</a></li>
-                                    <li><a href=\"#\"{supply_attrs}>Approvisionnement</a></li>
-                                    <li><a href=\"#\"{pos_attrs}>Vente (PoS)</a></li>
-                                    <li><a href=\"#\"{catalog_attrs}>Catalogue</a></li>
+                        <div class="workspace-modules__menu menu o_secondary nav" role="menu">
+                            <div class="workspace-modules__group">
+                                <p class="workspace-modules__group-title">Applications métier</p>
+                                <ul class="workspace-modules__list">
+                                    <li><a href="#" {showcase_attrs}>Vitrine produits</a></li>
+                                    <li><a href="#" {supply_attrs}>Approvisionnement</a></li>
+                                    <li><a href="#" {pos_attrs}>Vente (PoS)</a></li>
+                                    <li><a href="#" {catalog_attrs}>Catalogue</a></li>
                                 </ul>
                             </div>
-                            <div class=\"workspace-modules__group\">
-                                <p class=\"workspace-modules__group-title\">Support & pilotage</p>
-                                <ul class=\"workspace-modules__list\">
-                                    <li><a href=\"#\"{dashboard_attrs}>Tableau de bord</a></li>
-                                    <li><a href=\"#\"{admin_attrs}>Maintenance (Admin)</a></li>
+                            <div class="workspace-modules__group">
+                                <p class="workspace-modules__group-title">Support & pilotage</p>
+                                <ul class="workspace-modules__list">
+                                    <li><a href="#" {dashboard_attrs}>Tableau de bord</a></li>
+                                    <li><a href="#" {admin_attrs}>Maintenance (Admin)</a></li>
                                 </ul>
                             </div>
                         </div>
                     </div>
-                    <div class=\"workspace-modules__grid\">
-                        <article class=\"workspace-module-card\">
+                    <div class="workspace-modules__grid">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Vitrine produits</h3>
                                 <p>Valorisez votre offre et surveillez les performances depuis la perspective client.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{showcase_attrs}>Accéder à la vitrine</a>
+                            <a class="workspace-module-card__cta" href="#" {showcase_attrs}>Accéder à la vitrine</a>
                         </article>
-                        <article class=\"workspace-module-card\">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Approvisionnement</h3>
                                 <p>Gérez les commandes fournisseurs, les réceptions et les besoins de réassort.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{supply_attrs}>Ouvrir les approvisionnements</a>
+                            <a class="workspace-module-card__cta" href="#" {supply_attrs}>Ouvrir les approvisionnements</a>
                         </article>
-                        <article class=\"workspace-module-card\">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Vente (PoS)</h3>
                                 <p>Encaissez rapidement et synchronisez les ventes avec votre inventaire.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{pos_attrs}>Lancer le PoS</a>
+                            <a class="workspace-module-card__cta" href="#" {pos_attrs}>Lancer le PoS</a>
                         </article>
-                        <article class=\"workspace-module-card\">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Catalogue</h3>
                                 <p>Maintenez vos fiches produits, variantes et rayons à jour en quelques clics.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{catalog_attrs}>Gérer le catalogue</a>
+                            <a class="workspace-module-card__cta" href="#" {catalog_attrs}>Gérer le catalogue</a>
                         </article>
-                        <article class=\"workspace-module-card\">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Maintenance (Admin)</h3>
                                 <p>Accédez aux outils techniques, sauvegardes et réglages critiques.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{admin_attrs}>Ouvrir l'administration</a>
+                            <a class="workspace-module-card__cta" href="#" {admin_attrs}>Ouvrir l'administration</a>
                         </article>
-                        <article class=\"workspace-module-card\">
+                        <article class="workspace-module-card">
                             <header>
                                 <h3>Tableau de bord</h3>
                                 <p>Suivez vos indicateurs clés et comparez vos performances sur la période.</p>
                             </header>
-                            <a class=\"workspace-module-card__cta\" href=\"#\"{dashboard_attrs}>Voir les indicateurs</a>
+                            <a class="workspace-module-card__cta" href="#" {dashboard_attrs}>Voir les indicateurs</a>
                         </article>
                     </div>
                 </div>
             </div>
         </section>
         <script>
-            (function () {
+            (function () {{
                 const rootDocument = window.parent?.document ?? document;
-                if (!rootDocument) {
+                if (!rootDocument) {{
                     return;
-                }
+                }}
 
                 const hero = rootDocument.querySelector('[data-workspace-overview]');
-                if (!hero || hero.dataset.enhanced === 'true') {
+                if (!hero || hero.dataset.enhanced === 'true') {{
                     return;
-                }
+                }}
 
                 hero.dataset.enhanced = 'true';
 
                 const getWorkspaceTabButtons = () =>
-                    Array.from(
-                        rootDocument.querySelectorAll('[data-baseweb="tab"]')
-                    );
+                    Array.from(rootDocument.querySelectorAll('[data-baseweb="tab"]'));
 
-                const selectWorkspaceTab = (index) => {
+                const selectWorkspaceTab = (index) => {{
                     const tabButtons = getWorkspaceTabButtons();
                     const target = tabButtons?.[index];
-                    if (target instanceof HTMLElement) {
+                    if (target instanceof HTMLElement) {{
                         target.click();
-                    }
-                };
+                    }}
+                }};
 
-                const updateActiveLinks = (pageKey) => {
-                    if (!pageKey) {
+                const updateActiveLinks = (pageKey) => {{
+                    if (!pageKey) {{
                         return;
-                    }
+                    }}
 
                     rootDocument.body?.setAttribute('data-current-page', pageKey);
-                    hero.querySelectorAll('[data-page-key]').forEach((node) => {
+                    hero.querySelectorAll('[data-page-key]').forEach((node) => {{
                         const isActive = node.getAttribute('data-page-key') === pageKey;
                         node.classList.toggle('is-active', isActive);
-                        if (isActive) {
+                        if (isActive) {{
                             node.setAttribute('aria-current', 'page');
-                        } else {
+                        }} else {{
                             node.removeAttribute('aria-current');
-                        }
-                    });
-                };
+                        }}
+                    }});
+                }};
 
-                const syncFromStreamlitTabs = () => {
+                const syncFromStreamlitTabs = () => {{
                     const tabButtons = getWorkspaceTabButtons();
                     const activeIndex = tabButtons.findIndex(
                         (tab) => tab.getAttribute('aria-selected') === 'true'
                     );
-                    if (activeIndex >= 0) {
+                    if (activeIndex >= 0) {{
                         const activeLink = hero.querySelector(
-                            `[data-tab-target="${activeIndex}"][data-page-key]`
+                            `[data-tab-target="{{activeIndex}}"][data-page-key]`
                         );
                         const pageKey = activeLink?.getAttribute('data-page-key');
-                        if (pageKey) {
+                        if (pageKey) {{
                             updateActiveLinks(pageKey);
-                        }
-                    }
-                };
+                        }}
+                    }}
+                }};
 
-                hero.querySelectorAll('[data-tab-target]').forEach((link) => {
-                    link.addEventListener('click', (event) => {
+                hero.querySelectorAll('[data-tab-target]').forEach((link) => {{
+                    link.addEventListener('click', (event) => {{
                         const targetIndex = Number(link.getAttribute('data-tab-target'));
                         const pageKey = link.getAttribute('data-page-key');
-                        if (Number.isFinite(targetIndex)) {
+                        if (Number.isFinite(targetIndex)) {{
                             event.preventDefault();
                             selectWorkspaceTab(targetIndex);
-                        }
-                        if (pageKey) {
+                        }}
+                        if (pageKey) {{
                             updateActiveLinks(pageKey);
-                        }
-                    });
-                });
+                        }}
+                    }});
+                }});
 
-                if (rootDocument.body) {
+                if (rootDocument.body) {{
                     const marker = 'workspaceTabsListener';
-                    if (rootDocument.body.dataset[marker] !== 'true') {
+                    if (rootDocument.body.dataset[marker] !== 'true') {{
                         rootDocument.body.dataset[marker] = 'true';
-                        rootDocument.addEventListener('click', (event) => {
+                        rootDocument.addEventListener('click', (event) => {{
                             const target = event.target;
-                            if (target && typeof target.closest === 'function') {
+                            if (target && typeof target.closest === 'function') {{
                                 const tab = target.closest('[data-baseweb="tab"]');
-                                if (tab && getWorkspaceTabButtons().includes(tab)) {
+                                if (tab && getWorkspaceTabButtons().includes(tab)) {{
                                     window.requestAnimationFrame(syncFromStreamlitTabs);
-                                }
-                            }
-                        });
-                    }
-                }
+                                }}
+                            }}
+                        }});
+                    }}
+                }}
 
                 syncFromStreamlitTabs();
-            })();
+            }})();
         </script>
     """
+
 
     st.markdown(hero_html, unsafe_allow_html=True)
 
