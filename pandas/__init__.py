@@ -13,7 +13,10 @@ API closely enough for the tests to interact with them naturally.
 
 from __future__ import annotations
 
+import csv
 from collections import OrderedDict, namedtuple
+from io import StringIO
+from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
 
@@ -167,13 +170,24 @@ class Series:
 
 
 class DataFrame:
-    def __init__(self, data: Sequence[dict[str, Any]] | None = None, columns: Sequence[str] | None = None):
+    def __init__(
+        self,
+        data: Sequence[dict[str, Any] | Sequence[Any]] | None = None,
+        columns: Sequence[str] | None = None,
+    ) -> None:
         self._rows: list[dict[str, Any]] = []
         self._columns: list[str] = list(columns or [])
 
         if data:
             for row in data:
-                copied = dict(row)
+                if isinstance(row, dict):
+                    copied = dict(row)
+                else:
+                    if columns is None:
+                        raise TypeError(
+                            "columns must be provided when initialising from non-mapping rows"
+                        )
+                    copied = {column: value for column, value in zip(columns, row)}
                 self._rows.append(copied)
                 for key in copied:
                     if key not in self._columns:
@@ -182,6 +196,10 @@ class DataFrame:
         for column in list(self._columns):
             if column not in self._columns:
                 self._columns.append(column)
+
+        for row in self._rows:
+            for column in self._columns:
+                row.setdefault(column, None)
 
     def __len__(self) -> int:  # pragma: no cover - trivial
         return len(self._rows)
@@ -230,6 +248,10 @@ class DataFrame:
 
     def copy(self) -> "DataFrame":
         return DataFrame([dict(row) for row in self._rows], columns=self._columns)
+
+    def iterrows(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        for index, row in enumerate(self._rows):
+            yield index, dict(row)
 
     def to_dict(self, orient: str = "records") -> list[dict[str, Any]]:
         if orient != "records":  # pragma: no cover - defensive
@@ -394,7 +416,10 @@ class _LocIndexer:
         if column_selector is None or (isinstance(column_selector, slice) and column_selector == slice(None, None, None)):
             return base_df
         if isinstance(column_selector, str):
-            return base_df[column_selector]
+            column_series = base_df[column_selector]
+            if len(column_series) == 1:
+                return column_series[0]
+            return column_series
         if isinstance(column_selector, list):
             return base_df[column_selector]
 
@@ -422,4 +447,33 @@ def to_numeric(values: Series | Iterable[Any], *, errors: str = "raise") -> Seri
     return Series(result)
 
 
-__all__ = ["DataFrame", "Series", "to_numeric"]
+def read_csv(path_or_buffer, sep: str = ",") -> DataFrame:
+    if hasattr(path_or_buffer, "read"):
+        contents = path_or_buffer.read()
+    else:
+        file_path = Path(path_or_buffer)
+        if not file_path.exists():
+            raise FileNotFoundError(f"No such file or directory: '{path_or_buffer}'")
+        contents = file_path.read_text(encoding="utf-8")
+
+    if isinstance(contents, bytes):
+        contents = contents.decode("utf-8")
+
+    if not contents.strip():
+        return DataFrame(columns=[])
+
+    reader = csv.reader(StringIO(contents), delimiter=sep)
+    try:
+        header = next(reader)
+    except StopIteration:
+        return DataFrame(columns=[])
+
+    rows = []
+    for raw_row in reader:
+        row = {column: value for column, value in zip(header, raw_row)}
+        rows.append(row)
+
+    return DataFrame(rows, columns=header)
+
+
+__all__ = ["DataFrame", "Series", "to_numeric", "read_csv"]
