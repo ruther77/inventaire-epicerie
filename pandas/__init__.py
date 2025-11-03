@@ -45,6 +45,12 @@ class _StringMethods:
     def lower(self) -> "Series":
         return self._apply(lambda value: str(value).lower())
 
+    def startswith(self, prefix: str) -> "Series":
+        return Series([
+            str(value).startswith(prefix) if value is not None else False
+            for value in self._series._data
+        ])
+
 
 class _ILocAccessor:
     def __init__(self, series: "Series") -> None:
@@ -397,6 +403,8 @@ class _LocIndexer:
             raise TypeError("loc indexer requires row and column selectors")
         row_selector, column_selector = key
 
+        single_row = False
+
         if isinstance(row_selector, slice) and row_selector == slice(None, None, None):
             base_rows = list(self._dataframe._rows)
         elif isinstance(row_selector, Series):
@@ -406,6 +414,7 @@ class _LocIndexer:
             base_rows = [self._dataframe._rows[index] for index in row_selector]
         elif isinstance(row_selector, int):
             base_rows = [self._dataframe._rows[row_selector]]
+            single_row = True
         elif row_selector in (None, True):
             base_rows = list(self._dataframe._rows)
         else:
@@ -424,6 +433,28 @@ class _LocIndexer:
             return base_df[column_selector]
 
         raise TypeError(f"Unsupported column selector for loc: {type(column_selector)!r}")
+
+
+def read_csv(path: str | Path, *, sep: str = ",", delimiter: str | None = None, encoding: str = "utf-8", **_: Any) -> DataFrame:
+    """Read a CSV file into a :class:`DataFrame`.
+
+    Only the minimal behaviour required by the tests is implemented.  Keyword
+    arguments beyond *sep*, *delimiter* and *encoding* are accepted for
+    compatibility but ignored.
+    """
+
+    csv_path = Path(path)
+    actual_delimiter = delimiter if delimiter is not None else sep
+
+    with csv_path.open(encoding=encoding, newline="") as handle:
+        reader = csv.reader(handle, delimiter=actual_delimiter)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return DataFrame(columns=[])
+
+        rows = [{column: value for column, value in zip(header, values)} for values in reader]
+        return DataFrame(rows, columns=header)
 
 
 def to_numeric(values: Series | Iterable[Any], *, errors: str = "raise") -> Series:
