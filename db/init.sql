@@ -4,11 +4,6 @@ DO $$ BEGIN
     CREATE TYPE type_mouvement AS ENUM ('ENTREE', 'SORTIE', 'TRANSFERT', 'INVENTAIRE');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-DO $$ BEGIN
-    -- Mise à jour pour une meilleure catégorisation si nécessaire, sinon la liste originale est conservée.
-    CREATE TYPE type_cat AS ENUM ('Epicerie sucree', 'Epicerie salee', 'Alcool', 'Autre', 'Afrique', 'Boissons', 'Hygiene');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
 --------------------------------------------------------------------------------
 -- 2. TABLES (avec Contraintes d'Intégrité)
 --------------------------------------------------------------------------------
@@ -17,7 +12,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS produits (
     id SERIAL PRIMARY KEY,
     nom TEXT NOT NULL,
-    categorie type_cat DEFAULT 'Autre',
+    categorie TEXT NOT NULL DEFAULT 'Autre',
     -- Ajout de contraintes CHECK pour garantir des valeurs non-négatives
     prix_achat NUMERIC(10,2) CHECK (prix_achat >= 0),
     prix_vente NUMERIC(10,2) CHECK (prix_vente >= 0),
@@ -42,6 +37,25 @@ CREATE TABLE IF NOT EXISTS produits_barcodes (
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- Table catégories (gestion éditable depuis l'application)
+CREATE TABLE IF NOT EXISTS categories (
+    id SERIAL PRIMARY KEY,
+    nom TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+INSERT INTO categories (nom, description)
+VALUES
+    ('Epicerie sucree', 'Biscuits, confiseries et autres produits sucrés.'),
+    ('Epicerie salee', 'Produits salés et condiments du quotidien.'),
+    ('Boissons', 'Sodas, jus, eaux et boissons énergétiques.'),
+    ('Hygiene', 'Hygiène corporelle et entretien de la maison.'),
+    ('Afrique', 'Sélection de produits africains et exotiques.'),
+    ('Autre', 'Catégorie générique pour les produits non classés.')
+ON CONFLICT (nom) DO NOTHING;
+
 -- Mouvements
 CREATE TABLE IF NOT EXISTS mouvements_stock (
     id SERIAL PRIMARY KEY,
@@ -52,6 +66,139 @@ CREATE TABLE IF NOT EXISTS mouvements_stock (
     source TEXT,                -- Ex: Nom du fournisseur, Numéro de commande, Nom de l'utilisateur
     date_mvt TIMESTAMP NOT NULL DEFAULT now(),
     created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- Utilisateurs (authentification & rôles)
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    email TEXT,
+    full_name TEXT,
+    role TEXT NOT NULL DEFAULT 'standard' CHECK (role IN ('admin', 'standard')),
+    hashed_password TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION set_users_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_users_set_updated_at ON users;
+CREATE TRIGGER trg_users_set_updated_at
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION set_users_updated_at();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_ci ON users (LOWER(username));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_ci ON users (LOWER(email)) WHERE email IS NOT NULL;
+
+-- Fonction générique pour tenir à jour les colonnes updated_at
+CREATE OR REPLACE FUNCTION set_row_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_categories_updated_at ON categories;
+CREATE TRIGGER trg_categories_updated_at
+BEFORE UPDATE ON categories
+FOR EACH ROW
+EXECUTE FUNCTION set_row_updated_at();
+
+-- Clients
+CREATE TABLE IF NOT EXISTS clients (
+    id SERIAL PRIMARY KEY,
+    nom TEXT NOT NULL,
+    telephone TEXT,
+    email TEXT,
+    adresse TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS trg_clients_updated_at ON clients;
+CREATE TRIGGER trg_clients_updated_at
+BEFORE UPDATE ON clients
+FOR EACH ROW
+EXECUTE FUNCTION set_row_updated_at();
+
+-- Fournisseurs
+CREATE TABLE IF NOT EXISTS fournisseurs (
+    id SERIAL PRIMARY KEY,
+    nom TEXT NOT NULL,
+    telephone TEXT,
+    email TEXT,
+    adresse TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS trg_fournisseurs_updated_at ON fournisseurs;
+CREATE TRIGGER trg_fournisseurs_updated_at
+BEFORE UPDATE ON fournisseurs
+FOR EACH ROW
+EXECUTE FUNCTION set_row_updated_at();
+
+-- Commandes clients
+CREATE TABLE IF NOT EXISTS commandes (
+    id SERIAL PRIMARY KEY,
+    numero TEXT NOT NULL UNIQUE,
+    date_commande TIMESTAMP NOT NULL DEFAULT now(),
+    client_id INT REFERENCES clients(id) ON DELETE SET NULL,
+    statut TEXT NOT NULL DEFAULT 'Brouillon',
+    total_ht NUMERIC(12,2) DEFAULT 0,
+    total_ttc NUMERIC(12,2) DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS trg_commandes_updated_at ON commandes;
+CREATE TRIGGER trg_commandes_updated_at
+BEFORE UPDATE ON commandes
+FOR EACH ROW
+EXECUTE FUNCTION set_row_updated_at();
+
+CREATE TABLE IF NOT EXISTS commandes_lignes (
+    id SERIAL PRIMARY KEY,
+    commande_id INT NOT NULL REFERENCES commandes(id) ON DELETE CASCADE,
+    produit_id INT REFERENCES produits(id) ON DELETE SET NULL,
+    quantite NUMERIC(12,3) NOT NULL CHECK (quantite > 0),
+    prix_unitaire NUMERIC(10,2) NOT NULL CHECK (prix_unitaire >= 0),
+    tva NUMERIC(5,2) DEFAULT 0 CHECK (tva >= 0)
+);
+
+-- Approvisionnements fournisseurs
+CREATE TABLE IF NOT EXISTS approvisionnements (
+    id SERIAL PRIMARY KEY,
+    numero TEXT NOT NULL UNIQUE,
+    date_appro TIMESTAMP NOT NULL DEFAULT now(),
+    fournisseur_id INT REFERENCES fournisseurs(id) ON DELETE SET NULL,
+    statut TEXT NOT NULL DEFAULT 'Reçu',
+    total_ht NUMERIC(12,2) DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT now(),
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS trg_approvisionnements_updated_at ON approvisionnements;
+CREATE TRIGGER trg_approvisionnements_updated_at
+BEFORE UPDATE ON approvisionnements
+FOR EACH ROW
+EXECUTE FUNCTION set_row_updated_at();
+
+CREATE TABLE IF NOT EXISTS approvisionnements_lignes (
+    id SERIAL PRIMARY KEY,
+    approvisionnement_id INT NOT NULL REFERENCES approvisionnements(id) ON DELETE CASCADE,
+    produit_id INT REFERENCES produits(id) ON DELETE SET NULL,
+    quantite NUMERIC(12,3) NOT NULL CHECK (quantite > 0),
+    prix_unitaire NUMERIC(10,2) NOT NULL CHECK (prix_unitaire >= 0)
 );
 
 -- 3. FONCTION DE MISE À JOUR DU STOCK (Trigger)

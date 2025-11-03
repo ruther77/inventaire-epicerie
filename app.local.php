@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 if (!defined('APP_ROOT')) {
-    define('APP_ROOT', realpath(__DIR__ . '/..'));
+    define('APP_ROOT', realpath(__DIR__));
 }
 
 if (!defined('APP_BASE_URL')) {

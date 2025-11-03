@@ -1,48 +1,74 @@
-# docker-compose.yml (Version Corrigée et Complète pour 3 services)
-version: '3.8'
+version: '3.9'
+
+x-app-image: &app-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  image: inventaire-app:latest
 
 services:
-  # 1. Base de Données PostgreSQL
   db:
-    image: public.ecr.aws/docker/library/postgres:15-alpine
-    container_name: postgres_inventaire_v2
-    ports:
-      - "5432:5432" 
+    image: public.ecr.aws/docker/library/postgres:16
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: epicerie
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      # Ceci est la ligne CRUCIALE pour réutiliser les données
-      - postgres_data:/var/lib/postgresql/data/
-      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    command: postgres -c 'config_file=/etc/postgresql/postgresql.conf'
-  # 2. Application Streamlit
-  app:
-    build: .
-    container_name: streamlit_inventaire_v2
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "8501:8501" 
-    environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/epicerie
-    volumes:
-      - ./Produit.csv:/app/Produit.csv
-    depends_on:
-      - db
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  # 3. Service API Externe (FastAPI - LE NOUVEAU SERVICE)
   api:
-    build: .
-    container_name: fastapi_inventaire
-    ports:
-      - "8000:8000" 
-    environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/epicerie
-    # Commande pour lancer le serveur FastAPI
-    command: python -m uvicorn api_server:app --host 0.0.0.0 --port 8000
+    <<: *app-image
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    environment:
+      APP_PROCESS: api
+      API_PORT: 8000
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - '8000:8000'
+
+  app:
+    <<: *app-image
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      APP_PROCESS: streamlit
+      STREAMLIT_SERVER_PORT: ${STREAMLIT_SERVER_PORT:-8501}
+      DATABASE_URL: ${DATABASE_URL}
+    volumes:
+      - ./.streamlit:/app/.streamlit:ro
+    ports:
+      - '8501:8501'
+
+  frontend:
+    image: public.ecr.aws/docker/library/node:20-alpine
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install --omit=dev && npm run build && npm run preview -- --host 0.0.0.0 --port 4173"
+    ports:
+      - '4173:4173'
 
 volumes:
-  # Volume qui stocke vos données réelles
-  postgres_data:
+  db_data:

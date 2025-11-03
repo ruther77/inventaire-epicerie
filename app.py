@@ -1,16 +1,11 @@
-# app.py
+"""Streamlit entrypoint for the workspace application."""
 
-import os
-import io
+from __future__ import annotations
+
 import math
-import re
-from contextlib import contextmanager
-from html import escape
-from typing import Any, Dict, List, Tuple
+from typing import List
 
-import numpy as np
 import pandas as pd
-import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter, Retry
 from sqlalchemy import text
@@ -358,989 +353,343 @@ def _reset_pos_inputs() -> None:
     st.session_state.pop("pos_qty_input", None)
     st.session_state.pop("pos_product_selectbox", None)
 
-
-def _add_product_to_cart(
-    product_id: int,
-    quantity: int,
-    products_df: pd.DataFrame,
-) -> Tuple[bool, str]:
-    """Ajoute un produit au panier en garantissant l'absence de boucles infinies."""
-
-    if quantity <= 0:
-        return False, "La quantité doit être supérieure à zéro."
-
-    try:
-        product_row = products_df[products_df["id"] == product_id].iloc[0]
-    except IndexError:
-        return False, f"Produit ID {product_id} introuvable dans le catalogue."
-
-    cart_items = list(_ensure_cart_state())
-
-    for item in cart_items:
-        if int(item.get("id", -1)) == product_id:
-            item["qty"] = int(item.get("qty", 0)) + int(quantity)
-            break
-    else:
-        cart_items.append(
-            {
-                "id": int(product_row["id"]),
-                "nom": str(product_row["nom"]),
-                "prix_vente": float(product_row["prix_vente"]),
-                "tva": float(product_row["tva"]),
-                "qty": int(quantity),
-            }
-        )
-
-    st.session_state["cart"] = cart_items
-    label = str(product_row["nom"]).strip() or f"Produit {product_id}"
-    return True, f"{quantity} × {label} ajouté(s) au panier"
+import invoice_extractor
+from data_repository import query_df
+from inventory_service import apply_invoice_price_updates, prepare_invoice_price_updates
+from streamlit_app.pages.workspace import render_app as render_workspace_app
+from streamlit_app.services.cache import invalidate_data_caches
 
 
-
-
-@st.cache_data(ttl=180)
-def load_customer_catalog() -> pd.DataFrame:
-    """Charge un catalogue orienté client avec informations agrégées."""
-
-    sql_query = """
-        SELECT
-            p.id,
-            p.nom,
-            p.categorie,
-            COALESCE(p.prix_achat, 0) AS prix_achat,
-            COALESCE(p.prix_vente, 0) AS prix_vente,
-            COALESCE(p.stock_actuel, 0) AS stock_actuel,
-            COALESCE(tv.qte_sorties_30j, 0) AS ventes_30j,
-            barcode.code AS ean
-        FROM produits p
-        LEFT JOIN v_top_ventes_30j tv ON tv.id = p.id
-        LEFT JOIN LATERAL (
-            SELECT pb.code
-            FROM produits_barcodes pb
-            WHERE pb.produit_id = p.id
-            ORDER BY pb.is_principal DESC, pb.created_at ASC, pb.id ASC
-            LIMIT 1
-        ) AS barcode ON TRUE
-        WHERE p.actif = TRUE
-        ORDER BY p.categorie, p.nom;
-    """
+@st.cache_data(ttl=60)
+def load_table_preview(table_name: str, limit: int | str = 20) -> pd.DataFrame:
+    """Fetch a small excerpt of a table for the admin dashboard preview."""
 
     try:
-        df = query_df(sql_query)
-    except Exception as exc:
-        st.error(
-            "Impossible de charger le catalogue client. Vérifiez que les vues SQL sont déployées (v_top_ventes_30j).\n"
-            f"Détail: {exc}"
-        )
-        return pd.DataFrame(
-            columns=["id", "nom", "categorie", "prix_achat", "prix_vente", "stock_actuel", "ventes_30j"]
-        )
-
-    if df.empty:
-        return df.assign(
-            categorie=[], prix_vente=[], stock_actuel=[], ventes_30j=[]
-        )
-
-    expected_cols = {"categorie", "prix_achat", "prix_vente", "stock_actuel", "ventes_30j"}
-    for col in expected_cols:
-        if col not in df.columns:
-            df[col] = 0
-
-    numeric_cols = ["prix_achat", "prix_vente", "stock_actuel", "ventes_30j"]
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    if "id" in df.columns:
-        df["id"] = pd.to_numeric(df["id"], errors="coerce").fillna(0).astype(int)
-
-    if "categorie" in df.columns:
-        df["categorie"] = df["categorie"].fillna("Autre")
-    else:
-        df["categorie"] = "Autre"
-
-    if "ean" in df.columns:
-        df["ean"] = df["ean"].fillna("").astype(str)
-    else:
-        df["ean"] = ""
-
-    unique_eans = {
-        ean.strip()
-        for ean in df["ean"].tolist()
-        if isinstance(ean, str) and ean.strip()
-    }
-    image_map: dict[str, str | None] = {}
-    if unique_eans:
-        for ean in unique_eans:
-            image_map[ean] = _fetch_product_image_url(ean)
-    df["image_url"] = df["ean"].map(lambda e: image_map.get(e) if e else None)
-
-    return df
-
-
-@st.cache_data(ttl=300)
-def load_recent_suppliers() -> pd.DataFrame:
-    """Identifie le dernier fournisseur connu par produit via les mouvements d'entrée."""
-
-    sql = """
-        SELECT DISTINCT ON (m.produit_id)
-            m.produit_id,
-            COALESCE(NULLIF(TRIM(m.source), ''), 'Non renseigné') AS fournisseur,
-            m.date_mvt
-        FROM mouvements_stock m
-        WHERE m.type = 'ENTREE'
-        ORDER BY m.produit_id, m.date_mvt DESC
-    """
-
-    try:
-        df = query_df(sql)
-    except Exception as exc:
-        st.warning(f"Impossible de déterminer les fournisseurs récents: {exc}")
-        return pd.DataFrame(columns=["produit_id", "fournisseur", "date_mvt"])
-
-    if not df.empty and "fournisseur" in df.columns:
-        df["fournisseur"] = df["fournisseur"].fillna("Non renseigné")
-
-    return df
-
-
-@st.cache_data(ttl=300)
-def load_duplicate_barcodes() -> pd.DataFrame:
-    """Liste les codes-barres présents sur plusieurs produits."""
-
-    sql = """
-        SELECT
-            LOWER(pb.code) AS code,
-            COUNT(*) AS occurrences,
-            string_agg(p.nom, ', ' ORDER BY p.nom) AS produits
-        FROM produits_barcodes pb
-        JOIN produits p ON p.id = pb.produit_id
-        GROUP BY LOWER(pb.code)
-        HAVING COUNT(*) > 1
-        ORDER BY occurrences DESC, code
-    """
-
-    try:
-        df = query_df(sql)
-    except Exception as exc:
-        st.warning(f"Impossible d'identifier les doublons de codes-barres: {exc}")
-        return pd.DataFrame(columns=["code", "occurrences", "produits"])
-
-    return df
-
-
-@st.cache_data(ttl=120)
-def load_trending_products(limit: int = 6) -> pd.DataFrame:
-    """Retourne les produits les plus vendus récemment."""
-
-    try:
-        safe_limit = max(1, int(limit))
+        safe_limit = int(limit)
     except (TypeError, ValueError):
-        safe_limit = 6
-
-    catalog_df = load_customer_catalog()
-
-    if catalog_df.empty:
-        return catalog_df
-
-    ranked = catalog_df.sort_values(
-        by=["ventes_30j", "stock_actuel", "prix_vente"],
-        ascending=[False, False, False],
-    ).head(safe_limit)
-
-    return ranked.reset_index(drop=True)
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def _fetch_product_image_url(ean: str | None) -> str | None:
-    """Retourne une URL d'image OpenFoodFacts pour un code-barres donné."""
-
-    if not ean:
-        return None
-
-    sanitized = re.sub(r"\D", "", str(ean)).strip()
-    if len(sanitized) < 8:
-        return None
-
-    api_url = f"https://world.openfoodfacts.org/api/v0/product/{sanitized}.json"
-
-    try:
-        response = _IMAGE_SESSION.get(api_url, timeout=(2, 5))
-    except requests.RequestException:
-        return None
-
-    if not response.ok:
-        return None
-
-    try:
-        payload = response.json()
-    except ValueError:
-        return None
-
-    if not isinstance(payload, dict) or payload.get("status") != 1:
-        return None
-
-    product = payload.get("product") or {}
-    preferred_keys = (
-        "image_front_small_url",
-        "image_small_url",
-        "image_front_url",
-        "image_url",
-    )
-
-    for key in preferred_keys:
-        url = product.get(key)
-        if url:
-            return str(url)
-
-    return None
-
-
-def _render_product_cards(
-    df: pd.DataFrame,
-    columns: int = 3,
-    *,
-    coverage_target: float | None = None,
-    alert_threshold: float | None = None,
-) -> None:
-    """Affiche une grille responsive de cartes produit."""
-
-    if df.empty:
-        st.info("Aucun produit à afficher pour le moment.")
-        return
-
-    records = df.to_dict("records")
-    columns = max(1, int(columns))
-
-    for start in range(0, len(records), columns):
-        cols = st.columns(columns)
-        for col, product in zip(cols, records[start:start + columns]):
-            with col:
-                with st.container():
-                    name = str(product.get("nom", "")).strip() or "Produit"
-                    category = str(product.get("categorie", "Autre")).strip()
-                    price = float(product.get("prix_vente") or 0.0)
-                    stock = float(product.get("stock_actuel") or 0.0)
-                    ventes = float(product.get("ventes_30j") or 0.0)
-
-                    image_url: str | None = None
-                    raw_image = product.get("image_url")
-                    if isinstance(raw_image, str) and raw_image.strip():
-                        image_url = raw_image.strip()
-                    elif raw_image is not None and not pd.isna(raw_image):
-                        candidate = str(raw_image).strip()
-                        image_url = candidate or None
-
-                    if not image_url:
-                        image_url = _fetch_product_image_url(product.get("ean"))
-
-                    if image_url:
-                        st.image(
-                            image_url,
-                            caption=f"Visuel produit {name}",
-                            use_container_width=True,
-                        )
-                    else:
-                        placeholder_initial = (name[:1] or "#").upper()
-                        st.markdown(
-                            f"### {placeholder_initial}",
-                        )
-                        st.caption("Visuel indisponible")
-
-                    st.caption(category)
-                    st.markdown(f"**{name}**")
-                    st.markdown(f"### {_format_human_number(price, 2)} €")
-
-                    stock_label: str
-                    stock_color: str
-                    if stock <= 0:
-                        stock_label, stock_color = "Rupture", "red"
-                    elif stock < 5:
-                        stock_label, stock_color = "Stock bas", "orange"
-                    else:
-                        stock_label, stock_color = "Disponible", "green"
-
-                    st.markdown(f":{stock_color}[{stock_label}]")
-                    st.caption(
-                        f"Stock: {_format_human_number(stock)} · Ventes 30j: {_format_human_number(ventes)}"
-                    )
-
-                    extra_lines: list[str] = []
-                    coverage_value = product.get("couverture_jours")
-                    if coverage_value is not None and not pd.isna(coverage_value):
-                        if coverage_value in (np.inf, float("inf")):
-                            extra_lines.append("Couverture: illimitée")
-                        else:
-                            try:
-                                coverage_float = float(coverage_value)
-                            except (TypeError, ValueError):
-                                coverage_float = None
-                            if coverage_float is not None:
-                                coverage_text = f"Couverture: {coverage_float:.1f} j"
-                                if coverage_target is not None:
-                                    delta = coverage_float - float(coverage_target)
-                                    coverage_text += f" ({delta:+.1f} j vs obj.)"
-                                extra_lines.append(coverage_text)
-                                if (
-                                    alert_threshold is not None
-                                    and coverage_float <= float(alert_threshold)
-                                ):
-                                    extra_lines.append(":red[⚠️ Couverture critique]")
-
-                    prix_vente = product.get("prix_vente")
-                    prix_achat = product.get("prix_achat")
-                    margin_pct: float | None = None
-                    try:
-                        vente = float(prix_vente)
-                        achat = float(prix_achat)
-                        if vente > 0:
-                            margin_pct = ((vente - achat) / vente) * 100
-                    except (TypeError, ValueError):
-                        margin_pct = None
-
-                    if margin_pct is not None:
-                        extra_lines.append(f"Marge: {margin_pct:.1f}%")
-                        if margin_pct < 0:
-                            extra_lines.append(":red[⚠️ Prix < achat]")
-
-                    if extra_lines:
-                        st.caption(" · ".join(extra_lines))
-
-
-def _format_human_number(value: float | int, decimals: int = 0) -> str:
-    """Formate un nombre en utilisant un séparateur fin non cassant."""
-
-    return f"{value:,.{decimals}f}".replace(",", " ")
-
-
-def render_workspace_hero(
-    *,
-    eyebrow: str,
-    title: str,
-    description: str,
-    badges: List[str] | None = None,
-    metrics: List[Dict[str, str]] | None = None,
-    tone: str = "sunset",
-) -> None:
-    """Affiche un bandeau héro en utilisant des composants Streamlit natifs."""
-
-    tone_palette = {
-        "sunset": "orange",
-        "citrus": "orange",
-        "lagoon": "blue",
-        "marine": "blue",
-        "violet": "violet",
-        "emerald": "green",
-        "amber": "orange",
-        "teal": "green",
-        "slate": "violet",
-    }
-    accent_color = tone_palette.get(tone, "blue")
-
-    container = st.container()
-    with container:
-        st.markdown(
-            f":{accent_color}[{eyebrow}]",
-        )
-        st.markdown(f"## {title}")
-        st.write(description)
-
-        if badges:
-            badge_text = " ".join(f":{accent_color}[{badge}]" for badge in badges if badge)
-            if badge_text:
-                st.markdown(badge_text)
-
-        if metrics:
-            cols = st.columns(len(metrics))
-            for col, metric in zip(cols, metrics):
-                label = str(metric.get("label", "")).strip() or "–"
-                value = str(metric.get("value", "")).strip() or "–"
-                hint = str(metric.get("hint", "")).strip()
-                col.metric(label=label, value=value)
-                if hint:
-                    col.caption(hint)
-
-
-@contextmanager
-def workspace_panel(
-    title: str | None = None,
-    description: str | None = None,
-    *,
-    icon: str | None = None,
-    accent: str | None = None,
-):
-    """Crée un conteneur de panneau stylisé en s'appuyant sur les conteneurs Streamlit."""
-
-    accent_palette = {
-        "violet": "violet",
-        "blue": "blue",
-        "green": "green",
-        "orange": "orange",
-        "citrus": "orange",
-        "lagoon": "blue",
-        "marine": "blue",
-        "emerald": "green",
-        "amber": "orange",
-        "teal": "green",
-        "slate": "violet",
-    }
-    accent_color = accent_palette.get(accent or "", "blue")
-
-    container = st.container()
-    with container:
-        if title or description:
-            heading = title or ""
-            heading_display = f":{accent_color}[{heading}]" if heading else ""
-            if icon:
-                heading_display = f"{icon} {heading_display}" if heading_display else icon
-            if heading_display:
-                st.markdown(f"### {heading_display}")
-            if description:
-                st.caption(description)
-
-        try:
-            yield
-        finally:
-            pass
-
-def _normalize_cart_dataframe(cart_items: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Construit un DataFrame propre à partir des éléments du panier."""
-
-    if not cart_items:
-        return pd.DataFrame(columns=["nom", "qty", "prix_vente", "tva"])
-
-    cart_df = pd.DataFrame.from_records(cart_items)
-
-    defaults = {"nom": "", "qty": 0, "prix_vente": 0.0, "tva": 0.0}
-    for column, default in defaults.items():
-        if column not in cart_df.columns:
-            cart_df[column] = default
-
-    cart_df["qty"] = pd.to_numeric(cart_df["qty"], errors="coerce").fillna(0).astype(int)
-    cart_df["prix_vente"] = pd.to_numeric(cart_df["prix_vente"], errors="coerce").fillna(0.0)
-    cart_df["tva"] = pd.to_numeric(cart_df["tva"], errors="coerce").fillna(0.0)
-
-    return cart_df
-
-
-def _reset_invoice_session_state() -> None:
-    """Réinitialise toutes les variables de session liées aux factures."""
-
-    st.session_state["invoice_raw_text"] = ""
-    st.session_state["invoice_text_input"] = ""
-    st.session_state["extract_invoice_text_input"] = ""
-    st.session_state["import_invoice_text_input"] = ""
-    st.session_state["invoice_products_df"] = None
-    st.session_state["invoice_import_summary"] = None
-    st.session_state["invoice_uploaded_name"] = "facture.txt"
-    st.session_state["invoice_uploaded_batches"] = []
-    st.session_state["invoice_processed_signatures"] = set()
-    st.session_state["invoice_selection_index"] = None
-
-    for selector_key in INVOICE_SELECTOR_KEYS:
-        st.session_state.pop(selector_key, None)
-        st.session_state.pop(f"{selector_key}__sync", None)
-
-    for uploader_key in INVOICE_FILE_UPLOADER_KEYS:
-        st.session_state.pop(uploader_key, None)
-
-
-def _queue_invoice_selector_sync(index: int) -> None:
-    for selector_key in INVOICE_SELECTOR_KEYS:
-        st.session_state[f"{selector_key}__sync"] = index
-
-
-def _set_active_invoice_from_index(index: int) -> None:
-    batches = st.session_state.get("invoice_uploaded_batches", [])
-    if not batches:
-        st.session_state["invoice_selection_index"] = None
-        return
-
-    index = max(0, min(index, len(batches) - 1))
-    batch = batches[index]
-
-    st.session_state["invoice_raw_text"] = batch["text"]
-    st.session_state["invoice_text_input"] = batch["text"]
-    st.session_state["extract_invoice_text_input"] = batch["text"]
-    st.session_state["import_invoice_text_input"] = batch["text"]
-    st.session_state["invoice_products_df"] = None
-    st.session_state["invoice_import_summary"] = None
-    st.session_state["invoice_uploaded_name"] = batch["download_name"]
-    st.session_state["invoice_selection_index"] = index
-
-    _queue_invoice_selector_sync(index)
-
-
-def _process_uploaded_invoices(uploaded_files, context_label: str) -> None:
-    if not uploaded_files:
-        return
-
-    if not isinstance(uploaded_files, (list, tuple)):
-        uploaded_files = [uploaded_files]
-
-    if len(uploaded_files) > MAX_INVOICE_UPLOADS:
-        st.info(f"Seuls les {MAX_INVOICE_UPLOADS} premiers fichiers seront traités.")
-
-    processed_signatures = st.session_state.setdefault("invoice_processed_signatures", set())
-    batches = st.session_state.setdefault("invoice_uploaded_batches", [])
-    seen_signatures = set(processed_signatures)
-
-    new_batches = []
-    for uploaded_invoice_file in uploaded_files[:MAX_INVOICE_UPLOADS]:
-        signature = f"{uploaded_invoice_file.name}|{getattr(uploaded_invoice_file, 'size', '0')}"
-        if signature in seen_signatures:
-            st.info(f"{uploaded_invoice_file.name} a déjà été traité.")
-            continue
-
-        try:
-            raw_bytes = uploaded_invoice_file.getvalue()
-        except Exception as exc:  # pragma: no cover - protection runtime Streamlit
-            st.error(f"Erreur lors de la lecture du fichier {uploaded_invoice_file.name} : {exc}")
-            continue
-
-        proxy_file = io.BytesIO(raw_bytes)
-        proxy_file.name = uploaded_invoice_file.name
-        proxy_file.type = uploaded_invoice_file.type
-
-        try:
-            extracted_text = invoice_extractor.extract_text_from_file(proxy_file)
-        except Exception as exc:  # pragma: no cover - protection runtime Streamlit
-            st.error(f"Erreur lors de la lecture du fichier {uploaded_invoice_file.name} : {exc}")
-            continue
-
-        if extracted_text is None or not str(extracted_text).strip():
-            st.warning(f"{uploaded_invoice_file.name} : aucun texte exploitable détecté.")
-            continue
-
-        if str(extracted_text).lower().startswith("erreur"):
-            st.error(f"{uploaded_invoice_file.name} : {extracted_text}")
-            continue
-
-        base_name, _ = os.path.splitext(uploaded_invoice_file.name)
-        safe_name = base_name or "facture"
-        download_name = f"{safe_name}_extraction.txt"
-
-        new_batches.append(
-            {
-                "name": uploaded_invoice_file.name,
-                "text": extracted_text,
-                "download_name": download_name,
-                "signature": signature,
-            }
-        )
-        seen_signatures.add(signature)
-        st.success(f"Texte extrait depuis {uploaded_invoice_file.name} ({context_label}).")
-
-    if not new_batches:
-        return
-
-    batches.extend(new_batches)
-    if len(batches) > MAX_INVOICE_UPLOADS:
-        batches[:] = batches[-MAX_INVOICE_UPLOADS:]
-
-    processed_signatures.clear()
-    processed_signatures.update(batch["signature"] for batch in batches)
-    _set_active_invoice_from_index(len(batches) - 1)
-
-
-def _render_invoice_selector(label: str, widget_key: str) -> None:
-    batches = st.session_state.get("invoice_uploaded_batches", [])
-    if not batches:
-        return
-
-    current_index = st.session_state.get("invoice_selection_index")
-    if current_index is None or current_index >= len(batches):
-        current_index = len(batches) - 1
-        _set_active_invoice_from_index(current_index)
-
-    pending_key = f"{widget_key}__sync"
-    if pending_key in st.session_state:
-        st.session_state[widget_key] = st.session_state.pop(pending_key)
-    elif widget_key not in st.session_state:
-        st.session_state[widget_key] = current_index
-
-    options = list(range(len(batches)))
-
-    selected_index = st.selectbox(
-        label,
-        options,
-        format_func=lambda idx: batches[idx]["name"],
-        key=widget_key,
-    )
-
-    if selected_index != st.session_state.get("invoice_selection_index"):
-        _set_active_invoice_from_index(selected_index)
-    
-# --- Configuration de l'Authentification ---
-SECRET_KEY = os.getenv("STREAMLIT_SECRET_KEY", "__auth_token_inventaire_secure_2025")
-
-PASSWORD_HASHES = {
-    "admin": os.getenv(
-        "ADMIN_PASSWORD_HASH", "$2b$12$JA6jQijn5i21uQquBDOkR.gFIeXD82mri3DS0dcQ8HjB8.ycjYdI2"
-    ),
-    "user": os.getenv(
-        "USER_PASSWORD_HASH", "$2b$12$onUKmKMoVtAfpr.Lus9iW.bz.Q69Y/Ylf8nfSPzSL/avBHqeuuvTi"
-    ),
-}
-
-credentials = {
-    "usernames": {
-        "admin": {
-            "email": "ulrich@inventaire.fr",
-            "name": "ulrich",
-            "password": PASSWORD_HASHES["admin"],
-            "role": "admin"
-        },
-        "user": {
-            "email": "user@inventaire.fr",
-            "name": "user",
-            "password": PASSWORD_HASHES["user"],
-            "role": "standard"
-        }
-    }
-}
-
-authenticator = stauth.Authenticate(
-    credentials,
-    'inventaire_cookie', 
-    SECRET_KEY,          
-    cookie_expiry_days=30
-)
-
-# --- Fonctions Utilitaires et Caching ---
-
-def to_float(x, default=0.0, minv=None, maxv=None):
-    """Convertit une chaîne en float en gérant les formats monétaires et les NaN."""
-    if x is None:
-        return default
-    try:
-        if isinstance(x, float) and math.isnan(x):
-            return default
-    except Exception:
-        pass
-    s = str(x).replace("€","").replace("\xa0","").replace(" ","").replace(",", ".").strip()
-    try:
-        v = float(s)
-        if minv is not None:
-            v = max(v, minv)
-        if maxv is not None:
-            v = min(v, maxv)
-        return round(v, 4)
-    except Exception:
-        return default
-
-@st.cache_data(ttl=300)
-def cached_product_options() -> dict[str, int]:
-    """Retourne un dictionnaire {nom: id} mis en cache pour les sélecteurs."""
-    return {name: pid for name, pid in get_product_options()}
-
-
-def update_product_data():
-    """
-    Callback exécuté lorsque le produit dans la selectbox d'ajustement change.
-    Charge immédiatement les détails du produit et stocke les informations de stock.
-    """
-    # 1. Récupérer le nom du produit sélectionné (via la 'key' adj_product)
-    selected_product_name = st.session_state.adj_product 
-    
-    # 2. Trouver l'ID du produit (en utilisant le dictionnaire product_options)
-    # NOTE: Vous devez vous assurer que product_options (produit_nom -> produit_id) est accessible globalement 
-    # ou passé en argument si nécessaire. Assumons qu'il est accessible.
-    
-    # Si 'product_options' est une variable locale à la fonction Streamlit, vous devrez peut-être la mettre dans st.session_state 
-    # ou refactoriser. Pour l'exemple, nous allons chercher l'ID via le nom.
-    
-    # On va assumer que 'product_options' est un dictionnaire (nom -> id) créé avant la selectbox.
-    # Dans l'état de votre code, product_options n'est pas fourni, nous allons le charger.
-
-    # 🚨 Hypothèse de travail: product_options est un dictionnaire NOM -> ID créé au début de la page.
-    # Nous allons donc utiliser la fonction get_product_id_by_name pour plus de robustesse.
-    
-    # --- Code à ajouter à inventory_service.py OU à implémenter dans data_repository.py si la fonction n'existe pas ---
-    # La fonction devrait ressembler à: get_product_id_by_name(name)
-    #
-    # Pour l'exemple, nous allons directement faire la recherche de détails pour avoir l'ID:
-    
-    # Reconstruire la liste des options (si elles sont cachées) pour trouver l'ID
-    product_options = cached_product_options()
-    
-    selected_product_id = product_options.get(selected_product_name)
-
-    # 3. Charger les détails immédiatement
-    if selected_product_id:
-        product_details = get_product_details(selected_product_id)
-        
-        if product_details:
-            # Mettre à jour les variables de session utilisées pour l'affichage
-            st.session_state.ajust_produit_id = product_details['id']
-            st.session_state.ajust_stock_actuel = float(product_details['quantite_stock'])
-            st.session_state.ajust_nom = product_details['nom']
-            st.session_state.ajust_error = None # Effacer toute erreur précédente
-        else:
-             st.session_state.ajust_error = "Produit non trouvé après sélection."
-    else:
-        st.session_state.ajust_error = "Sélection de produit invalide."
-
-@st.cache_data(ttl=300)
-def load_products_list():
-    sql_query = """
-        SELECT
-            p.id,
-            p.nom,
-            COALESCE(p.prix_achat, 0) AS prix_achat,
-            p.prix_vente,
-            p.tva,
-            p.stock_actuel AS quantite_stock,
-            COALESCE(string_agg(pb.code, ', ' ORDER BY pb.code), '') AS codes_barres,
-            CASE
-                WHEN p.stock_actuel <= 0 THEN '❌ Rupture'
-                WHEN p.stock_actuel < 5 THEN '⚠️ Faible'
-                ELSE '✅ OK'
-            END AS statut_stock
-        FROM
-            produits p
-        LEFT JOIN
-            produits_barcodes pb ON p.id = pb.produit_id
-        GROUP BY
-            p.id, p.nom, p.prix_vente, p.tva, p.stock_actuel
-        ORDER BY
-            p.nom;
-    """
-    try:
-        df = query_df(sql_query)
-        if "prix_achat" not in df.columns:
-            df["prix_achat"] = 0.0
-        df['statut_stock'] = df['quantite_stock'].apply(lambda x: 'Stock OK' if x > 5 else ('Alerte Basse' if x > 0 else 'Épuisé'))
-        return df
-    except Exception as e:
-        st.error(f"Erreur critique de chargement des produits: {e}. Vérifiez la vue 'v_stock_produits'.")
+        safe_limit = 20
+    if safe_limit <= 0:
+        safe_limit = 20
+
+    raw = str(table_name or "").strip()
+    if not raw:
+        st.warning("Table name is required")
         return pd.DataFrame()
 
+    if "." in raw:
+        schema, name = raw.split(".", 1)
+    else:
+        schema, name = "public", raw
 
-@st.cache_data(ttl=120)
-def load_movement_timeseries(window_days: int = 30, product_id: int | None = None) -> pd.DataFrame:
-    base_sql = """
-        SELECT
-            date_trunc('day', m.date_mvt) AS jour,
-            m.type,
-            SUM(m.quantite) AS quantite
-        FROM mouvements_stock m
-        WHERE m.date_mvt >= now() - (:window * INTERVAL '1 day')
-    """
+    def _is_valid(segment: str) -> bool:
+        if not segment:
+            return False
+        first = segment[0]
+        if not (first.isalpha() or first == "_"):
+            return False
+        for char in segment[1:]:
+            if not (char.isalnum() or char == "_"):
+                return False
+        return True
 
-    params: dict[str, int] = {"window": int(window_days)}
-
-    if product_id is not None:
-        base_sql += " AND m.produit_id = :pid"
-        params["pid"] = int(product_id)
-
-    base_sql += """
-        GROUP BY 1, m.type
-        ORDER BY jour ASC, m.type
-    """
-
-    try:
-        df = query_df(base_sql, params=params)
-        if not df.empty:
-            df["jour"] = pd.to_datetime(df["jour"]).dt.date
-        return df
-    except Exception as exc:
-        st.error(f"Impossible de charger l'historique agrégé des mouvements: {exc}")
-        return pd.DataFrame(columns=["jour", "type", "quantite"])
-
-
-@st.cache_data(ttl=60)
-def load_recent_movements(limit: int = 100, product_id: int | None = None) -> pd.DataFrame:
-    sql = """
-        SELECT
-            m.date_mvt,
-            p.nom AS produit,
-            m.type,
-            m.quantite,
-            m.source
-        FROM mouvements_stock m
-        JOIN produits p ON p.id = m.produit_id
-    """
-
-    params: dict[str, int] = {"limit": int(limit)}
-
-    if product_id is not None:
-        sql += " WHERE m.produit_id = :pid"
-        params["pid"] = int(product_id)
-
-    sql += " ORDER BY m.date_mvt DESC LIMIT :limit"
-
-    try:
-        return query_df(sql, params=params)
-    except Exception as exc:
-        st.error(f"Impossible de charger les mouvements récents: {exc}")
-        return pd.DataFrame(columns=["date_mvt", "produit", "type", "quantite", "source"])
-
-
-@st.cache_data(ttl=60)
-def load_table_preview(table_name: str, limit: int = 20) -> pd.DataFrame:
-    allowed = {"produits", "produits_barcodes", "mouvements_stock"}
-    if table_name not in allowed:
-        raise ValueError(f"Table non autorisée pour l'aperçu: {table_name}")
-
-    try:
-        limit_value = max(1, int(limit))
-    except (TypeError, ValueError):
-        limit_value = 20
-
-    sql = f"SELECT * FROM public.{table_name} ORDER BY id DESC LIMIT {limit_value}"
-
-    try:
-        return query_df(sql)
-    except Exception as exc:
-        st.warning(f"Impossible de lire la table {table_name}: {exc}")
+    if not (_is_valid(schema) and _is_valid(name)):
+        st.warning("Invalid table name")
         return pd.DataFrame()
 
+    qualified_name = f"{schema}.{name}"
 
-@st.cache_data(ttl=60)
-def load_table_counts() -> pd.DataFrame:
-    sql = """
-        SELECT 'produits' AS table, COUNT(*) AS lignes FROM produits
-        UNION ALL
-        SELECT 'produits_barcodes' AS table, COUNT(*) AS lignes FROM produits_barcodes
-        UNION ALL
-        SELECT 'mouvements_stock' AS table, COUNT(*) AS lignes FROM mouvements_stock
-    """
-
+    sql = f"SELECT * FROM {qualified_name} ORDER BY id DESC LIMIT {safe_limit}"
     try:
         return query_df(sql)
-    except Exception as exc:
-        st.error(f"Impossible de compter les enregistrements des tables principales: {exc}")
-        return pd.DataFrame(columns=["table", "lignes"])
+    except Exception as exc:  # pragma: no cover - defensive, mirrors streamlit behaviour
+        st.error(str(exc))
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=60)
 def load_stock_diagnostics() -> pd.DataFrame:
-    sql = """
-        WITH stock_compare AS (
-            SELECT
-                p.id,
-                p.nom,
-                p.stock_actuel,
-                COALESCE(SUM(CASE
-                    WHEN m.type = 'ENTREE' THEN m.quantite
-                    WHEN m.type = 'SORTIE' THEN -m.quantite
-                    WHEN m.type = 'INVENTAIRE' THEN m.quantite
-                    WHEN m.type = 'TRANSFERT' THEN m.quantite
-                    ELSE 0
-                END), 0) AS stock_calcule
-            FROM produits p
-            LEFT JOIN mouvements_stock m ON m.produit_id = p.id
-            GROUP BY p.id, p.nom, p.stock_actuel
-        )
-        SELECT
-            id,
-            nom,
-            stock_actuel,
-            stock_calcule,
-            ROUND(stock_actuel - stock_calcule, 3) AS ecart
-        FROM stock_compare
-        WHERE ABS(stock_actuel - stock_calcule) > 0.001
-        ORDER BY ABS(stock_actuel - stock_calcule) DESC, nom
-    """
+    """Return the stock diagnostics ordered by discrepancy magnitude."""
 
+    sql = (
+        "SELECT id, nom, stock_actuel, stock_calcule, ecart "
+        "FROM public.stock_diagnostics "
+        "ORDER BY ABS(stock_actuel - stock_calcule) DESC, nom"
+    )
     try:
         return query_df(sql)
     except Exception as exc:
-        st.error(f"Impossible de calculer le diagnostic stock/mouvements: {exc}")
+        st.error(str(exc))
         return pd.DataFrame(columns=["id", "nom", "stock_actuel", "stock_calcule", "ecart"])
+def to_float(x, default: float = 0.0, minv: float | None = None, maxv: float | None = None) -> float:
+    """Convert monetary strings into floats while respecting optional bounds."""
+
+    if x is None:
+        return default
+
+    try:
+        if isinstance(x, float) and math.isnan(x):
+            return default
+    except Exception:
+        return default
+
+    sanitized = (
+        str(x)
+        .replace("€", "")
+        .replace("\xa0", "")
+        .replace(" ", "")
+        .replace(",", ".")
+        .strip()
+    )
+
+    try:
+        value = float(sanitized)
+    except Exception:
+        return default
+
+    if minv is not None:
+        value = max(value, minv)
+    if maxv is not None:
+        value = min(value, maxv)
+    return round(value, 4)
 
 
-# --- Registre centralisé pour l'invalidation des caches ---
-CACHE_REGISTRY: dict[str, Any] = {}
+def _reset_metro_invoice_state() -> None:
+    """Remove cached state for the Metro invoice price updater."""
+
+    st.session_state.pop("metro_invoice_df", None)
+    st.session_state.pop("metro_invoice_raw_text", None)
+    st.session_state.pop("metro_invoice_source_name", None)
 
 
-def register_cache(name: str, func) -> None:
-    """Enregistre une fonction cacheable pour l'invalidation orchestrée."""
+def _get_invoice_dataframe() -> pd.DataFrame | None:
+    """Return the currently cached Metro invoice dataframe if available."""
 
-    CACHE_REGISTRY[name] = func
+    invoice_df = st.session_state.get("metro_invoice_df")
+    if isinstance(invoice_df, pd.DataFrame) and not invoice_df.empty:
+        return invoice_df
+    return None
 
 
-def invalidate_data_caches(*names: str) -> None:
-    """Vide les caches ciblés afin de garder les vues synchronisées après une mise à jour."""
+def _display_invoice_preview(invoice_df: pd.DataFrame) -> None:
+    """Render a compact preview of the parsed invoice lines."""
 
-    if not names:
-        names = tuple(CACHE_REGISTRY.keys())
+    if invoice_df.empty:
+        return
 
-    for cache_name in names:
-        cache_func = CACHE_REGISTRY.get(cache_name)
-        if cache_func is None:
-            continue
-        try:
-            cache_func.clear()
-        except Exception as exc:
-            st.warning(
-                f"Impossible de vider le cache '{cache_name}'. Détail: {exc}",
-                icon="⚠️",
+    display_columns: List[str] = [
+        "nom",
+        "codes",
+        "qte_init",
+        "prix_achat",
+        "montant_total_facture",
+    ]
+    available_columns = [col for col in display_columns if col in invoice_df.columns]
+    st.dataframe(
+        invoice_df[available_columns],
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "nom": st.column_config.TextColumn("Produit"),
+            "codes": st.column_config.TextColumn("EAN"),
+            "qte_init": st.column_config.NumberColumn("Quantité", format="%.2f"),
+            "prix_achat": st.column_config.NumberColumn("Prix unitaire TTC (€)", format="%.2f"),
+            "montant_total_facture": st.column_config.NumberColumn(
+                "Montant total (€)", format="%.2f"
+            ),
+        },
+    )
+
+
+def render_invoice_price_update_tool() -> None:
+    """Standalone interface to update catalogue prices from a Metro invoice."""
+
+    st.title("Mise à jour des tarifs METRO")
+    st.write(
+        "Téléversez une facture METRO pour rapprocher automatiquement les produits du "
+        "catalogue grâce au code-barres EAN. Les prix de vente sont recalculés avec une "
+        "marge minimale de 40 % et appliqués uniquement si l'écart dépasse 10 % par rapport "
+        "aux tarifs actuels."
+    )
+
+    upload_col, text_col = st.columns(2)
+    uploaded_invoice = upload_col.file_uploader(
+        "Déposer la facture METRO (PDF, DOCX ou TXT)",
+        type=["pdf", "doc", "docx", "txt"],
+        key="metro_invoice_upload",
+    )
+    manual_text = text_col.text_area(
+        "Ou collez directement la section produits de la facture",
+        key="metro_invoice_text",
+        height=220,
+        placeholder="Collez le tableau des produits METRO ici...",
+    )
+
+    action_cols = st.columns([1, 1, 1])
+    analyse_clicked = action_cols[0].button("Analyser la facture", key="metro_invoice_analyse")
+    reset_clicked = action_cols[1].button("Réinitialiser", key="metro_invoice_reset")
+
+    if reset_clicked:
+        _reset_metro_invoice_state()
+        st.success("Facture réinitialisée. Déposez un nouveau fichier pour recommencer.")
+        st.rerun()
+
+    if analyse_clicked:
+        raw_text = ""
+        if uploaded_invoice is not None:
+            try:
+                raw_text = invoice_extractor.extract_text_from_file(uploaded_invoice) or ""
+                st.session_state["metro_invoice_source_name"] = uploaded_invoice.name
+            except Exception as exc:  # pragma: no cover - depends on optional deps
+                st.error(f"Impossible de lire le fichier de facture: {exc}")
+                raw_text = ""
+        elif manual_text.strip():
+            raw_text = manual_text
+
+        if not raw_text.strip():
+            st.warning("Veuillez fournir un fichier ou un texte de facture contenant des produits.")
+        else:
+            try:
+                parsed_df = invoice_extractor.extract_products_from_metro_invoice(raw_text)
+            except Exception as exc:  # pragma: no cover - dépend des entrées utilisateurs
+                st.error(f"Échec de l'analyse de la facture: {exc}")
+            else:
+                if parsed_df.empty:
+                    st.warning("Aucune ligne produit n'a été détectée dans la facture fournie.")
+                else:
+                    st.session_state["metro_invoice_df"] = parsed_df
+                    st.session_state["metro_invoice_raw_text"] = raw_text
+                    st.success(
+                        f"{len(parsed_df)} ligne(s) produit détectée(s) dans la facture METRO."
+                    )
+
+    invoice_df = _get_invoice_dataframe()
+    if invoice_df is None:
+        st.info(
+            "Déposez une facture METRO ou collez les lignes produits pour lancer la mise à jour "
+            "des tarifs."
+        )
+        return
+
+    st.subheader("Lignes de facture interprétées")
+    _display_invoice_preview(invoice_df)
+
+    plan = prepare_invoice_price_updates(
+        invoice_df,
+        min_margin=0.40,
+        delta_threshold=0.10,
+    )
+
+    if plan.get("errors"):
+        for error_message in plan.get("errors", []):
+            st.error(error_message)
+
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("Produits rapprochés", plan.get("product_count", 0))
+    summary_cols[1].metric("Mises à jour proposées", plan.get("updates_count", 0))
+    summary_cols[2].metric("Lignes analysées", plan.get("matched_line_count", 0))
+
+    updates_df = pd.DataFrame(plan.get("updates", []))
+    if updates_df.empty:
+        st.success("Aucun ajustement de prix n'est nécessaire : les tarifs actuels respectent la marge.")
+    else:
+        st.subheader("Tarifs à mettre à jour")
+        display_columns = [
+            "product_name",
+            "ean",
+            "current_purchase_price",
+            "invoice_unit_price",
+            "current_sale_price",
+            "proposed_sale_price",
+            "delta_percent",
+        ]
+        available_display = [col for col in display_columns if col in updates_df.columns]
+        st.dataframe(
+            updates_df[available_display],
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "product_name": st.column_config.TextColumn("Produit"),
+                "ean": st.column_config.TextColumn("EAN"),
+                "current_purchase_price": st.column_config.NumberColumn(
+                    "Achat actuel (€)", format="%.2f"
+                ),
+                "invoice_unit_price": st.column_config.NumberColumn(
+                    "Achat facture TTC (€)", format="%.2f"
+                ),
+                "current_sale_price": st.column_config.NumberColumn(
+                    "Vente actuelle (€)", format="%.2f"
+                ),
+                "proposed_sale_price": st.column_config.NumberColumn(
+                    "Vente proposée (€)", format="%.2f"
+                ),
+                "delta_percent": st.column_config.NumberColumn("Delta (%)", format="%.1f"),
+            },
+        )
+
+        if st.button("Appliquer les nouveaux tarifs", type="primary", key="metro_invoice_apply"):
+            with st.spinner("Mise à jour des tarifs en cours..."):
+                result = apply_invoice_price_updates(
+                    invoice_df,
+                    min_margin=0.40,
+                    delta_threshold=0.10,
+                )
+
+            applied = int(result.get("applied_updates", 0))
+            errors = result.get("errors", [])
+            if applied:
+                st.success(f"{applied} produit(s) ont été mis à jour selon la facture METRO.")
+                invalidate_data_caches(
+                    "products_list",
+                    "catalog",
+                    "trending",
+                    "product_options",
+                    "movement_timeseries",
+                    "recent_movements",
+                    "table_counts",
+                    "table_preview",
+                )
+            if errors:
+                for error_message in errors:
+                    st.error(error_message)
+
+    skipped_rows = plan.get("skipped", [])
+    if skipped_rows:
+        with st.expander("Produits conservés (écart inférieur à 10 %)"):
+            skipped_df = pd.DataFrame(skipped_rows)
+            keep_columns = [
+                "product_name",
+                "ean",
+                "current_sale_price",
+                "proposed_sale_price",
+                "delta_percent",
+                "reason",
+            ]
+            available = [col for col in keep_columns if col in skipped_df.columns]
+            st.dataframe(
+                skipped_df[available],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "current_sale_price": st.column_config.NumberColumn(
+                        "Vente actuelle (€)", format="%.2f"
+                    ),
+                    "proposed_sale_price": st.column_config.NumberColumn(
+                        "Vente proposée (€)", format="%.2f"
+                    ),
+                    "delta_percent": st.column_config.NumberColumn("Delta (%)", format="%.1f"),
+                },
             )
 
 
-# Inscription des caches existants
-register_cache("catalog", load_customer_catalog)
-register_cache("trending", load_trending_products)
-register_cache("product_options", cached_product_options)
-register_cache("products_list", load_products_list)
-register_cache("movement_timeseries", load_movement_timeseries)
-register_cache("recent_movements", load_recent_movements)
-register_cache("table_preview", load_table_preview)
-register_cache("table_counts", load_table_counts)
-register_cache("stock_diagnostics", load_stock_diagnostics)
+def render_app() -> None:  # pragma: no cover - entrypoint for ``streamlit run``
+    """Render the unified Streamlit application with Metro price updater."""
 
-# --- Classe Barcode Detector (pour le Scanner) ---
-class BarcodeDetector(VideoTransformerBase):
-    """Détecte les codes-barres dans chaque frame vidéo. Déclenche le Rerun Streamlit."""
-    
-    SKIP_FRAMES = 5
-    
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        st.session_state["current_frame_count"] += 1
-        
-        if st.session_state["current_frame_count"] % self.SKIP_FRAMES == 0:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            barcodes = decode(gray)
-            
-            for barcode in barcodes:
-                barcode_data = barcode.data.decode("utf-8")
-                
-                if st.session_state["last_barcode"] != barcode_data:
-                    st.session_state["last_barcode"] = barcode_data
-                    st.rerun() 
-                
-                (x, y, w, h) = barcode.rect
-                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                text = f"{barcode_data}"
-                cv2.putText(img, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        return img
+    st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="📦")
 
-
-# ==============================================================================
-# --- DÉBUT DU FLUX PRINCIPAL (CONTRÔLE D'ACCÈS) ---
-# ==============================================================================
-
-name, authentication_status, username = authenticator.login('Connexion à l\'Inventaire', 'main')
-
-if authentication_status:
-
-    # --- UI Setup et Définition des Onglets ---
-    st.session_state["user_role"] = credentials["usernames"][username]["role"]
-    st.session_state["username"] = username
-
-    st.title("📦 Inventaire — Gestion Complète")
-    st.sidebar.caption(f'Bienvenue, **{name}** (Rôle: **{st.session_state["user_role"]}**)')
-    theme_labels = list(_THEME_LABELS.keys())
-    current_theme_label = {
-        value: label for label, value in _THEME_LABELS.items()
-    }.get(st.session_state.get("ui_theme", "light"), theme_labels[0])
-    selected_label = st.sidebar.selectbox(
-        "Apparence",
-        options=theme_labels,
-        index=theme_labels.index(current_theme_label),
+    navigation = st.sidebar.radio(
+        "Navigation",
+        options=("Espace de pilotage", "Mise à jour tarifs METRO"),
+        index=0,
     )
     chosen_theme = _THEME_LABELS[selected_label]
     if chosen_theme != st.session_state.get("ui_theme"):
@@ -1382,6 +731,10 @@ if authentication_status:
     # Chargement des données (en cache)
     df_products = load_products_list()
 
+    if navigation == "Mise à jour tarifs METRO":
+        render_invoice_price_update_tool()
+    else:
+        render_workspace_app(configure_page=False)
 
     # ---------------- Vitrine ----------------
     with showcase_tab:
@@ -4717,21 +4070,14 @@ if authentication_status:
                         display_df.columns = ["ID", "Produit", "Stock actuel", "Stock calculé", "Écart"]
                         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-                    st.divider()
-                    st.caption("20 derniers mouvements toutes sources confondues.")
-                    diag_movements = load_recent_movements(limit=20, product_id=None)
-                    if diag_movements.empty:
-                        st.info("Aucun mouvement enregistré.")
-                    else:
-                        diag_movements = diag_movements.copy()
-                        diag_movements["date_mvt"] = pd.to_datetime(diag_movements["date_mvt"]).dt.strftime("%Y-%m-%d %H:%M")
-                        st.dataframe(diag_movements, use_container_width=True, hide_index=True)
+if __name__ == "__main__":  # pragma: no cover - entrypoint for ``streamlit run``
+    render_app()
 
-# ==============================================================================
-# --- FIN DU FLUX PRINCIPAL (Contrôle d'accès) ---
-# ==============================================================================
 
-elif authentication_status is False:
-    st.error('Nom d\'utilisateur/mot de passe incorrect.')
-elif authentication_status is None:
-    st.warning('Veuillez entrer votre nom d\'utilisateur et votre mot de passe.')
+__all__ = [
+    "load_stock_diagnostics",
+    "load_table_preview",
+    "render_app",
+    "render_invoice_price_update_tool",
+    "to_float",
+]

@@ -33,4 +33,11 @@ db_data/
 # Jetons ou mots de passe
 .env
 .env.local
+*.local.php
+*.save
 secrets.json
+
+# Front-end build artifacts
+frontend/node_modules/
+frontend/dist/
+backups/*.sql.gz

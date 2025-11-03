@@ -1,13 +1,16 @@
+import os
+import sys
+from pathlib import Path
+
 import pandas as pd
 import pandas.testing as pd_testing
 from sqlalchemy import text
 
-import sys
-from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 import data_repository
 
@@ -61,3 +64,39 @@ def test_query_df_retries_with_literal_sql(monkeypatch):
     assert executed["sql"].strip() == "SELECT 7 AS val"
     expected = pd.DataFrame([(7,)], columns=["val"])
     pd_testing.assert_frame_equal(df, expected)
+
+
+def test_build_engine_injects_search_path_for_postgres(monkeypatch):
+    captured: dict = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return "engine"
+
+    monkeypatch.setenv("DATABASE_SEARCH_PATH", "inventory , public")
+    monkeypatch.setattr(data_repository, "create_engine", fake_create_engine)
+
+    engine = data_repository._build_engine("postgresql+psycopg2://user:pass@localhost/db")
+
+    assert engine == "engine"
+    options = captured["kwargs"].get("connect_args", {}).get("options")
+    assert options is not None
+    assert options.endswith("inventory,public")
+
+
+def test_build_engine_ignores_search_path_for_sqlite(monkeypatch):
+    captured: dict = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return "engine"
+
+    monkeypatch.setenv("DATABASE_SEARCH_PATH", "inventory")
+    monkeypatch.setattr(data_repository, "create_engine", fake_create_engine)
+
+    engine = data_repository._build_engine("sqlite+pysqlite:///:memory:")
+
+    assert engine == "engine"
+    assert "connect_args" not in captured.get("kwargs", {})

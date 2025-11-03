@@ -2,7 +2,40 @@
 
 Application Streamlit pour la gestion d'inventaire d'une épicerie, avec
 chargement des produits depuis des fichiers CSV, suivi des ventes et tableau de
-bord interactif.
+bord interactif. Une API FastAPI et une interface React monopage complètent
+désormais l'application historique pour amorcer la migration vers une SPA.
+
+## Nouvelle couche PHP full-stack
+
+Le dossier `php-app/` introduit une architecture inspirée de Laravel pour la
+partie PHP historique :
+
+* **Routing structuré :** `routes/web.php` centralise toutes les routes web et
+  les associe à des contrôleurs (`App\Http\Controllers`).
+* **Vues Blade-like :** les gabarits `.blade.php` placés dans
+  `resources/views/` sont compilés avec un moteur maison qui gère sections,
+  composants et directives usuelles (`@extends`, `@component`, `@error`, etc.).
+* **Formulaires et validation :** `Framework\Validation\Validator` fournit des
+  règles simples (`required`, `email`, `min`) et les contrôleurs renvoient les
+  messages d'erreur localisés ainsi que les anciennes valeurs (`old()`).
+* **Livewire/Stimulus :** un contrôleur Stimulus (`product-filter`) apporte un
+  filtrage dynamique des produits via la route `POST /livewire/products/filter`
+  alimentée par `App\Http\Livewire\ProductFilter`.
+* **Internationalisation :** `resources/lang/{fr,en}/messages.php` contient les
+  traductions et l'utilisateur peut changer la langue via `/locale/{locale}`.
+
+### Lancer le serveur PHP
+
+```bash
+php -S 0.0.0.0:8080 -t php-app/public php-app/public/index.php
+```
+
+Vous obtenez alors :
+
+* Une page d'accueil SEO-friendly avec sections catalogue et CTA.
+* Un catalogue filtrable dynamiquement (Stimulus + requêtes AJAX).
+* Des fiches produits détaillées, un panier server-rendered et un formulaire de
+  contact validé côté serveur.
 
 ## État du projet
 
@@ -13,6 +46,12 @@ bord interactif.
   douce et chaleureuse à l'ensemble des composants Streamlit, et le fichier
   `.streamlit/config.toml` force l'utilisation du thème clair sur tous les
   environnements d'exécution.
+* **SPA React :** le dossier `frontend/` contient une application Vite + React
+  avec un router, un PoS minimal et une page dédiée aux outils Streamlit
+  conservés temporairement via une iframe.
+* **API REST :** `backend/main.py` expose un service FastAPI (`/health`,
+  `/products`, `/inventory/summary`, `/pos/checkout`, `/products/{id}`) qui
+  encapsule la logique métier existante.
 * **Workflows avancés :** les onglets _Plan d'approvisionnement dynamique_,
   _Audit & résolution d'écarts_, _Factures → Commandes_, _Qualité catalogue &
   codes-barres_ et _Sauvegardes & reprise d'activité_ embarquent des vues
@@ -20,9 +59,11 @@ bord interactif.
   assignation des écarts avec export CSV, rapprochement factures / réceptions,
   gouvernance des codes-barres et supervision des sauvegardes.
 
-Pour vérifier localement que tout fonctionne, exécutez simplement :
+Pour vérifier localement que tout fonctionne, installez d'abord les
+dépendances de développement puis lancez la suite de tests :
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
 ```
 
@@ -57,22 +98,46 @@ shell ouvert via `make shell`.
 
 ### Avec Docker (recommandé)
 
-1. Créez un fichier `.env` à partir de `env.prod.example` en adaptant les
+1. Créez un fichier `.env` à partir de `.env.example` (ou `env.prod.example` pour
+   une configuration prête pour la production) en adaptant les
    valeurs si nécessaire.
 2. Lancez la stack :
 
    ```bash
+   cp .env.example .env  # si vous ne l'avez pas encore fait
    make up
    ```
 
 3. Dès que les conteneurs sont démarrés, ouvrez un navigateur sur
    <http://localhost:8501> pour accéder à l'application Streamlit. La base
    PostgreSQL est exposée sur le port 5432 (définis dans `docker-compose.yml`).
+   L'API FastAPI écoute par défaut sur `http://localhost:8000` (commande
+   `uvicorn backend.main:app --reload`), et le front-end React sur
+   `http://localhost:5173` (`npm install && npm run dev` depuis `frontend/`).
 4. Pour arrêter et nettoyer les conteneurs :
 
    ```bash
    make down
    ```
+
+#### Déployer l'ensemble hébergeable
+
+Le fichier `docker-compose.prod.yml` décrit la stack complète (PostgreSQL,
+API FastAPI, interface Streamlit et SPA React). Les images utilisent le même
+Dockerfile avec un point d'entrée multi-process (`docker/entrypoint.sh`) qui
+sélectionne automatiquement le service à lancer via la variable `APP_PROCESS`.
+
+```bash
+cp env.prod.example .env  # personnalisez ensuite les valeurs
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Les ports exposés par défaut sont :
+
+* 5432 pour PostgreSQL
+* 8000 pour l'API FastAPI
+* 8501 pour Streamlit
+* 4173 pour l'aperçu du front React (build Vite)
 
 #### Mettre à jour le conteneur `app`
 
@@ -92,23 +157,72 @@ Cela garantit que le conteneur dispose bien des utilitaires comme
 `invoice_extractor.py` ou `cart_normalizer.py`, et évite tout décalage entre
 l'affichage local et l'image exécutée en production.
 
+### Pré-requis Streamlit
+
+Avant d'exécuter `streamlit run app.py`, assurez-vous que l'environnement
+dispose des éléments suivants :
+
+* **Variables d'environnement** :
+  * `DATABASE_URL` doit pointer vers l'instance PostgreSQL utilisée par
+    l'application (format `postgresql+psycopg2://USER:PASSWORD@HOST:PORT/DB`).
+  * `DATABASE_SEARCH_PATH` (optionnel) permet de forcer le `search_path`
+    PostgreSQL utilisé par l'API (`inventory,public` par exemple) lorsque les
+    tables / vues sont exposées dans un schéma dédié.
+  * `AUTH_SECRET_KEY` doit contenir au minimum 32 caractères afin que
+    l'authentification via `streamlit-authenticator` et l'API FastAPI puissent
+    signer / vérifier les jetons.
+* **Bibliothèques natives** : certaines dépendances Python requièrent des
+  bibliothèques système au moment de l'import. Vérifiez notamment la présence
+  de `libgl1`, `libglib2.0-0` (utilisées par OpenCV / `cv2`), `libzbar0`
+  (lecture de codes-barres via `pyzbar`) et `ffmpeg` (capture vidéo WebRTC).
+  Sans elles, Streamlit lèvera des erreurs au démarrage de `app.py`.
+
 ### En local (hors Docker)
 
-1. Créez et activez un environnement virtuel Python 3.11.
-2. Installez les dépendances :
+1. Créez et activez un environnement virtuel Python 3.11. Sur Debian/Ubuntu
+   récents (PEP 668), évitez l'option `--break-system-packages` et préférez un
+   environnement isolé :
 
    ```bash
-   pip install -r requirements.txt
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install --upgrade pip
    ```
 
+2. Installez les dépendances applicatives et de test :
+
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
+   (Ce fichier inclut `requirements.txt` et ajoute les outils de test comme
+   `pytest`.)
+
 3. Exportez les variables d'environnement nécessaires (voir `env.prod.example`
-   pour la liste complète) ou créez un fichier `.streamlit/secrets.toml`.
+   pour la liste complète) — en particulier `DATABASE_URL` et un
+   `AUTH_SECRET_KEY` d'au moins 32 caractères — ou créez un fichier
+   `.streamlit/secrets.toml`.
 4. Démarrez l'application puis ouvrez votre navigateur sur
    <http://localhost:8501> :
 
    ```bash
    streamlit run app.py
    ```
+
+5. Dans un autre terminal, démarrez l'API puis la SPA :
+
+   ```bash
+   uvicorn backend.main:app --reload --port 8000
+   cd frontend && npm install && npm run dev
+   ```
+
+   La SPA est disponible sur <http://localhost:5173> et communique avec
+   l'ancienne application via l'iframe « Outils Streamlit » tant que certaines
+   fonctionnalités n'ont pas été portées.
+
+   > ℹ️ Si `uvicorn` signale l'absence du module `fastapi`, (ré)exécutez
+   > `pip install -r requirements.txt` ou `pip install -r requirements-dev.txt`
+   > dans l'environnement virtuel actif avant de relancer le serveur.
 
 ### Importer des produits
 
