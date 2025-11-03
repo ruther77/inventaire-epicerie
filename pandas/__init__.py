@@ -13,7 +13,9 @@ API closely enough for the tests to interact with them naturally.
 
 from __future__ import annotations
 
+import csv
 from collections import OrderedDict, namedtuple
+from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
 
@@ -41,6 +43,12 @@ class _StringMethods:
 
     def lower(self) -> "Series":
         return self._apply(lambda value: str(value).lower())
+
+    def startswith(self, prefix: str) -> "Series":
+        return Series([
+            str(value).startswith(prefix) if value is not None else False
+            for value in self._series._data
+        ])
 
 
 class _ILocAccessor:
@@ -173,7 +181,19 @@ class DataFrame:
 
         if data:
             for row in data:
-                copied = dict(row)
+                if isinstance(row, dict):
+                    copied = dict(row)
+                else:
+                    if columns is None:
+                        raise TypeError("columns must be provided when rows are not mappings")
+                    try:
+                        values = list(row)
+                    except TypeError as exc:  # pragma: no cover - defensive guard
+                        raise TypeError("rows must be iterable") from exc
+                    if len(values) != len(columns):
+                        raise ValueError("row has a different length than columns")
+                    copied = {column: value for column, value in zip(columns, values)}
+
                 self._rows.append(copied)
                 for key in copied:
                     if key not in self._columns:
@@ -230,6 +250,10 @@ class DataFrame:
 
     def copy(self) -> "DataFrame":
         return DataFrame([dict(row) for row in self._rows], columns=self._columns)
+
+    def iterrows(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        for index, row in enumerate(self._rows):
+            yield index, dict(row)
 
     def to_dict(self, orient: str = "records") -> list[dict[str, Any]]:
         if orient != "records":  # pragma: no cover - defensive
@@ -375,6 +399,8 @@ class _LocIndexer:
             raise TypeError("loc indexer requires row and column selectors")
         row_selector, column_selector = key
 
+        single_row = False
+
         if isinstance(row_selector, slice) and row_selector == slice(None, None, None):
             base_rows = list(self._dataframe._rows)
         elif isinstance(row_selector, Series):
@@ -384,6 +410,7 @@ class _LocIndexer:
             base_rows = [self._dataframe._rows[index] for index in row_selector]
         elif isinstance(row_selector, int):
             base_rows = [self._dataframe._rows[row_selector]]
+            single_row = True
         elif row_selector in (None, True):
             base_rows = list(self._dataframe._rows)
         else:
@@ -394,11 +421,36 @@ class _LocIndexer:
         if column_selector is None or (isinstance(column_selector, slice) and column_selector == slice(None, None, None)):
             return base_df
         if isinstance(column_selector, str):
-            return base_df[column_selector]
+            series = base_df[column_selector]
+            if single_row:
+                return series._data[0] if series._data else None
+            return series
         if isinstance(column_selector, list):
             return base_df[column_selector]
 
         raise TypeError(f"Unsupported column selector for loc: {type(column_selector)!r}")
+
+
+def read_csv(path: str | Path, *, sep: str = ",", delimiter: str | None = None, encoding: str = "utf-8", **_: Any) -> DataFrame:
+    """Read a CSV file into a :class:`DataFrame`.
+
+    Only the minimal behaviour required by the tests is implemented.  Keyword
+    arguments beyond *sep*, *delimiter* and *encoding* are accepted for
+    compatibility but ignored.
+    """
+
+    csv_path = Path(path)
+    actual_delimiter = delimiter if delimiter is not None else sep
+
+    with csv_path.open(encoding=encoding, newline="") as handle:
+        reader = csv.reader(handle, delimiter=actual_delimiter)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return DataFrame(columns=[])
+
+        rows = [{column: value for column, value in zip(header, values)} for values in reader]
+        return DataFrame(rows, columns=header)
 
 
 def to_numeric(values: Series | Iterable[Any], *, errors: str = "raise") -> Series:
@@ -422,4 +474,4 @@ def to_numeric(values: Series | Iterable[Any], *, errors: str = "raise") -> Seri
     return Series(result)
 
 
-__all__ = ["DataFrame", "Series", "to_numeric"]
+__all__ = ["DataFrame", "Series", "read_csv", "to_numeric"]
