@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Iterable, TYPE_CHECKING
@@ -20,6 +21,7 @@ from domain.sales import (
     process_sale_transaction as domain_process_sale_transaction,
     set_sale_service as domain_set_sale_service,
 )
+from domain import update_catalog_entry
 from services import SaleService, SavedViewsService, as_decimal, normalise_quantity
 from telemetry import get_tracer
 
@@ -284,5 +286,262 @@ def register_invoice_reception(
         span.set_attribute("imports.movements_created", summary["movements_created"])
         span.set_attribute("imports.quantity_total", summary["quantity_total"])
         return summary
+
+
+def prepare_invoice_price_updates(
+    invoice_df: "pd.DataFrame",
+    *,
+    min_margin: float = 0.4,
+    delta_threshold: float = 0.1,
+) -> dict[str, object]:
+    """Return a plan describing catalogue price updates based on an invoice."""
+
+    pd = _require_pandas()
+
+    summary: dict[str, object] = {
+        "line_count": 0,
+        "matched_line_count": 0,
+        "product_count": 0,
+        "updates": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    if not isinstance(invoice_df, pd.DataFrame) or invoice_df.empty:
+        return summary
+
+    working_df = invoice_df.copy()
+    summary["line_count"] = len(working_df)
+
+    if "codes" not in working_df.columns:
+        summary["errors"].append("Colonne 'codes' absente de la facture.")
+        return summary
+
+    working_df["_code_lower"] = (
+        working_df["codes"].fillna("").astype(str).str.strip().str.lower()
+    )
+    working_df = working_df[working_df["_code_lower"] != ""]
+    if working_df.empty:
+        return summary
+
+    try:
+        matches_df = match_invoice_products(working_df)
+    except Exception as exc:  # pragma: no cover - instrumentation/logging via tracer
+        summary["errors"].append(str(exc))
+        return summary
+
+    if matches_df.empty:
+        return summary
+
+    matches_df = matches_df.copy()
+    if "code" not in matches_df.columns:
+        summary["errors"].append("Aucun code-barres n'a pu être rapproché.")
+        return summary
+
+    matches_df["code"] = matches_df["code"].astype(str).str.strip().str.lower()
+    combined_df = working_df.merge(
+        matches_df,
+        left_on="_code_lower",
+        right_on="code",
+        how="left",
+        suffixes=("", "_catalogue"),
+    )
+
+    matched_rows = combined_df[combined_df["produit_id"].notna()].copy()
+    summary["matched_line_count"] = int(len(matched_rows))
+    if matched_rows.empty:
+        return summary
+
+    matched_rows["produit_id"] = matched_rows["produit_id"].astype(int)
+    product_ids = sorted(matched_rows["produit_id"].unique().tolist())
+    summary["product_count"] = len(product_ids)
+    if not product_ids:
+        return summary
+
+    placeholders = ", ".join(f":pid{i}" for i, _ in enumerate(product_ids))
+    params = {f"pid{i}": pid for i, pid in enumerate(product_ids)}
+    price_sql = (
+        "SELECT id, COALESCE(prix_achat, 0) AS prix_achat, "
+        "COALESCE(prix_vente, 0) AS prix_vente "
+        "FROM produits WHERE id IN (" + placeholders + ")"
+    )
+
+    price_df = query_df(price_sql, params=params)
+    price_map: dict[int, dict[str, float]] = {}
+    for row in price_df.to_dict("records"):
+        try:
+            pid = int(row["id"])
+        except (TypeError, ValueError):
+            continue
+        price_map[pid] = {
+            "prix_achat": float(row.get("prix_achat", 0) or 0.0),
+            "prix_vente": float(row.get("prix_vente", 0) or 0.0),
+        }
+
+    updates: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+
+    quantity_columns = ("quantite_recue", "qte_init", "quantite", "qty")
+    unit_price_columns = ("prix_achat_facture", "prix_achat", "prix_vente")
+    total_columns = ("montant_total_facture", "montant", "total_ligne")
+
+    for product_id, group in matched_rows.groupby("produit_id", sort=False):
+        product_label = ""
+        name_candidates = [
+            group.get("produit_nom"),
+            group.get("catalogue_nom"),
+            group.get("nom"),
+        ]
+        for candidate in name_candidates:
+            if candidate is None:
+                continue
+            if hasattr(candidate, "dropna"):
+                cleaned = candidate.dropna()
+                if cleaned.empty:
+                    continue
+                value = str(cleaned.iloc[0]).strip()
+            else:
+                value = str(candidate or "").strip()
+            if value:
+                product_label = value
+                break
+
+        codes = [str(code).strip() for code in group["codes"].tolist() if str(code).strip()]
+        ean = ", ".join(sorted({code for code in codes if code}))
+
+        quantity_series = None
+        for column in quantity_columns:
+            if column in group.columns:
+                series = pd.to_numeric(group[column], errors="coerce").fillna(0.0)
+                if series.any():
+                    quantity_series = series
+                    break
+        if quantity_series is None:
+            quantity_series = pd.Series([0.0] * len(group))
+
+        total_series = None
+        for column in total_columns:
+            if column in group.columns:
+                series = pd.to_numeric(group[column], errors="coerce").fillna(0.0)
+                if series.any():
+                    total_series = series
+                    break
+
+        unit_series = None
+        for column in unit_price_columns:
+            if column in group.columns:
+                series = pd.to_numeric(group[column], errors="coerce").fillna(0.0)
+                if series.any():
+                    unit_series = series
+                    break
+        if unit_series is None:
+            unit_series = pd.Series([0.0] * len(group))
+
+        quantity_total = float(quantity_series.sum())
+        amount_total = float(total_series.sum()) if total_series is not None else 0.0
+
+        if quantity_total > 0 and amount_total > 0:
+            invoice_unit_price = amount_total / quantity_total
+        else:
+            positive_units = unit_series[unit_series > 0]
+            invoice_unit_price = float(positive_units.mean()) if not positive_units.empty else 0.0
+
+        if invoice_unit_price <= 0:
+            skipped.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product_label,
+                    "ean": ean,
+                    "reason": "Prix facture indisponible",
+                }
+            )
+            continue
+
+        current_prices = price_map.get(product_id, {"prix_achat": 0.0, "prix_vente": 0.0})
+        current_purchase = float(current_prices.get("prix_achat", 0.0) or 0.0)
+        current_sale = float(current_prices.get("prix_vente", 0.0) or 0.0)
+
+        proposed_sale = round(invoice_unit_price * (1.0 + max(min_margin, 0.0)), 2)
+        proposed_purchase = round(invoice_unit_price, 4)
+
+        if current_sale <= 0:
+            delta_ratio = float("inf")
+        else:
+            delta_ratio = abs(proposed_sale - current_sale) / max(current_sale, 1e-9)
+
+        should_update = delta_ratio >= max(delta_threshold, 0.0) or current_sale <= 0
+
+        entry = {
+            "product_id": int(product_id),
+            "product_name": product_label,
+            "ean": ean,
+            "invoice_unit_price": round(invoice_unit_price, 4),
+            "proposed_sale_price": proposed_sale,
+            "proposed_purchase_price": proposed_purchase,
+            "current_purchase_price": round(current_purchase, 4),
+            "current_sale_price": round(current_sale, 2),
+            "delta_ratio": float(delta_ratio),
+            "delta_percent": (float(delta_ratio) * 100.0 if math.isfinite(delta_ratio) else None),
+            "quantity_total": quantity_total,
+            "line_count": int(len(group)),
+        }
+
+        if should_update:
+            updates.append(entry)
+        else:
+            entry_with_reason = dict(entry)
+            entry_with_reason["reason"] = "Delta inférieur au seuil"
+            skipped.append(entry_with_reason)
+
+    summary["updates"] = updates
+    summary["skipped"] = skipped
+    summary["updates_count"] = len(updates)
+    summary["skipped_count"] = len(skipped)
+    return summary
+
+
+def apply_invoice_price_updates(
+    invoice_df: "pd.DataFrame",
+    *,
+    min_margin: float = 0.4,
+    delta_threshold: float = 0.1,
+) -> dict[str, object]:
+    """Apply catalogue price updates computed from an invoice."""
+
+    plan = prepare_invoice_price_updates(
+        invoice_df,
+        min_margin=min_margin,
+        delta_threshold=delta_threshold,
+    )
+
+    updates = plan.get("updates", []) if isinstance(plan, dict) else []
+    applied = 0
+    errors: list[str] = []
+
+    for entry in updates:
+        product_id = entry.get("product_id")
+        proposed_purchase = entry.get("proposed_purchase_price")
+        proposed_sale = entry.get("proposed_sale_price")
+        if product_id in (None, ""):
+            continue
+        if proposed_purchase in (None, "") or proposed_sale in (None, ""):
+            continue
+        try:
+            update_catalog_entry(
+                int(product_id),
+                {
+                    "prix_achat": float(proposed_purchase),
+                    "prix_vente": float(proposed_sale),
+                },
+                None,
+            )
+            applied += 1
+        except Exception as exc:  # pragma: no cover - surface détaillée pour l'UI
+            errors.append(f"Produit {product_id}: {exc}")
+
+    plan["applied_updates"] = applied
+    plan["errors"] = list(plan.get("errors", [])) + errors
+    return plan
+
 
 # Ajoutez d'autres fonctions de service ici (ex: adjust_stock, create_product_with_barcode)
