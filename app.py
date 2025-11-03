@@ -62,6 +62,181 @@ from product_service import (
     ProductNotFoundError,
     InvalidBarcodeError,
 )
+# --- Helpers Mise à jour prix via METRO ---
+
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
+
+# On réutilise la carto TVA du module d'extraction METRO
+# (codes A,B,...,X,Y,Z -> taux) si dispo
+try:
+    from invoice_extractor import DEFAULT_TVA_CODE_MAP  # :contentReference[oaicite:0]{index=0}
+except Exception:
+    DEFAULT_TVA_CODE_MAP = {}
+
+def _dec(x) -> Decimal:
+    try:
+        return Decimal(str(x)).quantize(Decimal("0.0001"))
+    except Exception:
+        return Decimal("0.0")
+
+def _pct_delta(old: Decimal, new: Decimal) -> Decimal:
+    if old <= 0:
+        return Decimal("1") if new > 0 else Decimal("0")
+    return (new - old).copy_abs() / old
+
+def _round_price_eur(x: Decimal) -> Decimal:
+    return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+def _tva_rate_from_code(code: Optional[str], default_tva: float = 20.0) -> Decimal:
+    if not code:
+        return _dec(default_tva)
+    rate = DEFAULT_TVA_CODE_MAP.get(str(code).strip().upper(), default_tva)
+    return _dec(rate)
+
+def compute_unit_cost_ttc(row: dict, default_tva: float = 20.0) -> Decimal:
+    """
+    Calcule le prix de revient unitaire TTC à partir d'une ligne facture METRO.
+    Champs attendus (si dispo) : 
+        - 'Prix Unitaire (Achat)' OU 'prix_unitaire'
+        - 'Quantité' OU 'qte' OU 'qte_init'
+        - 'Montant Total' OU 'montant'
+        - 'Code TVA' OU 'tva_code'
+        - 'Colisage' (facultatif)
+    Règle : si 'Prix Unitaire (Achat)' est TTC, on le prend tel quel.
+            Sinon on reconstruit depuis Montant/Quantité ou applique la TVA.
+    """
+    # champs nombreux/variants -> on normalise
+    pu = row.get("Prix Unitaire (Achat)") or row.get("prix_unitaire") or row.get("pu")
+    qty = row.get("Quantité") or row.get("qte") or row.get("qte_init") or 1
+    montant = row.get("Montant Total") or row.get("montant")
+    tva_code = row.get("Code TVA") or row.get("tva_code")
+    colisage = row.get("Colisage") or row.get("colisage") or 1
+
+    pu = _dec(pu)
+    qty = _dec(qty)
+    colisage = _dec(colisage)
+    tva_rate = _tva_rate_from_code(tva_code, default_tva=default_tva)
+
+    # Si on a le montant total, il prime (plus robuste aux arrondis)
+    if montant is not None:
+        total = _dec(montant)
+        # nombre d'unités vendables = qty * colisage si la facture exprime un paquet
+        units = (qty if qty > 0 else Decimal("1")) * (colisage if colisage > 0 else Decimal("1"))
+        if units > 0:
+            unit_ttc = total / units
+            return _round_price_eur(unit_ttc)
+
+    # sinon on part du prix unitaire supposé TTC, sinon on le grossit avec TVA
+    unit_ttc = pu
+    if unit_ttc <= 0:
+        return Decimal("0.00")
+
+    # Si ton prix unitaire est parfois HT, décommente la ligne ci-dessous pour le convertir en TTC :
+    # unit_ttc = _round_price_eur(unit_ttc * (Decimal("1") + (tva_rate/Decimal("100"))))
+
+    return _round_price_eur(unit_ttc)
+
+def update_prices_from_invoice_df(df: pd.DataFrame,
+                                  *,
+                                  delta_threshold: float = 0.10,
+                                  min_margin: float = 0.40,
+                                  default_tva: float = 20.0) -> dict:
+    """
+    Met à jour prix_achat / prix_vente selon la facture.
+    - Recherche produit via EAN (produits_barcodes.code)
+    - prix_achat := coût unitaire TTC calculé
+    - prix_vente := max(coût / (1 - min_margin), 0)
+    - Ne met à jour que si delta >= delta_threshold (sur le prix de vente)
+    """
+    summary = {"rows": 0, "matched": 0, "updated": 0, "skipped": 0, "not_found": 0, "errors": []}
+    if df is None or df.empty:
+        return summary
+
+    # colonnes candidates pour EAN/Désignation/TVA…
+    cand_ean = [c for c in df.columns if c.lower() in {"ean", "code", "barcode", "codes"}]
+    cand_tva = [c for c in df.columns if "tva" in c.lower()]
+    summary["rows"] = int(len(df))
+
+    eng = get_engine()  # :contentReference[oaicite:1]{index=1}
+    threshold = Decimal(str(delta_threshold))
+    margin = Decimal(str(min_margin))
+
+    with eng.begin() as conn:
+        for _, row in df.iterrows():
+            try:
+                # 1) EAN
+                ean = None
+                for col in cand_ean:
+                    val = str(row.get(col) or "").strip()
+                    if val:
+                        # si "codes" contient plusieurs codes, on prend le premier
+                        ean = val.split(",")[0].split(";")[0].split()[0]
+                        ean = ean.strip()
+                        break
+                if not ean:
+                    summary["skipped"] += 1
+                    continue
+
+                # 2) coût unitaire TTC
+                cost_ttc = compute_unit_cost_ttc(row.to_dict(), default_tva=default_tva)
+                if cost_ttc <= 0:
+                    summary["skipped"] += 1
+                    continue
+
+                # 3) retrouver le produit via produits_barcodes
+                found = conn.execute(
+                    text("""
+                        SELECT p.id, p.prix_achat, p.prix_vente
+                        FROM produits p
+                        JOIN produits_barcodes pb ON pb.produit_id = p.id
+                        WHERE lower(pb.code) = lower(:ean)
+                        LIMIT 1
+                    """),
+                    {"ean": ean},
+                ).fetchone()  # :contentReference[oaicite:2]{index=2}
+
+                if not found:
+                    summary["not_found"] += 1
+                    continue
+
+                pid = int(found.id)
+                old_achat = _dec(found.prix_achat or 0)
+                old_vente = _dec(found.prix_vente or 0)
+
+                # 4) nouveau PV avec marge min
+                if margin >= Decimal("1") or margin <= Decimal("0"):
+                    margin = Decimal("0.40")
+                pv_min = (cost_ttc / (Decimal("1") - margin)) if (Decimal("1") - margin) > 0 else cost_ttc
+                new_vente = _round_price_eur(pv_min)
+
+                # 5) seuil d’update : delta sur prix de vente
+                delta = _pct_delta(old_vente, new_vente)
+                if delta < threshold:
+                    summary["matched"] += 1
+                    summary["skipped"] += 1
+                    continue
+
+                # 6) appliquer la mise à jour (prix achat TTC + prix vente)
+                conn.execute(
+                    text("""
+                        UPDATE produits
+                        SET prix_achat = :pa,
+                            prix_vente = :pv,
+                            updated_at = now()
+                        WHERE id = :pid
+                    """),
+                    {"pa": float(cost_ttc), "pv": float(new_vente), "pid": pid},  # types simples
+                )
+                summary["matched"] += 1
+                summary["updated"] += 1
+
+            except Exception as exc:
+                summary["errors"].append(str(exc))
+                continue
+
+    return summary
+
 
 # --- FONCTION POUR CHARGER LE CSS EXTERNE (style.css) ---
 def local_css(file_name):
@@ -1187,6 +1362,7 @@ if authentication_status:
         scanner_tab,
         extract_tab,
         import_tab,
+        metro_price_tab,
         admin_tab,
     ) = st.tabs([
         "Vitrine",
@@ -1199,6 +1375,7 @@ if authentication_status:
         "Scanner",
         "Extraction Facture",
         "Importation",
+        "MAJ Prix METRO",
         "Maintenance (Admin)",
     ])
 
@@ -3972,6 +4149,226 @@ if authentication_status:
                     st.dataframe(errors_df, hide_index=True, use_container_width=True)
                 else:
                     st.success("Toutes les lignes valides ont été importées avec succès.")
+
+
+
+# Ajout à faire dans app.py après la section "Importation" et avant "Maintenance (Admin)"
+
+    # ---------------- Mise à jour Prix METRO ----------------
+    
+    with st.container():
+        st.header("📊 Mise à jour des prix via facture METRO")
+        
+        if st.session_state.get("user_role") != "admin":
+            st.error("Accès refusé. Seuls les administrateurs peuvent mettre à jour les prix.")
+        else:
+            render_workspace_hero(
+                eyebrow="Gestion tarifaire",
+                title="Ajustez vos prix depuis les factures METRO",
+                description="Analysez automatiquement vos factures fournisseur et mettez à jour les prix d'achat et de vente en garantissant vos marges.",
+                badges=["Automatisation", "Contrôle des marges"],
+                metrics=[
+                    {"label": "Seuil correction", "value": "10%", "hint": "Écart minimum"},
+                    {"label": "Marge garantie", "value": "40%", "hint": "Minimum appliqué"},
+                ],
+                tone="amber",
+            )
+
+            with workspace_panel(
+                "Configuration de l'analyse",
+                "Définissez les paramètres de calcul et les seuils de mise à jour.",
+                icon="⚙️",
+                accent="amber",
+            ):
+                config_cols = st.columns([1, 1, 1])
+                
+                with config_cols[0]:
+                    default_tva_val = st.number_input(
+                        "TVA par défaut (%)",
+                        min_value=0.0,
+                        max_value=50.0,
+                        value=20.0,
+                        step=0.5,
+                        key="metro_default_tva",
+                        help="TVA appliquée si non détectée dans la facture"
+                    )
+                
+                with config_cols[1]:
+                    delta_threshold_pct = st.slider(
+                        "Seuil de correction (%)",
+                        min_value=0,
+                        max_value=50,
+                        value=10,
+                        step=1,
+                        key="metro_delta_threshold",
+                        help="Écart minimum pour déclencher une mise à jour"
+                    )
+                
+                with config_cols[2]:
+                    min_margin_pct = st.slider(
+                        "Marge minimale garantie (%)",
+                        min_value=0,
+                        max_value=80,
+                        value=40,
+                        step=1,
+                        key="metro_min_margin",
+                        help="Marge commerciale minimum à respecter"
+                    )
+
+            with workspace_panel(
+                "Import de la facture",
+                "Téléversez votre facture METRO ou collez directement le texte.",
+                icon="📄",
+                accent="amber",
+            ):
+                upload_col, text_col = st.columns([1, 1])
+                
+                with upload_col:
+                    uploaded_metro = st.file_uploader(
+                        "Importer facture METRO",
+                        type=["pdf", "docx", "txt"],
+                        key="metro_price_update_uploader",
+                        help="Formats supportés : PDF, DOCX, TXT"
+                    )
+                
+                with text_col:
+                    raw_metro_text = st.text_area(
+                        "...ou coller le texte de la facture",
+                        height=200,
+                        key="metro_price_update_text",
+                        placeholder="Collez ici le contenu de la facture..."
+                    )
+
+            analyze_col, preview_col = st.columns([1, 2])
+            
+            with analyze_col:
+                run_analysis = st.button(
+                    "🔍 Analyser & Mettre à jour",
+                    type="primary",
+                    use_container_width=True,
+                    key="metro_run_analysis"
+                )
+
+            if run_analysis:
+                # 1) Récupérer le texte source
+                invoice_text = ""
+                
+                if uploaded_metro is not None:
+                    try:
+                        with st.spinner("Extraction du texte en cours..."):
+                            invoice_text = invoice_extractor.extract_text_from_file(uploaded_metro)
+                    except Exception as exc:
+                        st.error(f"❌ Erreur lors de la lecture de la facture : {exc}")
+                
+                if not invoice_text and raw_metro_text:
+                    invoice_text = raw_metro_text.strip()
+
+                if not invoice_text:
+                    st.warning("⚠️ Aucun contenu exploitable. Vérifiez le fichier ou le texte collé.")
+                else:
+                    # 2) Extraire les produits
+                    try:
+                        with st.spinner("Extraction des lignes produits..."):
+                            df_metro = invoice_extractor.extract_products_from_metro_invoice(invoice_text)
+                    except Exception as exc:
+                        st.error(f"❌ Erreur lors de l'extraction des lignes METRO : {exc}")
+                        df_metro = None
+
+                    if df_metro is None or df_metro.empty:
+                        st.warning("⚠️ Aucune ligne produit détectée dans la facture.")
+                    else:
+                        st.success(f"✅ {len(df_metro)} ligne(s) produit détectée(s).")
+                        
+                        with workspace_panel(
+                            "Aperçu des lignes extraites",
+                            "Vérifiez les données avant la mise à jour.",
+                            icon="👁️",
+                            accent="amber",
+                        ):
+                            preview_df = df_metro.head(50).copy()
+                            
+                            # Colonnes à afficher
+                            display_cols = []
+                            for col in ["nom", "codes", "Prix Unitaire (Achat)", "prix_unitaire", "pu", 
+                                       "Quantité", "qte", "Montant Total", "montant", "Code TVA", "tva_code"]:
+                                if col in preview_df.columns:
+                                    display_cols.append(col)
+                            
+                            if display_cols:
+                                st.dataframe(
+                                    preview_df[display_cols],
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            else:
+                                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+                        # 3) Appliquer la logique de mise à jour
+                        with st.spinner("Analyse et mise à jour des prix en cours..."):
+                            result = update_prices_from_invoice_df(
+                                df_metro,
+                                delta_threshold=float(delta_threshold_pct) / 100.0,
+                                min_margin=float(min_margin_pct) / 100.0,
+                                default_tva=float(default_tva_val),
+                            )
+
+                        # 4) Afficher les résultats
+                        with workspace_panel(
+                            "Résultat de la mise à jour",
+                            "Synthèse des modifications appliquées.",
+                            icon="✅",
+                            accent="emerald",
+                        ):
+                            result_cols = st.columns(5)
+                            result_cols[0].metric("Lignes lues", f"{result.get('rows', 0):,}".replace(",", " "))
+                            result_cols[1].metric("Produits associés", f"{result.get('matched', 0):,}".replace(",", " "))
+                            result_cols[2].metric("✅ Mis à jour", f"{result.get('updated', 0):,}".replace(",", " "))
+                            result_cols[3].metric("⏭️ Ignorés", f"{result.get('skipped', 0):,}".replace(",", " "))
+                            result_cols[4].metric("❓ Introuvables", f"{result.get('not_found', 0):,}".replace(",", " "))
+
+                            if result.get('updated', 0) > 0:
+                                st.success(
+                                    f"🎉 {result['updated']} produit(s) mis à jour avec succès ! "
+                                    f"Les prix d'achat et de vente ont été ajustés en respectant la marge de {min_margin_pct}%."
+                                )
+                                
+                                # Invalider les caches
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                )
+                            elif result.get('skipped', 0) > 0:
+                                st.info(
+                                    f"ℹ️ Tous les produits associés ({result['skipped']}) sont déjà à jour. "
+                                    f"Aucun écart >= {delta_threshold_pct}% détecté."
+                                )
+                            
+                            if result.get('not_found', 0) > 0:
+                                st.warning(
+                                    f"⚠️ {result['not_found']} produit(s) n'ont pas été trouvés dans le catalogue. "
+                                    f"Vérifiez que les codes-barres sont bien enregistrés."
+                                )
+
+                            # Affichage des erreurs si présentes
+                            if result.get("errors"):
+                                with st.expander(f"⚠️ Détails des erreurs ({len(result['errors'])})"):
+                                    for idx, error in enumerate(result["errors"], 1):
+                                        st.write(f"{idx}. {error}")
+
+                            # Statistiques détaillées
+                            if result.get('matched', 0) > 0:
+                                with st.expander("📊 Statistiques détaillées"):
+                                    stat_info = f"""
+                                    **Taux de correspondance :** {(result['matched'] / result['rows'] * 100):.1f}%  
+                                    **Taux de mise à jour :** {(result['updated'] / result['matched'] * 100) if result['matched'] > 0 else 0:.1f}% des produits associés  
+                                    **Seuil appliqué :** Écart >= {delta_threshold_pct}%  
+                                    **Marge garantie :** {min_margin_pct}% minimum  
+                                    **TVA par défaut :** {default_tva_val}%
+                                    """
+                                    st.markdown(stat_info)
+
 
     # ---------------- Maintenance (Admin) ----------------
 
