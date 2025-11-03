@@ -195,6 +195,8 @@ a:focus {
     flex-direction: column;
     gap: 0;
     padding: 0;
+    position: relative;
+    z-index: 40;
 }
 
 .app-header--asos .asos-header__top {
