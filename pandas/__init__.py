@@ -507,4 +507,7 @@ def read_csv(path_or_buffer, sep: str = ",") -> DataFrame:
     return DataFrame(rows, columns=header)
 
 
-__all__ = ["DataFrame", "Series", "to_numeric", "read_csv"]
+from . import testing  # noqa: E402  # placed at end to avoid circular import
+
+
+__all__ = ["DataFrame", "Series", "to_numeric", "read_csv", "testing"]
