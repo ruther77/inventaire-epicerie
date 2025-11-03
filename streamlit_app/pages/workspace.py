@@ -313,7 +313,7 @@ def render_workspace_overview(
                     );
                     if (activeIndex >= 0) {
                         const activeLink = hero.querySelector(
-                            `[data-tab-target="${activeIndex}"][data-page-key]`
+                            `[data-tab-target="${{activeIndex}}"][data-page-key]`
                         );
                         const pageKey = activeLink?.getAttribute('data-page-key');
                         if (pageKey) {
