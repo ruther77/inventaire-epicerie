@@ -60,10 +60,7 @@ from domain import (
     process_sale_transaction,
     update_catalog_entry,
 )
-from streamlit_app.components.navigation import (
-    render_workspace_navigation,
-    _PAGE_KEY_TO_INDEX,
-)
+from streamlit_app.components.navigation import _PAGE_KEY_TO_INDEX
 from streamlit_app.components.theme import THEME_LABELS, apply_ui_theme, local_css
 from streamlit_app.services.cache import invalidate_data_caches
 from streamlit_app.services.catalog import (
@@ -173,110 +170,94 @@ def render_workspace_overview(
     role_fragment = f" · {html_escape(user_role.strip())}" if user_role else ""
 
     dashboard_attrs = _tab_target_attr("dashboard")
-    reports_attrs = _tab_target_attr("movements")
     supply_attrs = _tab_target_attr("supply")
     catalog_attrs = _tab_target_attr("catalog")
     pos_attrs = _tab_target_attr("pos")
-    scanner_attrs = _tab_target_attr("scanner")
-    extract_attrs = _tab_target_attr("extract")
+    showcase_attrs = _tab_target_attr("showcase")
     admin_attrs = _tab_target_attr("admin")
 
     hero_html = f"""
-        <section class="workspace-header">
-            <div class="mega-menu__overlay" aria-hidden="true"></div>
-            <div class="workspace-header__bar">
-                <div class="workspace-header__group">
-                    <span class="workspace-header__brand-eyebrow">Catalogue</span>
-                    <h1 class="workspace-header__brand-title">Explorer & analyser</h1>
-                    <p class="workspace-header__lead">Consolidez les indicateurs clés et ouvrez vos métiers à la donnée.</p>
-                    <p class="workspace-header__welcome">Bonjour {name_fragment}{role_fragment}, vos raccourcis métiers vous attendent.</p>
-                    <div class="workspace-primary__shortcuts">
-                        <a class="workspace-shortcut is-active" href="#"{dashboard_attrs}>
-                            <span class="workspace-shortcut__icon"><i class="bi bi-speedometer2"></i></span>
-                            <span>Ouvrir le tableau de bord</span>
-                        </a>
-                        <a class="workspace-shortcut" href="#"{reports_attrs}>
-                            <span class="workspace-shortcut__icon"><i class="bi bi-graph-up"></i></span>
-                            <span>Consulter les rapports</span>
-                        </a>
-                        <a class="workspace-shortcut" href="#"{supply_attrs}>
-                            <span class="workspace-shortcut__icon"><i class="bi bi-truck"></i></span>
-                            <span>Nouvelle commande</span>
-                        </a>
-                    </div>
-                </div>
-                <div class="workspace-header__cluster">
-                    <div class="workspace-primary">
-                        <div class="workspace-primary__panels">
-                            <div class="workspace-primary__panel is-active">
-                                <div class="workspace-primary__panel-header">
-                                    <div class="workspace-primary__panel-icon"><i class="bi bi-kanban"></i></div>
-                                    <div class="workspace-primary__panel-title">
-                                        <p class="workspace-primary__panel-heading">Explorer & analyser</p>
-                                        <p class="workspace-primary__panel-description">Cartes d'accès rapide aux modules d'analyse et de pilotage.</p>
-                                    </div>
-                                </div>
-                                <div class="workspace-primary__panel-grid">
-                                    <div class="workspace-primary__panel-column">
-                                        <article class="workspace-overview-card workspace-overview-card--primary">
-                                            <header class="workspace-overview-card__header">
-                                                <div>
-                                                    <h3 class="workspace-overview-card__title">Tableau de bord</h3>
-                                                    <p class="workspace-overview-card__subtitle">Synthèse immédiate de vos indicateurs commerce.</p>
-                                                </div>
-                                            </header>
-                                            <dl class="workspace-overview-card__stats">
-                                                {stats_markup}
-                                            </dl>
-                                            {metrics_alert}
-                                            <a class="workspace-overview-card__cta" href="#"{dashboard_attrs}>Voir le tableau de bord</a>
-                                        </article>
-                                        <article class="workspace-overview-card workspace-overview-card--secondary">
-                                            <header class="workspace-overview-card__header">
-                                                <div>
-                                                    <h3 class="workspace-overview-card__title">Centre de contrôle</h3>
-                                                    <p class="workspace-overview-card__subtitle">Guides, FAQ et paramétrages essentiels.</p>
-                                                </div>
-                                            </header>
-                                            <ul class="workspace-overview-card__links">
-                                                <li><a href="#"{admin_attrs}>Maintenance & sauvegardes</a></li>
-                                                <li><a href="#"{extract_attrs}>Extraction des factures fournisseurs</a></li>
-                                            </ul>
-                                        </article>
-                                    </div>
-                                    <div class="workspace-primary__panel-column">
-                                        <aside class="workspace-preview">
-                                            <p class="workspace-preview__title">Outils Streamlit</p>
-                                            <ul class="workspace-preview__list">
-                                                <li class="workspace-preview__item">
-                                                    <a class="workspace-preview__link" href="#"{catalog_attrs}>
-                                                        <span class="workspace-preview__icon"><i class="bi bi-collection"></i></span>
-                                                        <span class="workspace-preview__content">
-                                                            <span class="workspace-preview__label">Gestion catalogue</span>
-                                                            <span class="workspace-preview__desc">Ajoutez, modifiez et archivez vos fiches produits.</span>
-                                                        </span>
-                                                    </a>
-                                                </li>
-                                                <li class="workspace-preview__item">
-                                                    <a class="workspace-preview__link" href="#"{supply_attrs}>
-                                                        <span class="workspace-preview__icon"><i class="bi bi-truck"></i></span>
-                                                        <span class="workspace-preview__content">
-                                                            <span class="workspace-preview__label">Approvisionnements</span>
-                                                            <span class="workspace-preview__desc">Visualisez les commandes, réceptions et ruptures critiques.</span>
-                                                        </span>
-                                                    </a>
-                                                </li>
-                                            </ul>
-                                            <ul class="workspace-preview__secondary">
-                                                <li><a class="workspace-preview__secondary-link" href="#"{pos_attrs}><i class="bi bi-cash-coin"></i><span>Encaissement PoS</span></a></li>
-                                                <li><a class="workspace-preview__secondary-link" href="#"{scanner_attrs}><i class="bi bi-upc-scan"></i><span>Scanner codes-barres</span></a></li>
-                                                <li><a class="workspace-preview__secondary-link" href="#"{reports_attrs}><i class="bi bi-graph-up-arrow"></i><span>Diagnostic stock</span></a></li>
-                                            </ul>
-                                        </aside>
-                                    </div>
-                                </div>
+        <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />
+        <section class=\"workspace-overview workspace-overview--dropdown\">
+            <header class=\"workspace-overview__intro\">
+                <span class=\"workspace-overview__eyebrow\">Espace de pilotage</span>
+                <h1 class=\"workspace-overview__title\">Inventaire — Gestion complète</h1>
+                <p class=\"workspace-overview__lead\">Centralisez vos actions clés et naviguez rapidement entre les modules métier.</p>
+                <p class=\"workspace-overview__welcome\">Bonjour {name_fragment}{role_fragment}, choisissez un module pour continuer.</p>
+                <dl class=\"workspace-overview__stats\">
+                    {stats_markup}
+                </dl>
+                {metrics_alert}
+            </header>
+            <div class=\"workspace-overview__body\">
+                <div class=\"workspace-modules\">
+                    <div class=\"workspace-modules__dropdown dropdown show\" role=\"navigation\" aria-label=\"Navigation principale\">
+                        <button class=\"workspace-modules__toggle\" type=\"button\" aria-haspopup=\"true\" aria-expanded=\"true\">
+                            Modules & fonctionnalités
+                            <span class=\"workspace-modules__chevron\"><i class=\"bi bi-chevron-down\" aria-hidden=\"true\"></i></span>
+                        </button>
+                        <div class=\"workspace-modules__menu menu o_secondary nav\" role=\"menu\">
+                            <div class=\"workspace-modules__group\">
+                                <p class=\"workspace-modules__group-title\">Applications métier</p>
+                                <ul class=\"workspace-modules__list\">
+                                    <li><a href=\"#\"{showcase_attrs}>Vitrine produits</a></li>
+                                    <li><a href=\"#\"{supply_attrs}>Approvisionnement</a></li>
+                                    <li><a href=\"#\"{pos_attrs}>Vente (PoS)</a></li>
+                                    <li><a href=\"#\"{catalog_attrs}>Catalogue</a></li>
+                                </ul>
+                            </div>
+                            <div class=\"workspace-modules__group\">
+                                <p class=\"workspace-modules__group-title\">Support & pilotage</p>
+                                <ul class=\"workspace-modules__list\">
+                                    <li><a href=\"#\"{dashboard_attrs}>Tableau de bord</a></li>
+                                    <li><a href=\"#\"{admin_attrs}>Maintenance (Admin)</a></li>
+                                </ul>
                             </div>
                         </div>
+                    </div>
+                    <div class=\"workspace-modules__grid\">
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Vitrine produits</h3>
+                                <p>Valorisez votre offre et surveillez les performances depuis la perspective client.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{showcase_attrs}>Accéder à la vitrine</a>
+                        </article>
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Approvisionnement</h3>
+                                <p>Gérez les commandes fournisseurs, les réceptions et les besoins de réassort.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{supply_attrs}>Ouvrir les approvisionnements</a>
+                        </article>
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Vente (PoS)</h3>
+                                <p>Encaissez rapidement et synchronisez les ventes avec votre inventaire.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{pos_attrs}>Lancer le PoS</a>
+                        </article>
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Catalogue</h3>
+                                <p>Maintenez vos fiches produits, variantes et rayons à jour en quelques clics.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{catalog_attrs}>Gérer le catalogue</a>
+                        </article>
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Maintenance (Admin)</h3>
+                                <p>Accédez aux outils techniques, sauvegardes et réglages critiques.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{admin_attrs}>Ouvrir l'administration</a>
+                        </article>
+                        <article class=\"workspace-module-card\">
+                            <header>
+                                <h3>Tableau de bord</h3>
+                                <p>Suivez vos indicateurs clés et comparez vos performances sur la période.</p>
+                            </header>
+                            <a class=\"workspace-module-card__cta\" href=\"#\"{dashboard_attrs}>Voir les indicateurs</a>
+                        </article>
                     </div>
                 </div>
             </div>
@@ -936,8 +917,6 @@ def render_app() -> None:
         # --- UI Setup et Définition des Onglets ---
         st.session_state["user_role"] = credentials["usernames"][username]["role"]
         st.session_state["username"] = username
-
-        render_workspace_navigation()
 
         try:
             table_counts_df = load_table_counts()
