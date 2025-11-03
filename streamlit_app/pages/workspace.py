@@ -178,7 +178,7 @@ def render_workspace_overview(
 
     hero_html = f"""
         <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css\" />
-        <section class=\"workspace-overview workspace-overview--dropdown\">
+        <section class=\"workspace-overview workspace-overview--dropdown\" data-workspace-overview>
             <header class=\"workspace-overview__intro\">
                 <span class=\"workspace-overview__eyebrow\">Espace de pilotage</span>
                 <h1 class=\"workspace-overview__title\">Inventaire — Gestion complète</h1>
@@ -262,6 +262,99 @@ def render_workspace_overview(
                 </div>
             </div>
         </section>
+        <script>
+            (function () {
+                const rootDocument = window.parent?.document ?? document;
+                if (!rootDocument) {
+                    return;
+                }
+
+                const hero = rootDocument.querySelector('[data-workspace-overview]');
+                if (!hero || hero.dataset.enhanced === 'true') {
+                    return;
+                }
+
+                hero.dataset.enhanced = 'true';
+
+                const getWorkspaceTabButtons = () =>
+                    Array.from(
+                        rootDocument.querySelectorAll('[data-baseweb="tab"]')
+                    );
+
+                const selectWorkspaceTab = (index) => {
+                    const tabButtons = getWorkspaceTabButtons();
+                    const target = tabButtons?.[index];
+                    if (target instanceof HTMLElement) {
+                        target.click();
+                    }
+                };
+
+                const updateActiveLinks = (pageKey) => {
+                    if (!pageKey) {
+                        return;
+                    }
+
+                    rootDocument.body?.setAttribute('data-current-page', pageKey);
+                    hero.querySelectorAll('[data-page-key]').forEach((node) => {
+                        const isActive = node.getAttribute('data-page-key') === pageKey;
+                        node.classList.toggle('is-active', isActive);
+                        if (isActive) {
+                            node.setAttribute('aria-current', 'page');
+                        } else {
+                            node.removeAttribute('aria-current');
+                        }
+                    });
+                };
+
+                const syncFromStreamlitTabs = () => {
+                    const tabButtons = getWorkspaceTabButtons();
+                    const activeIndex = tabButtons.findIndex(
+                        (tab) => tab.getAttribute('aria-selected') === 'true'
+                    );
+                    if (activeIndex >= 0) {
+                        const activeLink = hero.querySelector(
+                            `[data-tab-target="${activeIndex}"][data-page-key]`
+                        );
+                        const pageKey = activeLink?.getAttribute('data-page-key');
+                        if (pageKey) {
+                            updateActiveLinks(pageKey);
+                        }
+                    }
+                };
+
+                hero.querySelectorAll('[data-tab-target]').forEach((link) => {
+                    link.addEventListener('click', (event) => {
+                        const targetIndex = Number(link.getAttribute('data-tab-target'));
+                        const pageKey = link.getAttribute('data-page-key');
+                        if (Number.isFinite(targetIndex)) {
+                            event.preventDefault();
+                            selectWorkspaceTab(targetIndex);
+                        }
+                        if (pageKey) {
+                            updateActiveLinks(pageKey);
+                        }
+                    });
+                });
+
+                if (rootDocument.body) {
+                    const marker = 'workspaceTabsListener';
+                    if (rootDocument.body.dataset[marker] !== 'true') {
+                        rootDocument.body.dataset[marker] = 'true';
+                        rootDocument.addEventListener('click', (event) => {
+                            const target = event.target;
+                            if (target && typeof target.closest === 'function') {
+                                const tab = target.closest('[data-baseweb="tab"]');
+                                if (tab && getWorkspaceTabButtons().includes(tab)) {
+                                    window.requestAnimationFrame(syncFromStreamlitTabs);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                syncFromStreamlitTabs();
+            })();
+        </script>
     """
 
     st.markdown(hero_html, unsafe_allow_html=True)
