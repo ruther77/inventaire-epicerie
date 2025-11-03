@@ -964,8 +964,9 @@ class BarcodeDetector(VideoTransformerBase):
 # --- DÉBUT DU FLUX PRINCIPAL (CONTRÔLE D'ACCÈS) ---
 # ==============================================================================
 
-def render_app() -> None:
-    st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="📦")
+def render_app(*, configure_page: bool = True) -> None:
+    if configure_page:
+        st.set_page_config(page_title="Inventaire Épicerie", layout="wide", page_icon="📦")
     local_css("style.css")
     if "ui_theme" not in st.session_state:
         st.session_state["ui_theme"] = "light"
