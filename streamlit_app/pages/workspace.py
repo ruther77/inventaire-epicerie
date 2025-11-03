@@ -48,7 +48,9 @@ from data_repository import (
     get_product_details,
 )
 from inventory_service import (
+    apply_invoice_price_updates,
     match_invoice_products,
+    prepare_invoice_price_updates,
     register_invoice_reception,
 )
 import products_loader
@@ -3622,6 +3624,155 @@ def render_app() -> None:
                                 file_name="commande_reappro.csv",
                                 mime="text/csv",
                                 disabled=working_df.empty,
+                            )
+
+            with workspace_panel(
+                "Mise à jour automatique des tarifs",
+                "Comparez les prix facturés et alignez le catalogue tout en conservant la marge cible.",
+                icon="💶",
+                accent="amber",
+            ):
+                invoice_df = st.session_state.get("invoice_products_df")
+                notice_message = st.session_state.get("invoice_price_update_notice")
+                if notice_message:
+                    st.success(notice_message)
+                    st.session_state.pop("invoice_price_update_notice", None)
+
+                if not isinstance(invoice_df, pd.DataFrame) or invoice_df.empty:
+                    st.info("Chargez une facture et identifiez les produits pour accéder à la mise à jour des tarifs.")
+                else:
+                    control_cols = st.columns(3)
+                    margin_pct = control_cols[0].slider(
+                        "Marge minimale (%)",
+                        min_value=10,
+                        max_value=100,
+                        value=int(st.session_state.get("invoice_price_margin", 40)),
+                        step=5,
+                        key="invoice_price_margin",
+                    )
+                    threshold_pct = control_cols[1].slider(
+                        "Seuil d'ajustement (%)",
+                        min_value=1,
+                        max_value=50,
+                        value=int(st.session_state.get("invoice_price_threshold", 10)),
+                        step=1,
+                        key="invoice_price_threshold",
+                    )
+                    control_cols[2].metric("Coefficient appliqué", f"× {(1 + margin_pct / 100):.2f}")
+
+                    margin_ratio = max(float(margin_pct) / 100.0, 0.0)
+                    threshold_ratio = max(float(threshold_pct) / 100.0, 0.0)
+
+                    plan = prepare_invoice_price_updates(
+                        invoice_df,
+                        min_margin=margin_ratio,
+                        delta_threshold=threshold_ratio,
+                    )
+
+                    if plan.get("errors"):
+                        for error_message in plan.get("errors", []):
+                            st.error(error_message)
+
+                    summary_cols = st.columns(3)
+                    summary_cols[0].metric("Produits rapprochés", plan.get("product_count", 0))
+                    summary_cols[1].metric("Mises à jour proposées", plan.get("updates_count", 0))
+                    summary_cols[2].metric("Lignes analysées", plan.get("matched_line_count", 0))
+
+                    updates_df = pd.DataFrame(plan.get("updates", []))
+                    if updates_df.empty:
+                        st.success("Aucun ajustement de prix n'est nécessaire avec les paramètres actuels.")
+                    else:
+                        display_columns = [
+                            "product_name",
+                            "ean",
+                            "current_purchase_price",
+                            "invoice_unit_price",
+                            "current_sale_price",
+                            "proposed_sale_price",
+                            "delta_percent",
+                        ]
+                        available_display = [col for col in display_columns if col in updates_df.columns]
+                        st.dataframe(
+                            updates_df[available_display],
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "product_name": st.column_config.TextColumn("Produit"),
+                                "ean": st.column_config.TextColumn("EAN"),
+                                "current_purchase_price": st.column_config.NumberColumn(
+                                    "Achat actuel (€)", format="%.2f"
+                                ),
+                                "invoice_unit_price": st.column_config.NumberColumn(
+                                    "Achat facture TTC (€)", format="%.2f"
+                                ),
+                                "current_sale_price": st.column_config.NumberColumn(
+                                    "Vente actuelle (€)", format="%.2f"
+                                ),
+                                "proposed_sale_price": st.column_config.NumberColumn(
+                                    "Vente proposée (€)", format="%.2f"
+                                ),
+                                "delta_percent": st.column_config.NumberColumn(
+                                    "Delta (%)", format="%.1f"
+                                ),
+                            },
+                        )
+
+                        if st.button(
+                            "Appliquer les nouveaux tarifs",
+                            key="apply_invoice_price_updates_button",
+                            type="primary",
+                        ):
+                            with st.spinner("Mise à jour des prix en cours..."):
+                                result = apply_invoice_price_updates(
+                                    invoice_df,
+                                    min_margin=margin_ratio,
+                                    delta_threshold=threshold_ratio,
+                                )
+
+                            applied = int(result.get("applied_updates", 0))
+                            errors = result.get("errors", [])
+                            if applied:
+                                st.session_state["invoice_price_update_notice"] = (
+                                    f"{applied} produit(s) mis à jour selon la facture."
+                                )
+                                invalidate_data_caches(
+                                    "products_list",
+                                    "catalog",
+                                    "trending",
+                                    "product_options",
+                                    "movement_timeseries",
+                                    "recent_movements",
+                                    "table_counts",
+                                    "table_preview",
+                                )
+                                st.rerun()
+                            elif errors:
+                                for error_message in errors:
+                                    st.error(error_message)
+                            else:
+                                st.info("Aucun produit n'a nécessité de mise à jour.")
+
+                    skipped_rows = plan.get("skipped", [])
+                    if skipped_rows:
+                        with st.expander("Produits conservés (delta trop faible)"):
+                            skipped_df = pd.DataFrame(skipped_rows)
+                            st.dataframe(
+                                skipped_df[
+                                    [
+                                        col
+                                        for col in [
+                                            "product_name",
+                                            "ean",
+                                            "current_sale_price",
+                                            "proposed_sale_price",
+                                            "delta_percent",
+                                            "reason",
+                                        ]
+                                        if col in skipped_df.columns
+                                    ]
+                                ],
+                                hide_index=True,
+                                use_container_width=True,
                             )
 
             if isinstance(summary, dict):
